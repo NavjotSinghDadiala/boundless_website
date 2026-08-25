@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "@/app/globals.css";
 import Header from "@/components/Header.jsx";
+import LenisProvider from "@/components/LenisProvider";
 
 export const metadata: Metadata = {
   title: "Boundless Travel Society",
@@ -27,8 +28,11 @@ export default function UserLayout({
   return (
     // We remove <html> and <body> here because they are already in app/layout.tsx
     <>
-      <Header />
-      <div className="pt-20">{children}</div>
+        <LenisProvider>
+          <Header />
+          <div className="pt-20">{children}</div>
+        </LenisProvider>
     </>
   );
 }
+
