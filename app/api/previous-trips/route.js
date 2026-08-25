@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
 
 /* GET All Trips OR Single Trip (if ?id= is passed) */
 export async function GET(req) {
@@ -38,12 +39,23 @@ export async function POST(req) {
     const body = await req.json();
     const tripData = {
       heading: body.heading,
-      subHeading: body.subHeading,
       img: body.img, 
       link: body.link || "",
+      
+      // New fields
+      date: body.date || "",
+      venue: body.venue || "",
+      participants: body.participants !== undefined ? Number(body.participants) : 0,
+      summary: body.summary || "",
+      graphData: Array.isArray(body.graphData) ? body.graphData.map(item => ({
+        x: item.x !== undefined ? String(item.x) : "",
+        y: item.y !== undefined ? String(item.y) : ""
+      })) : [],
+      photos: sanitizeMediaUrls(body.photos),
+      videos: sanitizeMediaUrls(body.videos),
+      
       createdAt: serverTimestamp(),
     };
-
     const docRef = await addDoc(collection(db, "previous_trips"), tripData);
     return NextResponse.json({ message: "Trip added", id: docRef.id }, { status: 201 });
   } catch (error) {
@@ -55,12 +67,37 @@ export async function POST(req) {
 export async function PUT(req) {
   try {
     const body = await req.json();
-    const { id, heading, subHeading, img, link } = body;
+    const {
+      id,
+      heading,
+      img,
+      link,
+      date,
+      venue,
+      participants,
+      summary,
+      graphData,
+      photos,
+      videos,
+    } = body;
 
     if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
     await updateDoc(doc(db, "previous_trips", id), {
-      heading, subHeading, img, link, updatedAt: serverTimestamp()
+      heading, 
+      img, 
+      link: link || "",
+      date: date || "",
+      venue: venue || "",
+      participants: participants !== undefined ? Number(participants) : 0,
+      summary: summary || "",
+      graphData: Array.isArray(graphData) ? graphData.map(item => ({
+        x: item.x !== undefined ? String(item.x) : "",
+        y: item.y !== undefined ? String(item.y) : ""
+      })) : [],
+      photos: sanitizeMediaUrls(photos),
+      videos: sanitizeMediaUrls(videos),
+      updatedAt: serverTimestamp()
     });
 
     return NextResponse.json({ success: true, message: "Trip updated" }, { status: 200 });
