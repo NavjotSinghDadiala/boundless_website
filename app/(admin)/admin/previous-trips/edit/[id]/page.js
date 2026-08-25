@@ -41,6 +41,7 @@ export default function EditTripPage() {
         const data = await res.json();
         if (res.ok) setFormData({ 
           heading: data.heading || "", 
+          subHeading: data.subHeading || data.subheading || "",
           link: data.link || "", 
           img: data.img || "",
           date: data.date || "",
@@ -142,18 +143,18 @@ export default function EditTripPage() {
               onChange={(e) => setFormData({ ...formData, heading: e.target.value })}
             />
           </div>
+          {/* SubHeading */}
+          <div className="space-y-2">
+            <Label htmlFor="subHeading">Card Subtitle / Date</Label>
+            <Input
+              id="subHeading"
+              value={formData.subHeading || ""}
+              onChange={(e) => setFormData({ ...formData, subHeading: e.target.value })}
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="date">Trip Date</Label>
-            <Input 
-              id="date" 
-              type="date"
-              value={formData.date} 
-              onChange={(e) => setFormData({ ...formData, date: e.target.value })} 
-            />
-          </div>
 
           <div className="space-y-2">
             <Label htmlFor="participants">Total Participants</Label>
@@ -269,7 +270,7 @@ export default function EditTripPage() {
           <Label>Trip Image</Label>
           <div className="flex flex-col gap-2">
             <img 
-              src={newImage.preview || formData.img} 
+              src={newImage.preview || formData.img || null} 
               alt="Current Preview" 
               className="h-48 w-full object-cover rounded-md border shadow-sm" 
             />

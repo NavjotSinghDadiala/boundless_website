@@ -139,9 +139,9 @@ function PrevTrips() {
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-amber-950 via-black/25 to-transparent" />
                         <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 flex flex-col justify-end">
-                          {(selectedTrip.title || selectedTrip.heading) && (
+                          {( selectedTrip.heading || selectedTrip.subHeading ) && (
                             <h2 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight drop-shadow-md">
-                              {selectedTrip.title || selectedTrip.heading}
+                              {selectedTrip.heading || selectedTrip.subHeading }
                             </h2>
                           )}
                         </div>
@@ -150,24 +150,13 @@ function PrevTrips() {
                       <div className="p-6 sm:p-8 pb-12">
                         <div className="max-w-6xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
                           <div className="space-y-6">
-                            {(selectedTrip.date || selectedTrip.venue || selectedTrip.participants || selectedTrip.instagramHandle) && (
+                            {(selectedTrip.venue || selectedTrip.participants || selectedTrip.instagramHandle) && (
                               <div className="bg-white/80 backdrop-blur-sm border border-amber-100 rounded-2xl p-5 shadow-sm space-y-4">
                                 <h3 className="text-lg font-bold text-amber-900 border-b border-amber-50 pb-2 flex items-center gap-2">
                                   <Compass className="size-5" /> Trip Details
                                 </h3>
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                  {selectedTrip.date && (
-                                    <div className="flex items-center gap-3">
-                                      <div className="p-2 bg-amber-100/80 text-amber-700 rounded-xl flex-shrink-0">
-                                        <Calendar className="size-5" />
-                                      </div>
-                                      <div>
-                                        <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Date</p>
-                                        <p className="text-sm font-medium text-gray-800">{selectedTrip.date}</p>
-                                      </div>
-                                    </div>
-                                  )}
 
                                   {selectedTrip.venue && (
                                     <div className="flex items-center gap-3 sm:col-span-2">
@@ -220,19 +209,6 @@ function PrevTrips() {
                                   </h3>
                                   <div className="text-gray-700 text-sm leading-relaxed space-y-4 font-normal max-h-[350px] overflow-y-auto pr-1">
                                     {selectedTrip.summary.split("\n").map((para, idx) => (
-                                      para.trim() && <p key={idx}>{para.trim()}</p>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {selectedTrip.feedback && (
-                                <div className="bg-white/80 backdrop-blur-sm border border-amber-100 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
-                                  <h3 className="text-lg font-bold text-amber-900 border-b border-amber-50 pb-2">
-                                    Feedback
-                                  </h3>
-                                  <div className="text-gray-700 text-sm leading-relaxed space-y-4 font-normal max-h-[350px] overflow-y-auto pr-1">
-                                    {selectedTrip.feedback.split("\n").map((para, idx) => (
                                       para.trim() && <p key={idx}>{para.trim()}</p>
                                     ))}
                                   </div>

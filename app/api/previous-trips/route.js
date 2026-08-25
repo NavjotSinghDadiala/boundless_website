@@ -39,11 +39,11 @@ export async function POST(req) {
     const body = await req.json();
     const tripData = {
       heading: body.heading,
+      subHeading: body.subHeading,
       img: body.img, 
       link: body.link || "",
       
       // New fields
-      date: body.date || "",
       venue: body.venue || "",
       participants: body.participants !== undefined ? Number(body.participants) : 0,
       summary: body.summary || "",
@@ -70,9 +70,9 @@ export async function PUT(req) {
     const {
       id,
       heading,
+      subHeading, 
       img,
       link,
-      date,
       venue,
       participants,
       summary,
@@ -85,9 +85,9 @@ export async function PUT(req) {
 
     await updateDoc(doc(db, "previous_trips", id), {
       heading, 
+      subHeading, 
       img, 
       link: link || "",
-      date: date || "",
       venue: venue || "",
       participants: participants !== undefined ? Number(participants) : 0,
       summary: summary || "",

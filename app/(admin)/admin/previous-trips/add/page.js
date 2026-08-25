@@ -104,14 +104,13 @@ export default function AddPreviousTripPage() {
             <Label htmlFor="heading">Trip Card Name (Heading)</Label>
             <Input id="heading" value={formData.heading} onChange={(e) => setFormData({ ...formData, heading: e.target.value })} />
           </div>
-
+          <div className="space-y-2">
+            <Label htmlFor="subHeading">Card Subtitle / Date</Label>
+            <Input id="subHeading" value={formData.subHeading} onChange={(e) => setFormData({ ...formData, subHeading: e.target.value })} />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="date">Trip Date</Label>
-            <Input id="date" type="date" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} />
-          </div>
 
           <div className="space-y-2">
             <Label htmlFor="participants">Total Participants</Label>
