@@ -4,9 +4,9 @@ import React from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { ArrowUpRight } from "lucide-react";
-import Link from "next/link";
 
-export default function TripCard({ trip }) {
+
+export default function TripCard({ trip, onOpen = null }) {
   const [imgError, setImgError] = React.useState(false);
 
   // Validate and normalize image URL
@@ -21,13 +21,21 @@ export default function TripCard({ trip }) {
   };
 
   const imageSrc = imgError ? "/placeholder.jpg" : getValidImageUrl(trip.img);
+  const handleClick = (e) => {
+    if (onOpen) {
+      e.preventDefault();
+      onOpen(trip);
+    } else if (trip.link) {
+      window.open(trip.link, "_blank");
+    }
+  };
 
   return (
-    <Link href={trip.link}>
       <motion.div
         className="relative w-[345px] min-w-[280px] aspect-[3/4] rounded-3xl overflow-hidden cursor-pointer shadow-lg"
         whileHover="hover"
         initial="initial"
+        onClick={handleClick}
       >
         <Image
           src={imageSrc}
@@ -98,6 +106,5 @@ export default function TripCard({ trip }) {
           <ArrowUpRight className="text-white w-4" />
         </motion.div>
       </motion.div>
-    </Link>
   );
 }
