@@ -60,7 +60,7 @@ const DottedSection = ({
 
           <div className="relative z-10 w-full pb-20">
             <h1
-              className={`text-[9rem] max-md:text-8xl max-sm:text-6xl w-full font-[350] text-center font-oswald text-nowrap ${headingStyle}`}
+              className={`text-[9rem] max-md:text-8xl max-sm:text-6xl w-full font-[350] text-center font-oswald overflow-hidden ${headingStyle}`}
             >
               {" "}
               <AnimatedByChar text={sectionHeading}>

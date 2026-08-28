@@ -281,21 +281,22 @@ export default function CityMeetupsPage() {
       <style jsx global>{`
         @keyframes pulse-glow {
           0% {
-            transform: scale(0.95);
-            opacity: 0.8;
+            transform: scale(0.9);
+            opacity: 0.7;
           }
           50% {
-            transform: scale(1.2);
-            opacity: 0.3;
+            transform: scale(1.15);
+            opacity: 0.2;
           }
           100% {
-            transform: scale(0.95);
-            opacity: 0.8;
+            transform: scale(0.9);
+            opacity: 0.7;
           }
         }
         .pulse-effect {
-          animation: pulse-glow 2s infinite ease-in-out;
+          animation: pulse-glow 1s infinite ease-in-out;
           transform-origin: center;
+          transform-box: fill-box;
         }
       `}</style>
 
@@ -346,127 +347,92 @@ export default function CityMeetupsPage() {
           </div>
         </header>
 
-        {/* Filters and Search Dashboard */}
-        <div className="relative z-50 flex flex-col gap-4 mb-8 bg-white/70 backdrop-blur-md p-4 rounded-2xl border border-amber-900/10 shadow-sm">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            {/* Filter Tabs */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900 uppercase tracking-wider mr-2">
-                <Filter className="w-3.5 h-3.5" />
-                Select Event:
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {eventFilters.map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => handleFilterClick(option)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${activeFilter === option
-                        ? "bg-amber-900 text-white border-amber-900 shadow-sm"
-                        : "bg-white text-amber-900 border-amber-900/20 hover:bg-amber-100"
-                      }`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-              {activeFilter !== "All" && (
-                <button
-                  onClick={() => setActiveFilter("All")}
-                  className="text-xs font-bold text-amber-900 underline hover:text-amber-700 ml-2"
-                >
-                  Show All
-                </button>
-              )}
-            </div>
+        {/* Search Bar */}
+        <div className="relative z-50 mb-8" ref={dropdownRef}>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-900/40" />
+            <input
+              type="text"
+              placeholder="Search city or event..."
+              value={searchQuery}
+              onFocus={() => setIsSearchFocused(true)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
+                setSelectedCityName(null)
+              }}
+              className="w-full pl-9 pr-4 py-3 text-sm rounded-2xl border border-amber-900/20 focus:outline-none focus:border-amber-900 bg-white/80 placeholder-amber-900/30 text-amber-950 font-medium shadow-sm transition-all"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => {
+                  setSearchQuery("")
+                  setSelectedCityName(null)
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-amber-900/40 hover:text-amber-900 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
 
-            {/* Search Input with Recommended Dropdown */}
-            <div className="relative w-full lg:max-w-xs" ref={dropdownRef}>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-900/40" />
-                <input
-                  type="text"
-                  placeholder="Search city or event..."
-                  value={searchQuery}
-                  onFocus={() => setIsSearchFocused(true)}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value)
-                    setSelectedCityName(null)
-                  }}
-                  className="w-full pl-9 pr-4 py-2 text-sm rounded-xl border border-amber-900/20 focus:outline-none focus:border-amber-900 bg-white/80 placeholder-amber-900/30 text-amber-950 font-medium shadow-inner transition-all"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => {
-                      setSearchQuery("")
-                      setSelectedCityName(null)
-                    }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-amber-900/40 hover:text-amber-900 cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+          {/* Recommended searches dropdown */}
+          <AnimatePresence>
+            {isSearchFocused && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="absolute left-0 right-0 mt-2 bg-white rounded-2xl border border-amber-900/10 shadow-2xl p-4 z-30 max-h-[350px] overflow-y-auto"
+              >
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-900/50 uppercase tracking-widest mb-2 border-b border-amber-900/5 pb-1">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  Recommended Cities
+                </div>
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {recommendedCities.map((city) => (
+                    <button
+                      key={city}
+                      onClick={() => {
+                        setSearchQuery(city)
+                        setSelectedCityName(city)
+                        setIsSearchFocused(false)
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-900/5 text-amber-900 hover:bg-amber-900/10 border border-amber-900/10 transition-colors cursor-pointer"
+                    >
+                      <MapPin className="w-3 h-3" />
+                      {city}
+                    </button>
+                  ))}
+                </div>
 
-              {/* Recommended searches dropdown */}
-              <AnimatePresence>
-                {isSearchFocused && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
-                    className="absolute left-0 right-0 mt-2 bg-white rounded-2xl border border-amber-900/10 shadow-2xl p-4 z-30 max-h-[350px] overflow-y-auto"
-                  >
+                {popularEvents.length > 0 && (
+                  <>
                     <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-900/50 uppercase tracking-widest mb-2 border-b border-amber-900/5 pb-1">
-                      <TrendingUp className="w-3.5 h-3.5" />
-                      Recommended Cities
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Events
                     </div>
-                    <div className="flex flex-wrap gap-1.5 mb-4">
-                      {recommendedCities.map((city) => (
+                    <div className="flex flex-col gap-1">
+                      {popularEvents.map((event) => (
                         <button
-                          key={city}
+                          key={event}
                           onClick={() => {
-                            setSearchQuery(city)
-                            setSelectedCityName(city) // Select city directly on map
+                            setSearchQuery("")
+                            setActiveFilter(event)
+                            setSelectedCityName(null)
                             setIsSearchFocused(false)
                           }}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-900/5 text-amber-900 hover:bg-amber-900/10 border border-amber-900/10 transition-colors cursor-pointer"
+                          className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium text-amber-950 hover:bg-amber-900/5 transition-colors cursor-pointer flex items-center justify-between"
                         >
-                          <MapPin className="w-3 h-3" />
-                          {city}
+                          <span>{event}</span>
+                          <ChevronRight className="w-3 h-3 text-amber-900/30" />
                         </button>
                       ))}
                     </div>
-
-                    {popularEvents.length > 0 && (
-                      <>
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-900/50 uppercase tracking-widest mb-2 border-b border-amber-900/5 pb-1">
-                          <Sparkles className="w-3.5 h-3.5" />
-                          Events
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          {popularEvents.map((event) => (
-                            <button
-                              key={event}
-                              onClick={() => {
-                                setSearchQuery("")
-                                setActiveFilter(event)
-                                setSelectedCityName(null)
-                                setIsSearchFocused(false)
-                              }}
-                              className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium text-amber-950 hover:bg-amber-900/5 transition-colors cursor-pointer flex items-center justify-between"
-                            >
-                              <span>{event}</span>
-                              <ChevronRight className="w-3 h-3 text-amber-900/30" />
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </motion.div>
+                  </>
                 )}
-              </AnimatePresence>
-            </div>
-          </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Dashboard Area */}
@@ -603,7 +569,8 @@ export default function CityMeetupsPage() {
                                   src={meetup.img}
                                   alt={meetup.cityName}
                                   fill
-                                  sizes="(max-width: 768px) 100vw, 33vw"
+                                  sizes="(max-width: 768px) 100vw, (max-width: 1280px) 40vw, 380px"
+                                  unoptimized={!meetup.img?.includes("res.cloudinary.com")}
                                   className="object-cover"
                                 />
                               </div>
@@ -709,7 +676,8 @@ export default function CityMeetupsPage() {
                                   src={meetup.img}
                                   alt={meetup.cityName}
                                   fill
-                                  sizes="100vw"
+                                  sizes="(max-width: 480px) 90vw, 400px"
+                                  unoptimized={!meetup.img?.includes("res.cloudinary.com")}
                                   className="object-cover"
                                 />
                               </div>

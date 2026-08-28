@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
-<<<<<<< HEAD
-=======
 import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
->>>>>>> origin/dev
 
 /* GET All Trips OR Single Trip (if ?id= is passed) */
 export async function GET(req) {
@@ -45,11 +42,6 @@ export async function POST(req) {
       subHeading: body.subHeading,
       img: body.img, 
       link: body.link || "",
-<<<<<<< HEAD
-      createdAt: serverTimestamp(),
-    };
-
-=======
       
       // New fields
       venue: body.venue || "",
@@ -64,7 +56,6 @@ export async function POST(req) {
       
       createdAt: serverTimestamp(),
     };
->>>>>>> origin/dev
     const docRef = await addDoc(collection(db, "previous_trips"), tripData);
     return NextResponse.json({ message: "Trip added", id: docRef.id }, { status: 201 });
   } catch (error) {
@@ -76,9 +67,6 @@ export async function POST(req) {
 export async function PUT(req) {
   try {
     const body = await req.json();
-<<<<<<< HEAD
-    const { id, heading, subHeading, img, link } = body;
-=======
     const {
       id,
       heading,
@@ -92,14 +80,10 @@ export async function PUT(req) {
       photos,
       videos,
     } = body;
->>>>>>> origin/dev
 
     if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
     await updateDoc(doc(db, "previous_trips", id), {
-<<<<<<< HEAD
-      heading, subHeading, img, link, updatedAt: serverTimestamp()
-=======
       heading, 
       subHeading, 
       img, 
@@ -114,7 +98,6 @@ export async function PUT(req) {
       photos: sanitizeMediaUrls(photos),
       videos: sanitizeMediaUrls(videos),
       updatedAt: serverTimestamp()
->>>>>>> origin/dev
     });
 
     return NextResponse.json({ success: true, message: "Trip updated" }, { status: 200 });

@@ -4,8 +4,6 @@ import React, { useEffect, useState } from "react";
 import Section from "@/components/Section";
 import TripCard from "@/components/TripCard";
 
-<<<<<<< HEAD
-=======
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import Image from "next/image";
 import {
@@ -37,13 +35,10 @@ const AMBER_COLORS = [
   "#9a3412",
 ];
 
->>>>>>> origin/dev
 function PrevTrips() {
   // 1. Create state to hold the data from the database
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
-<<<<<<< HEAD
-=======
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [chartMounted, setChartMounted] = useState(false);
 
@@ -59,7 +54,6 @@ function PrevTrips() {
         }))
         .filter((item) => item.value > 0)
     : [];
->>>>>>> origin/dev
 
   // 2. Fetch data from your API when the page loads
   useEffect(() => {
@@ -83,44 +77,6 @@ function PrevTrips() {
   }, []);
 
   return (
-<<<<<<< HEAD
-    <Section
-      svgFill="#fffbeb"
-      sectionHeading="Previous Trips"
-      headingStyle="text-black"
-    >
-      <div className="relative overflow-hidden">
-        <div
-          className="absolute inset-0 z-0 pointer-events-none"
-          style={{
-            backgroundImage: `repeating-radial-gradient(circle at center 60%, #fae2e3 0px, #fcefe6 35px, #fae2e3 38px)`,
-            maskImage: `linear-gradient(to top, black 40%, transparent 98%)`,
-            WebkitMaskImage: `linear-gradient(to top, black 40%, transparent 98%)`,
-          }}
-        ></div>
-
-        <div className="relative z-10 w-fit mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 pt-4 pb-15 place-items-center">
-          {/* 4. Show Loading state or the Data */}
-          {loading ? (
-            <div className="col-span-full text-center text-xl text-gray-500 py-20">
-              Loading trips...
-            </div>
-          ) : trips.length > 0 ? (
-            trips.map((trip) => (
-              <TripCard 
-                key={trip.id} 
-                trip={trip} 
-              />
-            ))
-          ) : (
-            <div className="col-span-full text-center text-xl text-gray-500 py-20">
-              No previous trips found.
-            </div>
-          )}
-        </div>
-      </div>
-    </Section>
-=======
     <>
       <Section
         svgFill="#fffbeb"
@@ -330,7 +286,6 @@ function PrevTrips() {
         </SheetContent>
       </Sheet>
     </>
->>>>>>> origin/dev
   );
 }
 

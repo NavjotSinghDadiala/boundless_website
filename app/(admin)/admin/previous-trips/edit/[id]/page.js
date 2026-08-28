@@ -6,13 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-<<<<<<< HEAD
-import { Loader2Icon } from "lucide-react";
-=======
 import { Loader2Icon, PlusIcon, TrashIcon } from "lucide-react";
 import MediaFileUpload from "@/components/MediaFileUpload";
 import { getTripPhotos, getTripVideos, sanitizeMediaUrls } from "@/lib/previous-trip-media";
->>>>>>> origin/dev
 
 export default function EditTripPage() {
   const router = useRouter();
@@ -24,9 +20,6 @@ export default function EditTripPage() {
     heading: "", 
     subHeading: "", 
     link: "", 
-<<<<<<< HEAD
-    img: "" 
-=======
     img: "",
     title: "",
     date: "",
@@ -37,7 +30,6 @@ export default function EditTripPage() {
     photos: [],
     videos: [],
     graphData: [],
->>>>>>> origin/dev
   });
   
   const [newImage, setNewImage] = useState({ file: null, preview: null, base64: null });
@@ -49,11 +41,6 @@ export default function EditTripPage() {
         const data = await res.json();
         if (res.ok) setFormData({ 
           heading: data.heading || "", 
-<<<<<<< HEAD
-          subHeading: data.subHeading || "", 
-          link: data.link || "", 
-          img: data.img || "" 
-=======
           subHeading: data.subHeading || data.subheading || "",
           link: data.link || "", 
           img: data.img || "",
@@ -64,7 +51,6 @@ export default function EditTripPage() {
           photos: getTripPhotos(data),
           videos: getTripVideos(data),
           graphData: data.graphData || [],
->>>>>>> origin/dev
         });
       } catch (error) { 
         toast.error("Error loading trip details"); 
@@ -85,8 +71,6 @@ export default function EditTripPage() {
     }
   };
 
-<<<<<<< HEAD
-=======
   const handleGraphValueChange = (index, field, value) => {
     const updated = [...(formData.graphData || [])];
     updated[index] = { ...updated[index], [field]: value };
@@ -106,7 +90,6 @@ export default function EditTripPage() {
     setFormData({ ...formData, graphData: updated });
   };
 
->>>>>>> origin/dev
   const handleUpdate = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -127,9 +110,6 @@ export default function EditTripPage() {
       const apiRes = await fetch(`/api/previous-trips`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-<<<<<<< HEAD
-        body: JSON.stringify({ id, ...formData, img: imageUrl }),
-=======
         body: JSON.stringify({
           id,
           ...formData,
@@ -137,7 +117,6 @@ export default function EditTripPage() {
           videos: sanitizeMediaUrls(formData.videos),
           img: imageUrl,
         }),
->>>>>>> origin/dev
       });
 
       if (!apiRes.ok) throw new Error("Failed to update trip");
@@ -154,27 +133,6 @@ export default function EditTripPage() {
       <h1 className="text-2xl font-bold mb-6">Edit Previous Trip</h1>
       <form onSubmit={handleUpdate} className="space-y-6">
         
-<<<<<<< HEAD
-        {/* Heading */}
-        <div className="space-y-2">
-          <Label htmlFor="heading">Trip Name (Heading)</Label>
-          <Input
-            id="heading"
-            required
-            value={formData.heading}
-            onChange={(e) => setFormData({ ...formData, heading: e.target.value })}
-          />
-        </div>
-
-        {/* SubHeading */}
-        <div className="space-y-2">
-          <Label htmlFor="subHeading">Subtitle / Date</Label>
-          <Input
-            id="subHeading"
-            required
-            value={formData.subHeading}
-            onChange={(e) => setFormData({ ...formData, subHeading: e.target.value })}
-=======
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Heading */}
           <div className="space-y-2">
@@ -228,17 +186,12 @@ export default function EditTripPage() {
             placeholder="Write 2-4 paragraphs describing the trip, highlights, vibes..."
             value={formData.summary}
             onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
->>>>>>> origin/dev
           />
         </div>
 
         {/* Link */}
         <div className="space-y-2">
-<<<<<<< HEAD
-          <Label htmlFor="link">Instagram/Reel Link (Optional)</Label>
-=======
           <Label htmlFor="link">Primary Instagram Action Link (Opens when 'View on Instagram' clicked)</Label>
->>>>>>> origin/dev
           <Input
             id="link"
             value={formData.link}
@@ -246,8 +199,6 @@ export default function EditTripPage() {
           />
         </div>
 
-<<<<<<< HEAD
-=======
         <div className="p-4 border border-dashed rounded-lg space-y-6">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Glimpses Gallery</h3>
 
@@ -314,17 +265,12 @@ export default function EditTripPage() {
           </Button>
         </div>
 
->>>>>>> origin/dev
         {/* Image Preview & Upload */}
         <div className="space-y-2">
           <Label>Trip Image</Label>
           <div className="flex flex-col gap-2">
             <img 
-<<<<<<< HEAD
-              src={newImage.preview || formData.img} 
-=======
               src={newImage.preview || formData.img || null} 
->>>>>>> origin/dev
               alt="Current Preview" 
               className="h-48 w-full object-cover rounded-md border shadow-sm" 
             />

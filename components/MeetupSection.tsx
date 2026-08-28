@@ -56,6 +56,8 @@ export default function MeetupSection({ title, cards }: { title: string, cards: 
                     src={card.img}
                     alt={card.city}
                     fill
+                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 340px"
+                    unoptimized={!card.img?.includes("res.cloudinary.com")}
                     className="object-cover"
                   />
                 </div>

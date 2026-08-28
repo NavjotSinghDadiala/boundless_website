@@ -7,9 +7,9 @@ function Proud() {
   return (
     <>
       <DottedSection
-        headingStyle="text-brown text-nowrap"
+        headingStyle="text-brown"
         svgFill="#C0ECBF"
-        sectionHeading="We proud to have"
+        sectionHeading="We are proud to have"
         dotColor="#c4b5fd"
       >
         <div className="relative w-full overflow-hidden">

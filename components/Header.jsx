@@ -2,14 +2,9 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence, useScroll, useMotionValueEvent } from "framer-motion";
-<<<<<<< HEAD
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
-=======
-import Image from "next/image";
-import { usePathname } from "next/navigation";
->>>>>>> origin/dev
 
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -94,22 +89,13 @@ export default function Header() {
         }}
         animate={hidden ? "hidden" : "visible"}
         transition={{ duration: 0.3, ease: "easeInOut" }}
-<<<<<<< HEAD
-        className={`flex justify-between items-center p-4 md:p-6 fixed w-full top-0 z-[9999] transition-colors duration-300 ${isScrolled ? "bg-amber-50 shadow-md" : "bg-transparent"
-          }`}
-      >
-        <Link href="/" className="w-15 h-15 bg-[#3B001B] rounded-full flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
-          <Image src="/Logo Bound.png" alt="Logo" width={56} height={56} className="object-contain" />
-        </Link>
-=======
         className={`flex justify-between items-center p-4 md:p-6 fixed w-full top-0 z-[9999] transition-colors duration-300 ${
           isScrolled ? "bg-amber-50 shadow-md" : "bg-transparent"
         }`}
       >
-        <div className="w-15 h-15 bg-[#3B001B] rounded-full flex items-center justify-center overflow-hidden">
+        <Link href="/" className="w-15 h-15 bg-[#3B001B] rounded-full flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
           <Image src="/Logo Bound.png" alt="Logo" width={56} height={56} className="object-contain" />
-        </div>
->>>>>>> origin/dev
+        </Link>
 
         <div className="relative z-[1000]">
           <button

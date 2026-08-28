@@ -6,23 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-<<<<<<< HEAD
-import { Loader2Icon } from "lucide-react";
-=======
 import { Loader2Icon, PlusIcon, TrashIcon } from "lucide-react";
 import MediaFileUpload from "@/components/MediaFileUpload";
 import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
->>>>>>> origin/dev
 
 export default function AddPreviousTripPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   
-<<<<<<< HEAD
-  const [formData, setFormData] = useState({ heading: "", subHeading: "", link: "" });
-  const [image, setImage] = useState({ file: null, preview: null, base64: null });
-
-=======
   const [formData, setFormData] = useState({
     heading: "",
     subHeading: "",
@@ -58,7 +49,6 @@ export default function AddPreviousTripPage() {
     setFormData({ ...formData, graphData: updated });
   };
 
->>>>>>> origin/dev
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -70,19 +60,6 @@ export default function AddPreviousTripPage() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-<<<<<<< HEAD
-    if (!image.base64) return toast.error("Please select an image.");
-
-    setLoading(true);
-    try {
-      const uploadRes = await fetch("/api/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images: [image.base64], folder: "previous_trips" }),
-      });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
-=======
     setLoading(true);
     try {
       let imageUrl = "";
@@ -97,21 +74,16 @@ export default function AddPreviousTripPage() {
         if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
         imageUrl = uploadData.links?.[0] || "";
       }
->>>>>>> origin/dev
 
       const apiRes = await fetch("/api/previous-trips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-<<<<<<< HEAD
-        body: JSON.stringify({ ...formData, img: uploadData.links?.[0] }),
-=======
         body: JSON.stringify({
           ...formData,
           photos: sanitizeMediaUrls(formData.photos),
           videos: sanitizeMediaUrls(formData.videos),
           img: imageUrl,
         }),
->>>>>>> origin/dev
       });
 
       if (!apiRes.ok) throw new Error("Failed to save trip");
@@ -127,21 +99,6 @@ export default function AddPreviousTripPage() {
       <h1 className="text-2xl font-bold mb-6">Add Previous Trip</h1>
       <form onSubmit={handleSave} className="space-y-6">
         
-<<<<<<< HEAD
-        <div className="space-y-2">
-          <Label htmlFor="heading">Trip Name</Label>
-          <Input id="heading" required value={formData.heading} onChange={(e) => setFormData({ ...formData, heading: e.target.value })} />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="subHeading">Subtitle / Date</Label>
-          <Input id="subHeading" required value={formData.subHeading} onChange={(e) => setFormData({ ...formData, subHeading: e.target.value })} />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="link">Instagram/Reel Link (Optional)</Label>
-          <Input id="link" value={formData.link} onChange={(e) => setFormData({ ...formData, link: e.target.value })} />
-=======
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="heading">Trip Card Name (Heading)</Label>
@@ -247,18 +204,12 @@ export default function AddPreviousTripPage() {
           >
             <PlusIcon className="mr-2 h-4 w-4" /> Add Graph Entry
           </Button>
->>>>>>> origin/dev
         </div>
 
         <div className="space-y-2">
           <Label htmlFor="image">Trip Image</Label>
-<<<<<<< HEAD
-          {image.preview && <img src={image.preview} alt="Preview" className="h-40 object-cover rounded-md mb-2 border" />}
-          <Input id="image" type="file" accept="image/*" required onChange={handleFileChange} />
-=======
           {image.preview && <img src={image.preview} alt="Preview" className="h-40 w-full object-cover rounded-md mb-2 border" />}
           <Input id="image" type="file" accept="image/*" onChange={handleFileChange} />
->>>>>>> origin/dev
         </div>
 
         <Button type="submit" className="w-full" disabled={loading}>

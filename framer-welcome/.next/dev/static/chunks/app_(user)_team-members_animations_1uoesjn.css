@@ -1,0 +1,36 @@
+/* [project]/app/(user)/team-members/animations.css [app-client] (css) */
+.fade-in {
+  opacity: 0;
+  transition: opacity .8s cubic-bezier(.22, 1, .36, 1), transform .8s cubic-bezier(.22, 1, .36, 1);
+  transform: translateY(40px);
+}
+
+.fade-in.visible {
+  opacity: 1;
+  transform: none;
+}
+
+.wave-animate {
+  animation: 8s linear infinite alternate waveMove;
+}
+
+@keyframes waveMove {
+  0% {
+    background-position-x: 0;
+  }
+
+  100% {
+    background-position-x: 80px;
+  }
+}
+
+.icon-animate {
+  transition: transform .2s, color .2s;
+}
+
+.icon-animate:hover {
+  transform: scale(1.2)rotate(-8deg);
+  color: #ffe066 !important;
+}
+
+/*# sourceMappingURL=app_%28user%29_team-members_animations_1uoesjn.css.map*/
