@@ -4,7 +4,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+<<<<<<< HEAD
 import Link from "next/link";
+=======
+>>>>>>> origin/dev
 
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -50,7 +53,11 @@ export default function Header() {
 
   return (
     <header className="flex bg-transparent justify-between items-center p-4 md:p-6 relative z-10">
+<<<<<<< HEAD
       <Link href="/" className="w-15 h-15 bg-[#3B001B] rounded-full flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
+=======
+      <div className="w-15 h-15 bg-[#3B001B] rounded-full flex items-center justify-center overflow-hidden">
+>>>>>>> origin/dev
         <Image
           src="/Logo Bound.png"
           alt="Logo"
@@ -58,7 +65,11 @@ export default function Header() {
           height={56}
           className="object-contain"
         />
+<<<<<<< HEAD
       </Link>
+=======
+      </div>
+>>>>>>> origin/dev
       <div className="relative z-[1000]">
         <button
           className="bg-[#3B001B] text-white border-none px-6 py-2 rounded-2xl text-lg font-bold flex items-center hover:bg-[#3B001B] transition"

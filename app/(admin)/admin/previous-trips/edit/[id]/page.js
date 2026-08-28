@@ -6,7 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+<<<<<<< HEAD
 import { Loader2Icon } from "lucide-react";
+=======
+import { Loader2Icon, PlusIcon, TrashIcon } from "lucide-react";
+import MediaFileUpload from "@/components/MediaFileUpload";
+import { getTripPhotos, getTripVideos, sanitizeMediaUrls } from "@/lib/previous-trip-media";
+>>>>>>> origin/dev
 
 export default function EditTripPage() {
   const router = useRouter();
@@ -18,7 +24,20 @@ export default function EditTripPage() {
     heading: "", 
     subHeading: "", 
     link: "", 
+<<<<<<< HEAD
     img: "" 
+=======
+    img: "",
+    title: "",
+    date: "",
+    venue: "",
+    participants: "",
+    summary: "",
+    feedback: "",
+    photos: [],
+    videos: [],
+    graphData: [],
+>>>>>>> origin/dev
   });
   
   const [newImage, setNewImage] = useState({ file: null, preview: null, base64: null });
@@ -30,9 +49,22 @@ export default function EditTripPage() {
         const data = await res.json();
         if (res.ok) setFormData({ 
           heading: data.heading || "", 
+<<<<<<< HEAD
           subHeading: data.subHeading || "", 
           link: data.link || "", 
           img: data.img || "" 
+=======
+          subHeading: data.subHeading || data.subheading || "",
+          link: data.link || "", 
+          img: data.img || "",
+          date: data.date || "",
+          venue: data.venue || "",
+          participants: data.participants !== undefined ? data.participants : "",
+          summary: data.summary || "",
+          photos: getTripPhotos(data),
+          videos: getTripVideos(data),
+          graphData: data.graphData || [],
+>>>>>>> origin/dev
         });
       } catch (error) { 
         toast.error("Error loading trip details"); 
@@ -53,6 +85,28 @@ export default function EditTripPage() {
     }
   };
 
+<<<<<<< HEAD
+=======
+  const handleGraphValueChange = (index, field, value) => {
+    const updated = [...(formData.graphData || [])];
+    updated[index] = { ...updated[index], [field]: value };
+    setFormData({ ...formData, graphData: updated });
+  };
+
+  const addGraphEntry = () => {
+    setFormData({
+      ...formData,
+      graphData: [...(formData.graphData || []), { x: "", y: "" }],
+    });
+  };
+
+  const removeGraphEntry = (index) => {
+    const updated = [...(formData.graphData || [])];
+    updated.splice(index, 1);
+    setFormData({ ...formData, graphData: updated });
+  };
+
+>>>>>>> origin/dev
   const handleUpdate = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -73,7 +127,17 @@ export default function EditTripPage() {
       const apiRes = await fetch(`/api/previous-trips`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+<<<<<<< HEAD
         body: JSON.stringify({ id, ...formData, img: imageUrl }),
+=======
+        body: JSON.stringify({
+          id,
+          ...formData,
+          photos: sanitizeMediaUrls(formData.photos),
+          videos: sanitizeMediaUrls(formData.videos),
+          img: imageUrl,
+        }),
+>>>>>>> origin/dev
       });
 
       if (!apiRes.ok) throw new Error("Failed to update trip");
@@ -90,6 +154,7 @@ export default function EditTripPage() {
       <h1 className="text-2xl font-bold mb-6">Edit Previous Trip</h1>
       <form onSubmit={handleUpdate} className="space-y-6">
         
+<<<<<<< HEAD
         {/* Heading */}
         <div className="space-y-2">
           <Label htmlFor="heading">Trip Name (Heading)</Label>
@@ -109,12 +174,71 @@ export default function EditTripPage() {
             required
             value={formData.subHeading}
             onChange={(e) => setFormData({ ...formData, subHeading: e.target.value })}
+=======
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Heading */}
+          <div className="space-y-2">
+            <Label htmlFor="heading">Trip Card Name (Heading)</Label>
+            <Input
+              id="heading"
+              value={formData.heading}
+              onChange={(e) => setFormData({ ...formData, heading: e.target.value })}
+            />
+          </div>
+          {/* SubHeading */}
+          <div className="space-y-2">
+            <Label htmlFor="subHeading">Card Subtitle / Date</Label>
+            <Input
+              id="subHeading"
+              value={formData.subHeading || ""}
+              onChange={(e) => setFormData({ ...formData, subHeading: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+          <div className="space-y-2">
+            <Label htmlFor="participants">Total Participants</Label>
+            <Input 
+              id="participants" 
+              type="number" 
+              placeholder="e.g. 25" 
+              value={formData.participants} 
+              onChange={(e) => setFormData({ ...formData, participants: e.target.value })} 
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="venue">Venue / Route</Label>
+          <Input 
+            id="venue" 
+            placeholder="e.g. Mini Trip - Patna to Bodhgaya" 
+            value={formData.venue} 
+            onChange={(e) => setFormData({ ...formData, venue: e.target.value })} 
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="summary">Summary / Recap (Long Text)</Label>
+          <textarea
+            id="summary"
+            className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            placeholder="Write 2-4 paragraphs describing the trip, highlights, vibes..."
+            value={formData.summary}
+            onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
+>>>>>>> origin/dev
           />
         </div>
 
         {/* Link */}
         <div className="space-y-2">
+<<<<<<< HEAD
           <Label htmlFor="link">Instagram/Reel Link (Optional)</Label>
+=======
+          <Label htmlFor="link">Primary Instagram Action Link (Opens when 'View on Instagram' clicked)</Label>
+>>>>>>> origin/dev
           <Input
             id="link"
             value={formData.link}
@@ -122,12 +246,85 @@ export default function EditTripPage() {
           />
         </div>
 
+<<<<<<< HEAD
+=======
+        <div className="p-4 border border-dashed rounded-lg space-y-6">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Glimpses Gallery</h3>
+
+          <MediaFileUpload
+            label="Photos"
+            inputId="glimpses-photos"
+            urls={formData.photos}
+            onChange={(photos) => setFormData({ ...formData, photos })}
+            accept="image/*"
+            resourceType="image"
+          />
+
+          <MediaFileUpload
+            label="Videos"
+            inputId="glimpses-videos"
+            urls={formData.videos}
+            onChange={(videos) => setFormData({ ...formData, videos })}
+            accept="video/*"
+            resourceType="video"
+          />
+        </div>
+
+        <div className="p-4 border border-dashed rounded-lg space-y-4">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Graph Data</h3>
+          
+          {(formData.graphData || []).map((entry, index) => (
+            <div key={index} className="flex items-end gap-4">
+              <div className="flex-1 space-y-1">
+                <Label htmlFor={`graph-x-${index}`}>X Value</Label>
+                <Input
+                  id={`graph-x-${index}`}
+                  placeholder="e.g. 1"
+                  value={entry.x}
+                  onChange={(e) => handleGraphValueChange(index, "x", e.target.value)}
+                />
+              </div>
+              <div className="flex-1 space-y-1">
+                <Label htmlFor={`graph-y-${index}`}>Y Value</Label>
+                <Input
+                  id={`graph-y-${index}`}
+                  placeholder="e.g. 10"
+                  value={entry.y}
+                  onChange={(e) => handleGraphValueChange(index, "y", e.target.value)}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="destructive"
+                size="icon"
+                onClick={() => removeGraphEntry(index)}
+              >
+                <TrashIcon className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={addGraphEntry}
+            className="w-full mt-2"
+          >
+            <PlusIcon className="mr-2 h-4 w-4" /> Add Graph Entry
+          </Button>
+        </div>
+
+>>>>>>> origin/dev
         {/* Image Preview & Upload */}
         <div className="space-y-2">
           <Label>Trip Image</Label>
           <div className="flex flex-col gap-2">
             <img 
+<<<<<<< HEAD
               src={newImage.preview || formData.img} 
+=======
+              src={newImage.preview || formData.img || null} 
+>>>>>>> origin/dev
               alt="Current Preview" 
               className="h-48 w-full object-cover rounded-md border shadow-sm" 
             />
