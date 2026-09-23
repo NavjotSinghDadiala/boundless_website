@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
@@ -36,6 +37,11 @@ export async function GET(req) {
 /* POST: Save a new trip */
 export async function POST(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const tripData = {
       heading: body.heading,
@@ -66,6 +72,11 @@ export async function POST(req) {
 /* PUT: Update trip */
 export async function PUT(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const {
       id,
@@ -109,6 +120,11 @@ export async function PUT(req) {
 /* DELETE: Remove trip */
 export async function DELETE(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 

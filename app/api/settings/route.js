@@ -1,17 +1,15 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { db } from "@/lib/firebase";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { adminDb } from "@/lib/firebase-admin";
 
 const DEFAULT_VIDEO_ID = "6tDnTV1wHKI";
 
 export async function GET() {
   try {
-    const docRef = doc(db, "settings", "homepage");
-    const docSnap = await getDoc(docRef);
+    const docSnap = await adminDb.collection("settings").doc("homepage").get();
 
-    if (docSnap.exists()) {
-      const data = docSnap.data();
+    if (docSnap.exists) {
+      const data = docSnap.data() || {};
       return NextResponse.json({
         youtubeVideoId: data.youtubeVideoId || DEFAULT_VIDEO_ID,
       }, { status: 200 });
@@ -50,8 +48,7 @@ export async function POST(request) {
       }
     }
 
-    const docRef = doc(db, "settings", "homepage");
-    await setDoc(docRef, {
+    await adminDb.collection("settings").doc("homepage").set({
       youtubeVideoId: cleanVideoId,
       updatedAt: new Date().toISOString(),
     }, { merge: true });

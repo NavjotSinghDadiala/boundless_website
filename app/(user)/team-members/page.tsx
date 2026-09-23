@@ -1,8 +1,5 @@
 import "./animations.css";
-import Header from "@/components/Header";
 import CouncilSection from "@/components/CouncilSection";
-import AmazingTeam from "@/components/AmazingTeam";
-import Footer from "@/components/Footer";
 import New from "@/components/New"
 export default function TeamMembersPage() {
   return (

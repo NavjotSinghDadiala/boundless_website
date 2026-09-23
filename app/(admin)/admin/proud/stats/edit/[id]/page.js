@@ -13,7 +13,7 @@ export default function EditProudStatPage() {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [formData, setFormData] = useState({ label: "", number: "", sortOrder: "0" });
+  const [formData, setFormData] = useState({ label: "", number: "" });
 
   useEffect(() => {
     const fetchStat = async () => {
@@ -24,7 +24,6 @@ export default function EditProudStatPage() {
           setFormData({
             label: data.label || "",
             number: String(data.number || "0"),
-            sortOrder: String(data.sortOrder || "0"),
           });
         } else {
           throw new Error(data.error || "Failed to load statistic");
@@ -50,7 +49,6 @@ export default function EditProudStatPage() {
           id,
           label: formData.label,
           number: parseInt(formData.number) || 0,
-          sortOrder: parseInt(formData.sortOrder) || 0,
         }),
       });
 
@@ -83,11 +81,6 @@ export default function EditProudStatPage() {
         <div className="space-y-2">
           <Label htmlFor="number">Value</Label>
           <Input id="number" type="number" required value={formData.number} onChange={(e) => setFormData({ ...formData, number: e.target.value })} />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="sortOrder">Sort Order</Label>
-          <Input id="sortOrder" type="number" required value={formData.sortOrder} onChange={(e) => setFormData({ ...formData, sortOrder: e.target.value })} />
         </div>
 
         <div className="flex gap-4">

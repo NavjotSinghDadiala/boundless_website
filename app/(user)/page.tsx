@@ -27,6 +27,7 @@ import GetToKnowUs from "@/components/GetToKnowUs";
 import AmazingTeam from "@/components/AmazingTeam";
 import Footer from "@/components/Footer";
 import StatsShowcase from "@/components/StatsShowcase";
+import ParallaxHero from "@/components/ParallaxHero";
 
 export default function BoundlessTravelSociety() {
   function borderBetweenPages(col: string) {
@@ -49,39 +50,42 @@ export default function BoundlessTravelSociety() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-amber-50 to-amber-100">
-      {/* Header */}
+    <>
+      {/* ── Parallax Mountain Hero — full bleed, outside any wrapper ── */}
+      <ParallaxHero />
 
-      {/* Hero Section */}
-      <Hero />
+      <div className="min-h-screen bg-gradient-to-b from-amber-50 to-amber-100">
+        {/* ── Original Hero (video section) ── */}
+        <Hero />
 
-      <div id="upcoming-trips">
-        <TripsPlanned />
+        <div id="upcoming-trips">
+          <TripsPlanned />
+        </div>
+        <div id="gallery">
+          <Gallery />
+        </div>
+        <div id="previous-trips">
+          <Prev />
+        </div>
+        <div id="city-meetups">
+          <Section
+            svgFill="#FAE0BE"
+            sectionHeading="City Meetups"
+            headingStyle="text-brown"
+          >
+            <CityMeetup />
+          </Section>
+        </div>
+        <div id="stats">
+          <Proud />
+        </div>
+        <div id="about">
+          <About />
+        </div>
+        <div id="team">
+          <AmazingTeam />
+        </div>
       </div>
-      <div id="gallery">
-        <Gallery />
-      </div>
-      <div id="previous-trips">
-        <Prev />
-      </div>
-      <div id="city-meetups">
-        <Section
-          svgFill="#FAE0BE"
-          sectionHeading="City Meetups"
-          headingStyle="text-brown"
-        >
-          <CityMeetup />
-        </Section>
-      </div>
-      <div id="stats">
-      <Proud />
-      </div>
-      <div id="about">
-        <About />
-      </div>
-      <div id="team">
-        <AmazingTeam />
-      </div>
-    </div>
+    </>
   );
 }

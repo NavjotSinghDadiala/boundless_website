@@ -1,6 +1,6 @@
 // lib/firebase-admin-secondary.ts
 // Secondary Firebase Admin — boundless-recovery project
-// Used as overflow when the primary Firebase (boundless-785f1) quota is exceeded.
+// Used as overflow when the primary Firebase quota is exceeded.
 import { initializeApp, cert, getApps, getApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 

@@ -1,55 +1,136 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { adminAuth } from "@/lib/firebase-admin";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  updateDoc,
-  query,
-  where,
-  orderBy,
-  setDoc,
-  serverTimestamp
-} from "firebase/firestore";
-
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { sendApprovalEmail, sendCorrectionRequestEmail } from "@/lib/brevo";
+import { sendTripApprovalEmail } from "@/lib/email/mailer";
+import {
+  getDeduplicatedRegistrationsForTrip,
+  getCanonicalTripRegDocId,
+  mergeLegacyIntoCanonical,
+} from "@/lib/tripRegistration";
+import {
+  isAuthorizedAdmin,
+  getAuthenticatedCoordinator,
+  getCoordinatorTripScope,
+  isApprovedRegistrationStatus,
+} from "@/lib/coordinatorAuth";
+
+// Helper to resolve the coordinator assigned to a student's chosen option
+function resolveAssignedCoordinator(coordinators, formData) {
+  if (!Array.isArray(coordinators) || coordinators.length === 0) return null;
+  if (coordinators.length === 1) {
+    const c = coordinators[0];
+    return typeof c === "object" && c !== null ? c : { name: String(c) };
+  }
+
+  const studentAnswers = Object.values(formData || {})
+    .filter((val) => typeof val === "string")
+    .map((val) => val.trim().toLowerCase());
+
+  // Match coordinator by assignedOption against student's form choices
+  for (const c of coordinators) {
+    if (typeof c === "object" && c !== null && c.assignedOption) {
+      const opt = String(c.assignedOption).trim().toLowerCase();
+      if (studentAnswers.some((ans) => ans === opt || ans.includes(opt) || opt.includes(ans))) {
+        return c;
+      }
+    }
+  }
+
+  // Fallback to the first coordinator
+  const first = coordinators[0];
+  return typeof first === "object" && first !== null ? first : { name: String(first) };
+}
+
+// Helper to resolve city/option-specific WhatsApp Link & QR Code
+function resolveWhatsappDetails(tripData, formData) {
+  let whatsappLink = tripData?.whatsappLink || "";
+  let qrCodeUrl = tripData?.qrCodeUrl || "";
+
+  const studentAnswers = Object.values(formData || {});
+  const citySettings = tripData?.cityWhatsappSettings || {};
+  for (const ans of studentAnswers) {
+    if (typeof ans === "string") {
+      const trimmed = ans.trim();
+      const matchedKey = Object.keys(citySettings).find(
+        (k) => k.toLowerCase() === trimmed.toLowerCase()
+      );
+      if (matchedKey && citySettings[matchedKey]) {
+        if (citySettings[matchedKey].whatsappLink) {
+          whatsappLink = citySettings[matchedKey].whatsappLink;
+        }
+        if (citySettings[matchedKey].qrCodeUrl) {
+          qrCodeUrl = citySettings[matchedKey].qrCodeUrl;
+        }
+        break;
+      }
+    }
+  }
+
+  return { whatsappLink, qrCodeUrl };
+}
 
 // Helper function to archive the attendee and coordinator rosters
 async function archiveEventRoster(tripId) {
   try {
-    const tripDocRef = doc(db, "trips", tripId);
-    const tripSnap = await getDoc(tripDocRef);
-    if (!tripSnap.exists()) return;
-    const tripData = tripSnap.data();
+    const tripDocRef = adminDb.collection("trips").doc(tripId);
+    const tripSnap = await tripDocRef.get();
+    if (!tripSnap.exists) return;
+    const tripData = tripSnap.data() || {};
 
-    // 1. Fetch all paid attendees for this trip
-    const regQuery = query(
-      collection(db, "user-registrations"),
-      where("tripId", "==", tripId),
-      where("status", "==", "paid")
-    );
-    const regSnap = await getDocs(regQuery);
-    const attendees = regSnap.docs.map((d) => {
-      const data = d.data();
+    // 1. Fetch all paid attendees for this trip from both canonical and legacy
+    const [canSnap, legSnap] = await Promise.all([
+      adminDb.collection("tripRegistrations").where("tripId", "==", tripId).where("status", "==", "paid").get(),
+      adminDb.collection("user-registrations").where("tripId", "==", tripId).where("status", "==", "paid").get(),
+    ]);
+
+    const attendeesMap = new Map();
+    const seenEmails = new Set();
+
+    for (const d of canSnap.docs) {
+      const data = d.data() || {};
       const nameKey = Object.keys(data.formData || {}).find(
         (k) => k.toLowerCase().includes("name") || k.toLowerCase().includes("fullname")
       );
       const studentName = nameKey ? data.formData[nameKey] : "Student";
-      return {
+      const key = data.uid || data.email || d.id;
+      attendeesMap.set(key, {
         uid: data.uid,
         email: data.email,
         name: studentName,
         gender: data.gender || "unknown",
-        paymentVerifiedAt: data.paymentVerifiedAt?.toDate?.()?.toISOString() || null,
-      };
-    });
+        paymentVerifiedAt: data.paymentVerifiedAt?.toDate?.()?.toISOString() || data.paymentVerifiedAt || null,
+      });
+      if (data.email) seenEmails.add(data.email.toLowerCase());
+    }
+
+    for (const d of legSnap.docs) {
+      const data = d.data() || {};
+      const uid = data.uid;
+      const email = (data.email || "").toLowerCase();
+      if ((!uid || !attendeesMap.has(uid)) && (!email || !seenEmails.has(email))) {
+        const nameKey = Object.keys(data.formData || {}).find(
+          (k) => k.toLowerCase().includes("name") || k.toLowerCase().includes("fullname")
+        );
+        const studentName = nameKey ? data.formData[nameKey] : "Student";
+        const key = uid || email || d.id;
+        attendeesMap.set(key, {
+          uid: data.uid,
+          email: data.email,
+          name: studentName,
+          gender: data.gender || "unknown",
+          paymentVerifiedAt: data.paymentVerifiedAt?.toDate?.()?.toISOString() || data.paymentVerifiedAt || null,
+        });
+      }
+    }
+
+    const attendees = Array.from(attendeesMap.values());
 
     // 2. Save archived roster
-    const archiveRef = doc(db, "archived_rosters", tripId);
-    await setDoc(archiveRef, {
+    const archiveRef = adminDb.collection("archived_rosters").doc(tripId);
+    await archiveRef.set({
       tripId,
       tripName: tripData.name || "Unnamed Trip",
       coordinators: tripData.coordinators || [],
@@ -58,7 +139,7 @@ async function archiveEventRoster(tripId) {
     });
 
     // 3. Mark trip roster as saved
-    await updateDoc(tripDocRef, {
+    await tripDocRef.update({
       finalRosterSaved: true,
     });
     console.log(`Successfully archived event roster for trip ${tripId} with ${attendees.length} paid attendees.`);
@@ -67,50 +148,7 @@ async function archiveEventRoster(tripId) {
   }
 }
 
-async function checkAuth(req, tripId) {
-  try {
-    const session = await getServerSession();
-    if (session) return true;
-
-    const { searchParams } = new URL(req.url);
-    let token = searchParams.get("token");
-
-    if (!token && req.method !== "GET" && req.method !== "HEAD") {
-      try {
-        const clone = req.clone();
-        const body = await clone.json();
-        token = body.token;
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    if (!token) return false;
-
-    const decoded = await adminAuth.verifyIdToken(token);
-    const email = decoded.email;
-    if (!email) return false;
-
-    // Check if user coordinates this trip
-    const tripSnap = await getDoc(doc(db, "trips", tripId));
-    if (!tripSnap.exists()) return false;
-    const tripData = tripSnap.data();
-
-    const isCoordinated = (tripData.coordinators || []).some((c) => {
-      if (typeof c === "object" && c !== null) {
-        return c.email?.toLowerCase() === email.toLowerCase();
-      }
-      return String(c).toLowerCase() === email.toLowerCase();
-    });
-
-    return isCoordinated;
-  } catch (err) {
-    console.error("Auth check failed:", err);
-    return false;
-  }
-}
-
-/* GET → Retrieve all registrations for a trip */
+/* GET → Retrieve registrations for a trip with role-based visibility */
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
@@ -120,76 +158,21 @@ export async function GET(req) {
       return NextResponse.json({ error: "Trip ID is required" }, { status: 400 });
     }
 
-    const authorized = await checkAuth(req, tripId);
-    if (!authorized) {
+    const isAdmin = await isAuthorizedAdmin(req);
+
+    if (!isAdmin) {
+      const coordinatorToken = await getAuthenticatedCoordinator(req);
+      if (coordinatorToken) {
+        return NextResponse.json(
+          { error: "Forbidden: Trip Coordinators cannot access administrative registration data. Please use /api/coordinator/dashboard." },
+          { status: 403 }
+        );
+      }
       return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
     }
 
-    // Determine if the request is from a coordinator with a specific option assignment
-    let assignedOption = null;
-    const session = await getServerSession();
-    if (!session) {
-      let token = searchParams.get("token");
-      if (token) {
-        try {
-          const decoded = await adminAuth.verifyIdToken(token);
-          const email = decoded.email;
-          if (email) {
-            const tripSnap = await getDoc(doc(db, "trips", tripId));
-            if (tripSnap.exists()) {
-              const tripData = tripSnap.data();
-              const coordinator = (tripData.coordinators || []).find((c) => {
-                if (typeof c === "object" && c !== null) {
-                  return c.email?.toLowerCase() === email.toLowerCase();
-                }
-                return String(c).toLowerCase() === email.toLowerCase();
-              });
-              if (coordinator && typeof coordinator === "object" && coordinator.assignedOption) {
-                assignedOption = coordinator.assignedOption.trim().toLowerCase();
-              }
-            }
-          }
-        } catch (e) {
-          console.error("Error decoding token for assigned option check:", e);
-        }
-      }
-    }
-
-    const q = query(
-      collection(db, "user-registrations"),
-      where("tripId", "==", tripId)
-    );
-    const snapshot = await getDocs(q);
-    let registrations = snapshot.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        email: data.email,
-        uid: data.uid,
-        status: data.status || "registered",
-        gender: data.gender || "unknown",
-        submittedAt: data.submittedAt?.toDate?.()?.toISOString() || null,
-        paymentVerifiedAt: data.paymentVerifiedAt?.toDate?.()?.toISOString() || null,
-        formData: data.formData || {},
-        studentIdVerified: data.studentIdVerified || false,
-        consentFormVerified: data.consentFormVerified || false,
-        verifiedConsentForms: data.verifiedConsentForms || {},
-        issueText: data.issueText || "",
-        actionRequiredFields: data.actionRequiredFields || [],
-        conversationHistory: (data.conversationHistory || []).map(entry => ({
-          ...entry,
-          timestamp: entry.timestamp?.toDate?.()?.toISOString?.() || entry.timestamp || null,
-        })),
-      };
-    });
-
-    if (assignedOption) {
-      registrations = registrations.filter((reg) => {
-        return Object.values(reg.formData || {}).some(
-          (val) => typeof val === "string" && val.trim().toLowerCase() === assignedOption
-        );
-      });
-    }
+    // Retrieve all deduplicated registrations for this trip (canonical precedence)
+    let registrations = await getDeduplicatedRegistrationsForTrip(tripId);
 
     // Sort in-memory by submittedAt desc
     registrations.sort((a, b) => {
@@ -205,12 +188,48 @@ export async function GET(req) {
   }
 }
 
-/* POST → Update individual registration status (e.g. approve to pay, reject) */
+/* POST → Update individual registration status (Admin Only - Coordinators Blocked with 403) */
 export async function POST(req) {
   try {
+    const isAdmin = await isAuthorizedAdmin(req);
+
+    // STRICT SECURITY BOUNDARY: Coordinators are strictly read-only and blocked from mutations
+    if (!isAdmin) {
+      const coordinatorToken = await getAuthenticatedCoordinator(req);
+      if (coordinatorToken) {
+        return NextResponse.json(
+          { error: "Forbidden: Trip Coordinators have read-only access and cannot modify registrations." },
+          { status: 403 }
+        );
+      }
+      return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
+    }
+
+    let adminEmail = "Admin";
+    try {
+      const session = await getServerSession(authOptions);
+      if (session?.user?.email) {
+        adminEmail = session.user.email;
+      }
+    } catch {
+      // fallback
+    }
+
     const clone = req.clone();
     const body = await clone.json();
-    const { registrationId, status, studentIdVerified, consentFormVerified, verifiedConsentForms, issueText, actionRequiredFields } = body;
+    const {
+      registrationId,
+      action,
+      status: directStatus,
+      reason,
+      issueText,
+      actionRequiredFields,
+      studentIdVerified,
+      consentFormVerified,
+      verifiedConsentForms,
+      consentTemplateId,
+      verified,
+    } = body;
 
     if (!registrationId) {
       return NextResponse.json(
@@ -219,298 +238,513 @@ export async function POST(req) {
       );
     }
 
-    const regRef = doc(db, "user-registrations", registrationId);
-    const regSnap = await getDoc(regRef);
-    if (!regSnap.exists()) {
+    // Resolve registration: check canonical first, then legacy
+    let regSnap = null;
+    let isCanonical = false;
+    let canonicalDocId = null;
+    let legacyDocId = null;
+
+    const canRef = adminDb.collection("tripRegistrations").doc(registrationId);
+    const canSnap = await canRef.get();
+    if (canSnap.exists) {
+      regSnap = canSnap;
+      isCanonical = true;
+      canonicalDocId = canSnap.id;
+    } else {
+      const legRef = adminDb.collection("user-registrations").doc(registrationId);
+      const legSnap = await legRef.get();
+      if (legSnap.exists) {
+        regSnap = legSnap;
+        isCanonical = false;
+        legacyDocId = legSnap.id;
+      }
+    }
+
+    if (!regSnap || !regSnap.exists) {
       return NextResponse.json({ error: "Registration not found" }, { status: 404 });
     }
-    const tripId = regSnap.data().tripId;
 
-    const authorized = await checkAuth(req, tripId);
-    if (!authorized) {
-      return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
+    const regData = regSnap.data() || {};
+    const tripId = regData.tripId;
+    const uid = regData.uid;
+    const email = regData.email;
+    const oldStatus = regData.status || "registered";
+    const gender = (regData.gender || "unknown").toLowerCase();
+
+    if (isCanonical) {
+      if (email) legacyDocId = `${tripId}_${email}`;
+    } else {
+      if (uid) canonicalDocId = getCanonicalTripRegDocId(tripId, uid);
     }
 
-    // Check assignedOption restriction
-    const session = await getServerSession();
-    if (!session) {
-      let token = body.token;
-      if (!token) {
-        const { searchParams } = new URL(req.url);
-        token = searchParams.get("token");
-      }
-      if (token) {
-        try {
-          const decoded = await adminAuth.verifyIdToken(token);
-          const email = decoded.email;
-          if (email) {
-            const tripSnap = await getDoc(doc(db, "trips", tripId));
-            if (tripSnap.exists()) {
-              const tripData = tripSnap.data();
-              const coordinator = (tripData.coordinators || []).find((c) => {
-                if (typeof c === "object" && c !== null) {
-                  return c.email?.toLowerCase() === email.toLowerCase();
-                }
-                return String(c).toLowerCase() === email.toLowerCase();
-              });
-              if (coordinator && typeof coordinator === "object" && coordinator.assignedOption) {
-                const assignedOption = coordinator.assignedOption.trim().toLowerCase();
-                const matches = Object.values(regSnap.data().formData || {}).some(
-                  (val) => typeof val === "string" && val.trim().toLowerCase() === assignedOption
-                );
-                if (!matches) {
-                  return NextResponse.json(
-                    { error: "Unauthorized: Registration does not belong to your assigned option/city." },
-                    { status: 403 }
-                  );
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.error("Error verifying coordinator assigned option in POST:", e);
-        }
-      }
-    }
+    // Fetch trip document
+    const tripDocRef = adminDb.collection("trips").doc(tripId);
+    const tripSnap = await tripDocRef.get();
+    const tripData = tripSnap.exists ? tripSnap.data() || {} : {};
+
+    const nameKey = Object.keys(regData.formData || {}).find(
+      (k) => k.toLowerCase().includes("name") || k.toLowerCase().includes("fullname")
+    );
+    const userName = nameKey ? regData.formData[nameKey] : "Student";
 
     const updatePayload = {
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     };
 
+    let auditEntry = null;
+    let emailResultDetails = null;
+
+    // Helper to evaluate confirmed state
+    const isConfirmedState = (s) => s === "approved_to_pay" || s === "paid" || s === "mail_sent";
+
+    // 1. Direct checkpoint toggles or batch verifications
     if (verifiedConsentForms !== undefined) {
-      const existingMap = regSnap.data().verifiedConsentForms || {};
+      const existingMap = regData.verifiedConsentForms || {};
       const newMap = { ...existingMap, ...verifiedConsentForms };
       updatePayload.verifiedConsentForms = newMap;
 
-      // Auto check if all are verified
-      const tripDocRef = doc(db, "trips", tripId);
-      const tripSnap = await getDoc(tripDocRef);
-      if (tripSnap.exists()) {
-        const tripData = tripSnap.data();
-        const templates = tripData.consentTemplates && tripData.consentTemplates.length > 0
-          ? tripData.consentTemplates
-          : (tripData.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
-        
-        let allOk = true;
-        for (const t of templates) {
-          if (!newMap[t.id]) {
-            allOk = false;
-            break;
-          }
-        }
-        if (templates.length > 0 && allOk) {
-          updatePayload.consentFormVerified = true;
-        } else if (templates.length > 0) {
-          updatePayload.consentFormVerified = false;
-        }
+      const templates = tripData.consentTemplates && tripData.consentTemplates.length > 0
+        ? tripData.consentTemplates
+        : (tripData.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
+
+      if (templates.length > 0) {
+        updatePayload.consentFormVerified = templates.every((t) => newMap[t.id]);
       }
     }
 
     if (consentFormVerified !== undefined) {
-      updatePayload.consentFormVerified = consentFormVerified;
+      updatePayload.consentFormVerified = Boolean(consentFormVerified);
     }
 
     if (studentIdVerified !== undefined) {
-      updatePayload.studentIdVerified = studentIdVerified;
+      updatePayload.studentIdVerified = Boolean(studentIdVerified);
     }
 
-    if (status === "approved_to_pay") {
-      const isVerified = studentIdVerified !== undefined ? studentIdVerified : (regSnap.data().studentIdVerified || false);
-      if (!isVerified) {
+    // 2. Action routing
+    if (action === "verify_student_id") {
+      const isVerified = studentIdVerified !== undefined
+        ? Boolean(studentIdVerified)
+        : (verified !== undefined ? Boolean(verified) : true);
+      updatePayload.studentIdVerified = isVerified;
+      auditEntry = {
+        type: "checkpoint_verified",
+        actor: adminEmail,
+        message: isVerified ? "Student ID document verified" : "Student ID verification revoked",
+        timestamp: new Date().toISOString(),
+      };
+    } else if (action === "verify_consent_form") {
+      const tId = consentTemplateId || "legacy-consent";
+      const isVerified = verified !== undefined ? Boolean(verified) : true;
+      const currentMap = regData.verifiedConsentForms || {};
+      const updatedMap = { ...currentMap, [tId]: isVerified };
+      updatePayload.verifiedConsentForms = updatedMap;
+
+      const templates = tripData.consentTemplates && tripData.consentTemplates.length > 0
+        ? tripData.consentTemplates
+        : (tripData.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
+
+      if (templates.length > 0) {
+        updatePayload.consentFormVerified = templates.every((t) => updatedMap[t.id]);
+      }
+      auditEntry = {
+        type: "checkpoint_verified",
+        actor: adminEmail,
+        message: `Consent Form (${tId}) ${isVerified ? "verified" : "unverified"}`,
+        timestamp: new Date().toISOString(),
+      };
+    } else if (action === "approve" || directStatus === "approved_to_pay" || directStatus === "mail_sent") {
+      // CHECKPOINT VALIDATION:
+      // 1. Student ID must be verified
+      const isStudentIdOk = updatePayload.studentIdVerified !== undefined
+        ? updatePayload.studentIdVerified
+        : Boolean(regData.studentIdVerified);
+      if (!isStudentIdOk) {
         return NextResponse.json(
           { error: "Student ID must be verified before approving registration." },
           { status: 400 }
         );
       }
 
-      // Check if consent form is required and verified
-      const tripDocRef = doc(db, "trips", tripId);
-      const tripSnap = await getDoc(tripDocRef);
-      if (tripSnap.exists()) {
-        const tripData = tripSnap.data();
-        const hasConsent = tripData.consentFormTemplateUrl || (tripData.consentTemplates && tripData.consentTemplates.length > 0);
-        if (hasConsent) {
-          const isConsentVerifiedNow = updatePayload.consentFormVerified !== undefined ? updatePayload.consentFormVerified : consentFormVerified;
-          const isConsentVerified = isConsentVerifiedNow !== undefined ? isConsentVerifiedNow : (regSnap.data().consentFormVerified || false);
-          if (!isConsentVerified) {
-            return NextResponse.json(
-              { error: "Consent Form must be verified before approving registration." },
-              { status: 400 }
-            );
-          }
+      // 2. Consent Forms must be verified if required
+      const requiredTemplates = tripData.consentTemplates && tripData.consentTemplates.length > 0
+        ? tripData.consentTemplates
+        : (tripData.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
+
+      if (requiredTemplates.length > 0) {
+        const isConsentOk = updatePayload.consentFormVerified !== undefined
+          ? updatePayload.consentFormVerified
+          : Boolean(regData.consentFormVerified);
+        if (!isConsentOk) {
+          return NextResponse.json(
+            { error: "All required consent forms must be verified before approving registration." },
+            { status: 400 }
+          );
         }
       }
-    }
-    if (status !== undefined) updatePayload.status = status;
-    if (studentIdVerified !== undefined) {
-      updatePayload.studentIdVerified = studentIdVerified;
-    }
-    if (consentFormVerified !== undefined) {
-      updatePayload.consentFormVerified = consentFormVerified;
-    }
-    if (issueText !== undefined) updatePayload.issueText = issueText;
-    if (actionRequiredFields !== undefined) updatePayload.actionRequiredFields = actionRequiredFields;
 
-    // Append to conversationHistory when admin sends an action_required request
-    if (status === "action_required") {
-      const existingHistory = regSnap.data().conversationHistory || [];
-      existingHistory.push({
-        type: "admin_request",
-        message: issueText || "",
-        fields: actionRequiredFields || [],
+      // EMAIL IDEMPOTENCY:
+      const alreadySent = Boolean(
+        regData.approvalEmailSentAt ||
+        regData.approvalEmailStatus === "sent" ||
+        regData.status === "mail_sent"
+      );
+      let emailDispatched = false;
+
+      if (!alreadySent && !tripData.emailsDisabled) {
+        const userEmail = regData.email;
+        const tripName = tripData.name || "Trip";
+
+        // Resolve city/option specific WhatsApp Link & QR Code strictly from Firestore
+        const { whatsappLink, qrCodeUrl } = resolveWhatsappDetails(tripData, regData.formData);
+        const assignedCoordinator = resolveAssignedCoordinator(tripData.coordinators, regData.formData);
+
+        try {
+          const emailResult = await sendTripApprovalEmail({
+            student: {
+              name: userName,
+              email: userEmail,
+              studentId: regData.formData?.["Student ID Number"] || regData.formData?.["Roll Number"] || "",
+            },
+            trip: tripData,
+            coordinator: assignedCoordinator,
+            whatsappLink,
+            qrCodeUrl,
+          });
+
+          updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
+
+          if (emailResult.success) {
+            updatePayload.approvalEmailSentAt = FieldValue.serverTimestamp();
+            updatePayload.approvalEmailStatus = "sent";
+            updatePayload.approvalEmailMessageId = emailResult.messageId || "sent";
+            updatePayload.approvalEmailError = null;
+            updatePayload.status = "mail_sent";
+            emailDispatched = true;
+            emailResultDetails = { sent: true, status: "sent", messageId: emailResult.messageId };
+          } else {
+            updatePayload.approvalEmailStatus = "failed";
+            updatePayload.approvalEmailError = emailResult.error || "Failed to dispatch email";
+            updatePayload.status = "approved_to_pay";
+            emailResultDetails = { sent: false, status: "failed", error: emailResult.error };
+          }
+        } catch (emailErr) {
+          console.error("Failed to send Brevo approval email:", emailErr);
+          const safeError = emailErr?.message || "Failed to send approval email";
+          updatePayload.approvalEmailStatus = "failed";
+          updatePayload.approvalEmailError = safeError;
+          updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
+          updatePayload.status = "approved_to_pay";
+          emailResultDetails = { sent: false, status: "failed", error: safeError };
+        }
+      } else {
+        updatePayload.status = regData.status === "mail_sent" ? "mail_sent" : "approved_to_pay";
+        if (alreadySent) {
+          emailResultDetails = { sent: false, status: "already_sent", skipped: true };
+        } else if (tripData.emailsDisabled) {
+          updatePayload.approvalEmailStatus = "disabled";
+          emailResultDetails = { sent: false, status: "disabled", skipped: true };
+        }
+      }
+
+      // SEAT COUNTER MANAGEMENT:
+      if (!isConfirmedState(oldStatus)) {
+        let totalJoined = Number(tripData.totalJoined || 0) + 1;
+        let femaleJoined = Number(tripData.femaleJoined || 0) + (gender === "female" ? 1 : 0);
+        let maleJoined = Number(tripData.maleJoined || 0) + (gender === "male" ? 1 : 0);
+        const totalSeats = Number(tripData.totalSeats || 30);
+        const tripUpdate = { totalJoined, femaleJoined, maleJoined };
+        if (totalJoined >= totalSeats) {
+          tripUpdate.registrationOpen = false;
+        }
+        await tripDocRef.update(tripUpdate);
+      }
+
+      auditEntry = {
+        type: "approved",
+        actor: adminEmail,
+        message: emailDispatched
+          ? "Registration approved and confirmation email sent."
+          : alreadySent
+          ? "Registration approved (confirmation email was already sent)."
+          : tripData.emailsDisabled
+          ? "Registration approved (trip emails disabled)."
+          : `Registration approved (email delivery failed: ${updatePayload.approvalEmailError || "unknown error"}).`,
         timestamp: new Date().toISOString(),
-      });
+      };
+    } else if (action === "resend_approval_email") {
+      if (!isConfirmedState(regData.status)) {
+        return NextResponse.json(
+          { error: "Cannot resend email: Registration is not currently approved." },
+          { status: 400 }
+        );
+      }
+
+      const userEmail = regData.email;
+      const tripName = tripData.name || "Trip";
+      const { whatsappLink, qrCodeUrl } = resolveWhatsappDetails(tripData, regData.formData);
+      const assignedCoordinator = resolveAssignedCoordinator(tripData.coordinators, regData.formData);
+
+      let resendSuccess = false;
+      let resendError = null;
+
+      try {
+        const emailResult = await sendTripApprovalEmail({
+          student: {
+            name: userName,
+            email: userEmail,
+            studentId: regData.formData?.["Student ID Number"] || regData.formData?.["Roll Number"] || "",
+          },
+          trip: tripData,
+          coordinator: assignedCoordinator,
+          whatsappLink,
+          qrCodeUrl,
+        });
+
+        updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
+
+        if (emailResult.success) {
+          updatePayload.approvalEmailSentAt = FieldValue.serverTimestamp();
+          updatePayload.approvalEmailStatus = "sent";
+          updatePayload.approvalEmailMessageId = emailResult.messageId || "sent";
+          updatePayload.approvalEmailError = null;
+          updatePayload.status = "mail_sent";
+          resendSuccess = true;
+          emailResultDetails = { sent: true, status: "sent", messageId: emailResult.messageId };
+        } else {
+          updatePayload.approvalEmailStatus = "failed";
+          updatePayload.approvalEmailError = emailResult.error || "Failed to dispatch email";
+          resendError = emailResult.error;
+          emailResultDetails = { sent: false, status: "failed", error: emailResult.error };
+        }
+      } catch (err) {
+        console.error("Resend approval email error:", err);
+        const safeError = err?.message || "Failed to send email";
+        updatePayload.approvalEmailStatus = "failed";
+        updatePayload.approvalEmailError = safeError;
+        updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
+        resendError = safeError;
+        emailResultDetails = { sent: false, status: "failed", error: safeError };
+      }
+
+      auditEntry = {
+        type: "approval_email_resent",
+        actor: adminEmail,
+        message: resendSuccess
+          ? "Approval confirmation email resent successfully."
+          : `Resending approval email failed: ${resendError || "unknown error"}.`,
+        timestamp: new Date().toISOString(),
+      };
+    } else if (action === "reject" || directStatus === "rejected") {
+      const rejectReason = (reason || issueText || "").trim();
+      if (!rejectReason) {
+        return NextResponse.json(
+          { error: "Rejection reason is mandatory." },
+          { status: 400 }
+        );
+      }
+
+      updatePayload.status = "rejected";
+      updatePayload.issueText = rejectReason;
+
+      // Decrement seats if previously confirmed
+      if (isConfirmedState(oldStatus)) {
+        let totalJoined = Math.max(0, Number(tripData.totalJoined || 0) - 1);
+        let femaleJoined = gender === "female" ? Math.max(0, Number(tripData.femaleJoined || 0) - 1) : Number(tripData.femaleJoined || 0);
+        let maleJoined = gender === "male" ? Math.max(0, Number(tripData.maleJoined || 0) - 1) : Number(tripData.maleJoined || 0);
+        await tripDocRef.update({ totalJoined, femaleJoined, maleJoined });
+      }
+
+      auditEntry = {
+        type: "rejected",
+        actor: adminEmail,
+        reason: rejectReason,
+        message: rejectReason,
+        timestamp: new Date().toISOString(),
+      };
+    } else if (action === "request_reupload" || directStatus === "action_required") {
+      const correctionReason = (reason || issueText || "").trim();
+      if (!correctionReason) {
+        return NextResponse.json(
+          { error: "Correction reason is mandatory." },
+          { status: 400 }
+        );
+      }
+
+      const fields = Array.isArray(actionRequiredFields) ? actionRequiredFields : [];
+      if (fields.length === 0) {
+        return NextResponse.json(
+          { error: "At least one field or document must be selected for correction." },
+          { status: 400 }
+        );
+      }
+
+      updatePayload.status = "action_required";
+      updatePayload.issueText = correctionReason;
+      updatePayload.actionRequiredFields = fields;
+
+      // Decrement seats if previously confirmed
+      if (isConfirmedState(oldStatus)) {
+        let totalJoined = Math.max(0, Number(tripData.totalJoined || 0) - 1);
+        let femaleJoined = gender === "female" ? Math.max(0, Number(tripData.femaleJoined || 0) - 1) : Number(tripData.femaleJoined || 0);
+        let maleJoined = gender === "male" ? Math.max(0, Number(tripData.maleJoined || 0) - 1) : Number(tripData.maleJoined || 0);
+        await tripDocRef.update({ totalJoined, femaleJoined, maleJoined });
+      }
+
+      if (!tripData.emailsDisabled) {
+        try {
+          await sendCorrectionRequestEmail(
+            regData.email,
+            userName,
+            tripData.name || "Trip",
+            correctionReason,
+            fields,
+            tripId
+          );
+        } catch (emailErr) {
+          console.error("Failed to send correction request email:", emailErr);
+        }
+      }
+
+      auditEntry = {
+        type: "reupload_requested",
+        actor: adminEmail,
+        reason: correctionReason,
+        message: correctionReason,
+        fields,
+        timestamp: new Date().toISOString(),
+      };
+    } else if (action === "revoke_approval") {
+      const revokeReason = (reason || issueText || "").trim();
+      if (!revokeReason) {
+        return NextResponse.json(
+          { error: "Revocation reason is mandatory." },
+          { status: 400 }
+        );
+      }
+
+      updatePayload.status = "registered";
+      updatePayload.issueText = revokeReason;
+
+      // Decrement seats if previously confirmed
+      if (isConfirmedState(oldStatus)) {
+        let totalJoined = Math.max(0, Number(tripData.totalJoined || 0) - 1);
+        let femaleJoined = gender === "female" ? Math.max(0, Number(tripData.femaleJoined || 0) - 1) : Number(tripData.femaleJoined || 0);
+        let maleJoined = gender === "male" ? Math.max(0, Number(tripData.maleJoined || 0) - 1) : Number(tripData.maleJoined || 0);
+        await tripDocRef.update({ totalJoined, femaleJoined, maleJoined });
+      }
+
+      auditEntry = {
+        type: "approval_revoked",
+        actor: adminEmail,
+        reason: revokeReason,
+        message: revokeReason,
+        timestamp: new Date().toISOString(),
+      };
+    } else if (directStatus !== undefined) {
+      updatePayload.status = directStatus;
+      if (issueText !== undefined) updatePayload.issueText = issueText;
+      if (actionRequiredFields !== undefined) updatePayload.actionRequiredFields = actionRequiredFields;
+    }
+
+    // 3. Append to conversation/audit history
+    if (auditEntry) {
+      const existingHistory = Array.isArray(regData.conversationHistory)
+        ? [...regData.conversationHistory]
+        : [];
+      existingHistory.push(auditEntry);
       updatePayload.conversationHistory = existingHistory;
     }
 
-    const oldStatus = regSnap.data().status || "registered";
-    const gender = (regSnap.data().gender || "unknown").toLowerCase();
-
-    if (status !== undefined && status !== oldStatus) {
-      const isConfirmedState = (s) => s === "approved_to_pay" || s === "paid" || s === "mail_sent";
-      const wasConfirmed = isConfirmedState(oldStatus);
-      const isConfirmed = isConfirmedState(status);
-
-      if (isConfirmed !== wasConfirmed) {
-        const tripDocRef = doc(db, "trips", tripId);
-        const tripSnap = await getDoc(tripDocRef);
-        if (tripSnap.exists()) {
-          const tripData = tripSnap.data();
-          let totalJoined = Number(tripData.totalJoined || 0);
-          let femaleJoined = Number(tripData.femaleJoined || 0);
-          const totalSeats = Number(tripData.totalSeats || 30);
-
-          if (isConfirmed) {
-            totalJoined += 1;
-            if (gender === "female") femaleJoined += 1;
-          } else {
-            totalJoined = Math.max(0, totalJoined - 1);
-            if (gender === "female") femaleJoined = Math.max(0, femaleJoined - 1);
-          }
-
-          const tripUpdate = {
-            totalJoined,
-            femaleJoined,
-          };
-          if (totalJoined >= totalSeats) {
-            tripUpdate.registrationOpen = false;
-          }
-          await updateDoc(tripDocRef, tripUpdate);
-        }
-      }
-
-      // Trigger Brevo Email if moving into confirmed/approved state
-      if (status === "approved_to_pay") {
-        const tripDocRef = doc(db, "trips", tripId);
-        const tripSnap = await getDoc(tripDocRef);
-        if (tripSnap.exists()) {
-          const tripData = tripSnap.data();
-          if (tripData.emailsDisabled) {
-            console.log("Emails are disabled for this trip. Skipping approval email.");
-          } else {
-            const userEmail = regSnap.data().email;
-            const nameKey = Object.keys(regSnap.data().formData || {}).find(
-              (k) => k.toLowerCase().includes("name") || k.toLowerCase().includes("fullname")
-            );
-            const userName = nameKey ? regSnap.data().formData[nameKey] : "Attendee";
-            const tripName = tripData.name || "Event";
-
-            // Resolve city/option specific WhatsApp Link & QR Code
-            let whatsappLink = tripData.whatsappLink || "";
-            let qrCodeUrl = tripData.qrCodeUrl || "";
-
-            const studentAnswers = Object.values(regSnap.data().formData || {});
-            const citySettings = tripData.cityWhatsappSettings || {};
-            for (const ans of studentAnswers) {
-              if (typeof ans === "string" && citySettings[ans]) {
-                if (citySettings[ans].whatsappLink) {
-                  whatsappLink = citySettings[ans].whatsappLink;
-                }
-                if (citySettings[ans].qrCodeUrl) {
-                  qrCodeUrl = citySettings[ans].qrCodeUrl;
-                }
-                break;
-              }
-            }
-
-            try {
-              const emailResult = await sendApprovalEmail(userEmail, userName, tripName, whatsappLink, qrCodeUrl);
-              if (emailResult) {
-                updatePayload.status = "mail_sent";
-              }
-            } catch (emailErr) {
-              console.error("Failed to send Brevo email:", emailErr);
-            }
-          }
-        }
+    // 4. Dual-write updates:
+    // Canonical collection tripRegistrations/{tripId}_{uid}
+    if (canonicalDocId) {
+      const canonicalRef = adminDb.collection("tripRegistrations").doc(canonicalDocId);
+      const cSnap = await canonicalRef.get();
+      if (cSnap.exists) {
+        await canonicalRef.update(updatePayload);
+      } else {
+        const backfilled = mergeLegacyIntoCanonical({}, regData, uid, email, tripId);
+        await canonicalRef.set({ ...backfilled, ...updatePayload });
       }
     }
 
-    // Send correction request email when status moves to action_required
-    if (status === "action_required") {
-      try {
-        const tripDocRef2 = doc(db, "trips", tripId);
-        const tripSnap2 = await getDoc(tripDocRef2);
-        if (tripSnap2.exists()) {
-          const tripData2 = tripSnap2.data();
-          if (tripData2.emailsDisabled) {
-            console.log("Emails are disabled for this trip. Skipping correction request email.");
-          } else {
-            const userEmail2 = regSnap.data().email;
-            const nameKey2 = Object.keys(regSnap.data().formData || {}).find(
-              (k) => k.toLowerCase().includes("name") || k.toLowerCase().includes("fullname")
-            );
-            const userName2 = nameKey2 ? regSnap.data().formData[nameKey2] : "Attendee";
-            await sendCorrectionRequestEmail(
-              userEmail2,
-              userName2,
-              tripData2.name || "Event",
-              issueText || "",
-              actionRequiredFields || [],
-              tripId
-            );
-          }
-        }
-      } catch (emailErr) {
-        console.error("Failed to send correction request email:", emailErr);
+    // Legacy collection user-registrations
+    if (legacyDocId) {
+      const legacyRef = adminDb.collection("user-registrations").doc(legacyDocId);
+      const lSnap = await legacyRef.get();
+      if (lSnap.exists) {
+        await legacyRef.update(updatePayload);
       }
     }
 
-    await updateDoc(regRef, updatePayload);
+    // 5. Sync verified status to canonical students/{uid} collection
+    if (updatePayload.studentIdVerified === true) {
+      const studentUid = regData.uid;
+      if (studentUid) {
+        adminDb
+          .collection("students")
+          .doc(studentUid)
+          .set(
+            {
+              studentIdVerified: true,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          )
+          .catch((err) => console.error("Error updating students collection ID verified:", err));
+      }
+    }
 
-    return NextResponse.json({ success: true, message: "Registration updated successfully" });
+    return NextResponse.json({
+      success: true,
+      message: "Registration updated successfully",
+      status: updatePayload.status || regData.status,
+      registrationStatus: updatePayload.status || regData.status,
+      email: emailResultDetails || undefined,
+    });
   } catch (error) {
     console.error("POST Admin Registration Status Error:", error);
     return NextResponse.json({ error: "Failed to update registration. Please try again." }, { status: 500 });
   }
 }
 
-/* PUT → Update event-level configuration (switches, seats, quota) */
+/* PUT → Update event-level configuration (switches, seats, quota) - Admin Only */
 export async function PUT(req) {
   try {
+    const isAdmin = await isAuthorizedAdmin(req);
+    if (!isAdmin) {
+      const coordinatorToken = await getAuthenticatedCoordinator(req);
+      if (coordinatorToken) {
+        return NextResponse.json(
+          { error: "Forbidden: Trip Coordinators cannot modify event settings." },
+          { status: 403 }
+        );
+      }
+      return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
+    }
+
     const clone = req.clone();
     const body = await clone.json();
     const {
       tripId,
       registrationOpen,
       totalSeats,
-      isCompleted
+      femaleReservedSeats,
+      maleReservedSeats,
+      isCompleted,
     } = body;
 
     if (!tripId) {
       return NextResponse.json({ error: "Trip ID is required" }, { status: 400 });
     }
 
-    const authorized = await checkAuth(req, tripId);
-    if (!authorized) {
-      return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
-    }
-
-    const tripRef = doc(db, "trips", tripId);
+    const tripRef = adminDb.collection("trips").doc(tripId);
 
     const updateData = {};
     if (registrationOpen !== undefined) updateData.registrationOpen = registrationOpen;
     if (totalSeats !== undefined) updateData.totalSeats = Number(totalSeats);
+    if (femaleReservedSeats !== undefined) updateData.femaleReservedSeats = Number(femaleReservedSeats);
+    if (maleReservedSeats !== undefined) updateData.maleReservedSeats = Number(maleReservedSeats);
     if (isCompleted !== undefined) {
       updateData.isCompleted = isCompleted;
       if (isCompleted === true) {
@@ -518,7 +752,7 @@ export async function PUT(req) {
       }
     }
 
-    await updateDoc(tripRef, updateData);
+    await tripRef.update(updateData);
 
     // If registrations were toggled to CLOSED, or marked completed, trigger roster archive
     if (registrationOpen === false || isCompleted === true) {

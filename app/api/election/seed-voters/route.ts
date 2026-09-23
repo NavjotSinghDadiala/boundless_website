@@ -1,5 +1,6 @@
 // app/api/election/seed-voters/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import fs from "fs";
 import path from "path";
@@ -25,10 +26,8 @@ interface ExcelVoter {
 }
 
 export async function GET(req: NextRequest) {
-  // Simple query-param protection
-  const { searchParams } = new URL(req.url);
-  const secret = searchParams.get("secret");
-  if (secret !== "boundless_admin_secret_99") {
+  const session = await getServerSession();
+  if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -116,3 +115,5 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
+
+export { GET as POST };

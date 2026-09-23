@@ -2,12 +2,12 @@ import React from "react";
 import AppSidebar from "@/components/app-sidebar";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
 async function Layout({ children }) {
-  const session = await getServerSession();
+  const session = await getServerSession(authOptions);
 
   if (!session) {
     redirect("/admin-login");
@@ -16,10 +16,10 @@ async function Layout({ children }) {
   return (
     <SidebarProvider>
       <AppSidebar variant="inset" />
-      <SidebarInset>
+      <SidebarInset className="bg-[#FAF9F6] min-h-screen flex flex-col min-w-0 max-w-full overflow-x-hidden">
         <SiteHeader />
-        <div className="min-h-0 flex-1">
-          <ScrollArea className="h-full">{children}</ScrollArea>
+        <div className="flex-1 w-full min-w-0 max-w-full overflow-x-hidden">
+          {children}
         </div>
       </SidebarInset>
     </SidebarProvider>

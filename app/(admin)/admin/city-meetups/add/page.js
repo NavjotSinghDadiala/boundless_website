@@ -24,7 +24,6 @@ export default function AddCityMeetupPage() {
   const [selectedSectionId, setSelectedSectionId] = useState("");
   const [isAddingSection, setIsAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
-  const [newSectionPriority, setNewSectionPriority] = useState("");
   const [isEditingSection, setIsEditingSection] = useState(false);
   const [editingSectionName, setEditingSectionName] = useState("");
 
@@ -33,7 +32,6 @@ export default function AddCityMeetupPage() {
   const [selectedSubSectionId, setSelectedSubSectionId] = useState("");
   const [isAddingSubSection, setIsAddingSubSection] = useState(false);
   const [newSubSectionName, setNewSubSectionName] = useState("");
-  const [newSubSectionPriority, setNewSubSectionPriority] = useState("");
   const [isEditingSubSection, setIsEditingSubSection] = useState(false);
   const [editingSubSectionName, setEditingSubSectionName] = useState("");
 
@@ -49,7 +47,7 @@ export default function AddCityMeetupPage() {
   // 1. Fetch data on load
   const fetchData = async () => {
     try {
-      const secRes = await fetch("/admin/city-meetups/meetup-sections");
+      const secRes = await fetch("/api/city-meetups/meetup-sections");
       const secData = await secRes.json();
       if (secRes.ok) setSections(secData.sections || []);
     } catch (error) {
@@ -71,7 +69,7 @@ export default function AddCityMeetupPage() {
       }
 
       try {
-        const res = await fetch(`/admin/city-meetups/meetup-sub-sections?sectionId=${selectedSectionId}`);
+        const res = await fetch(`/api/city-meetups/meetup-sub-sections?sectionId=${selectedSectionId}`);
         const data = await res.json();
         if (res.ok) setSubSections(data.subSections || []);
       } catch (error) {
@@ -86,15 +84,15 @@ export default function AddCityMeetupPage() {
   const handleAddSection = async () => {
     if (!newSectionName.trim()) return toast.error("Section name cannot be empty");
     try {
-      const res = await fetch("/admin/city-meetups/meetup-sections", {
+      const res = await fetch("/api/city-meetups/meetup-sections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newSectionName, priority: newSectionPriority }),
+        body: JSON.stringify({ name: newSectionName }),
       });
       const data = await res.json();
       if (res.ok) {
         toast.success("Main Section added!");
-        setNewSectionName(""); setNewSectionPriority(""); setIsAddingSection(false);
+        setNewSectionName(""); setIsAddingSection(false);
         await fetchData();
         setSelectedSectionId(data.id);
       } else throw new Error(data.error);
@@ -114,7 +112,7 @@ export default function AddCityMeetupPage() {
     if (!editingSectionName.trim()) return toast.error("Section name cannot be empty");
 
     try {
-      const res = await fetch(`/admin/city-meetups/meetup-sections/${selectedSectionId}`, {
+      const res = await fetch(`/api/city-meetups/meetup-sections/${selectedSectionId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: editingSectionName }),
@@ -136,7 +134,7 @@ export default function AddCityMeetupPage() {
   const handleDeleteSection = async () => {
     if (!selectedSectionId || !confirm("Delete this main section?")) return;
     try {
-      const res = await fetch(`/admin/city-meetups/meetup-sections/${selectedSectionId}`, { method: "DELETE" });
+      const res = await fetch(`/api/city-meetups/meetup-sections/${selectedSectionId}`, { method: "DELETE" });
       if (res.ok) {
         toast.success("Main Section removed");
         setSelectedSectionId("");
@@ -150,17 +148,17 @@ export default function AddCityMeetupPage() {
     if (!newSubSectionName.trim()) return toast.error("Sub-section name cannot be empty");
     if (!selectedSectionId) return toast.error("Select a main section before adding a sub-section");
     try {
-      const res = await fetch("/admin/city-meetups/meetup-sub-sections", {
+      const res = await fetch("/api/city-meetups/meetup-sub-sections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newSubSectionName, priority: newSubSectionPriority, sectionId: selectedSectionId }),
+        body: JSON.stringify({ name: newSubSectionName, sectionId: selectedSectionId }),
       });
       const data = await res.json();
       if (res.ok) {
         toast.success("Sub Section added!");
-        setNewSubSectionName(""); setNewSubSectionPriority(""); setIsAddingSubSection(false);
+        setNewSubSectionName(""); setIsAddingSubSection(false);
         // Refresh sub-sections for the current section and select the new one
-        const secRes = await fetch(`/admin/city-meetups/meetup-sub-sections?sectionId=${selectedSectionId}`);
+        const secRes = await fetch(`/api/city-meetups/meetup-sub-sections?sectionId=${selectedSectionId}`);
         const secData = await secRes.json();
         if (secRes.ok) setSubSections(secData.subSections || []);
         setSelectedSubSectionId(data.id);
@@ -181,7 +179,7 @@ export default function AddCityMeetupPage() {
     if (!editingSubSectionName.trim()) return toast.error("Sub-section name cannot be empty");
 
     try {
-      const res = await fetch(`/admin/city-meetups/meetup-sub-sections/${selectedSubSectionId}`, {
+      const res = await fetch(`/api/city-meetups/meetup-sub-sections/${selectedSubSectionId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: editingSubSectionName }),
@@ -191,7 +189,7 @@ export default function AddCityMeetupPage() {
         toast.success("Sub-section updated!");
         setIsEditingSubSection(false);
         setEditingSubSectionName("");
-        const secRes = await fetch(`/admin/city-meetups/meetup-sub-sections?sectionId=${selectedSectionId}`);
+        const secRes = await fetch(`/api/city-meetups/meetup-sub-sections?sectionId=${selectedSectionId}`);
         const secData = await secRes.json();
         if (secRes.ok) setSubSections(secData.subSections || []);
       } else {
@@ -205,7 +203,7 @@ export default function AddCityMeetupPage() {
   const handleDeleteSubSection = async () => {
     if (!selectedSubSectionId || !confirm("Delete this sub-section?")) return;
     try {
-      const res = await fetch(`/admin/city-meetups/meetup-sub-sections/${selectedSubSectionId}`, { method: "DELETE" });
+      const res = await fetch(`/api/city-meetups/meetup-sub-sections/${selectedSubSectionId}`, { method: "DELETE" });
       if (res.ok) {
         toast.success("Sub Section removed");
         setSelectedSubSectionId("");
@@ -303,13 +301,6 @@ const handleFileChange = (e) => {
                 onChange={(e) => setNewSectionName(e.target.value)}
                 autoFocus
               />
-              <Input
-                type="number"
-                placeholder="Priority (e.g. 1)"
-                className="w-24"
-                value={newSectionPriority}
-                onChange={(e) => setNewSectionPriority(e.target.value)}
-              />
               <Button type="button" onClick={handleAddSection} size="icon" variant="default">
                 <CheckIcon className="h-4 w-4" />
               </Button>
@@ -349,7 +340,7 @@ const handleFileChange = (e) => {
                     {sections.length === 0 && <div className="p-2 text-sm text-muted-foreground text-center">No sections found</div>}
                     {sections.map((sec) => (
                       <SelectItem key={sec.id} value={sec.id}>
-                        {sec.name} <span className="text-xs text-muted-foreground ml-2">(Priority: {sec.priority})</span>
+                        {sec.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -382,13 +373,6 @@ const handleFileChange = (e) => {
                 value={newSubSectionName}
                 onChange={(e) => setNewSubSectionName(e.target.value)}
                 autoFocus
-              />
-              <Input
-                type="number"
-                placeholder="Priority (e.g. 1)"
-                className="w-24"
-                value={newSubSectionPriority}
-                onChange={(e) => setNewSubSectionPriority(e.target.value)}
               />
               <Button type="button" onClick={handleAddSubSection} size="icon" variant="default">
                 <CheckIcon className="h-4 w-4" />
@@ -429,7 +413,7 @@ const handleFileChange = (e) => {
                     {subSections.length === 0 && <div className="p-2 text-sm text-muted-foreground text-center">No sub-sections found</div>}
                     {subSections.map((sec) => (
                       <SelectItem key={sec.id} value={sec.id}>
-                        {sec.name} <span className="text-xs text-muted-foreground ml-2">(Priority: {sec.priority})</span>
+                        {sec.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

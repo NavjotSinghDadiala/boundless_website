@@ -1,4 +1,4 @@
-/** @type {import('next').NextConfig} */
+// Reload config
 const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,

@@ -11,7 +11,7 @@ import { Loader2Icon } from "lucide-react";
 export default function AddProudMarqueePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ title: "", sortOrder: "0" });
+  const [formData, setFormData] = useState({ title: "" });
   const [image, setImage] = useState({ file: null, preview: null, base64: null });
 
   const handleFileChange = (e) => {
@@ -45,7 +45,6 @@ export default function AddProudMarqueePage() {
         body: JSON.stringify({
           title: formData.title,
           img: uploadData.links?.[0],
-          sortOrder: parseInt(formData.sortOrder) || 0,
         }),
       });
 
@@ -71,11 +70,6 @@ export default function AddProudMarqueePage() {
         <div className="space-y-2">
           <Label htmlFor="title">Destination Title (e.g. Vrindavan, Ooty)</Label>
           <Input id="title" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="sortOrder">Sort Order</Label>
-          <Input id="sortOrder" type="number" required value={formData.sortOrder} onChange={(e) => setFormData({ ...formData, sortOrder: e.target.value })} />
         </div>
 
         <div className="space-y-2">

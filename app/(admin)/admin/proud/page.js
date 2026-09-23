@@ -2,28 +2,48 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { PencilIcon, TrashIcon, PlusIcon } from "lucide-react";
+import {
+  PencilIcon,
+  Trash2Icon,
+  PlusIcon,
+  Award,
+  SparklesIcon,
+  TrendingUpIcon,
+} from "lucide-react";
+
+import {
+  AdminPageHeader,
+  AdminCard,
+  AdminLoadingState,
+  AdminEmptyState,
+  AdminConfirmDialog,
+  AdminTable,
+  AdminTableHead,
+  AdminTableBody,
+  AdminTableRow,
+  AdminTableCell,
+  AdminTableHeaderCell,
+} from "@/components/admin";
 
 export default function ManageProudPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState("stats"); // 'stats' or 'marquee'
+  const [activeTab, setActiveTab] = useState("stats");
   const [stats, setStats] = useState([]);
   const [marquee, setMarquee] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deleteDialog, setDeleteDialog] = useState(null); // { type: 'stat' | 'marquee', id: string, name: string }
+  const [deleting, setDeleting] = useState(false);
 
-  // Fetch all data
   const fetchData = async () => {
     setLoading(true);
     try {
       const statsRes = await fetch("/api/proud-stats");
       const statsData = await statsRes.json();
-      
+
       const marqueeRes = await fetch("/api/proud-marquee");
       const marqueeData = await marqueeRes.json();
-      
+
       if (statsRes.ok && marqueeRes.ok) {
         setStats(statsData.stats || []);
         setMarquee(marqueeData.marquee || []);
@@ -41,180 +61,245 @@ export default function ManageProudPage() {
     fetchData();
   }, []);
 
-  // Handle Stats Delete
-  const handleDeleteStat = async (id) => {
-    if (!confirm("Are you sure you want to delete this statistic?")) return;
+  const handleDeleteConfirm = async () => {
+    if (!deleteDialog) return;
+    setDeleting(true);
     try {
-      const res = await fetch(`/api/proud-stats?id=${id}`, { method: "DELETE" });
-      if (res.ok) {
-        toast.success("Statistic deleted successfully");
-        setStats((prev) => prev.filter((s) => s.id !== id));
+      if (deleteDialog.type === "stat") {
+        const res = await fetch(`/api/proud-stats?id=${deleteDialog.id}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          toast.success("Statistic deleted successfully");
+          setStats((prev) => prev.filter((s) => s.id !== deleteDialog.id));
+        } else {
+          throw new Error("Delete failed");
+        }
       } else {
-        throw new Error("Delete failed");
+        const res = await fetch(`/api/proud-marquee?id=${deleteDialog.id}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          toast.success("Marquee item deleted successfully");
+          setMarquee((prev) => prev.filter((m) => m.id !== deleteDialog.id));
+        } else {
+          throw new Error("Delete failed");
+        }
       }
+      setDeleteDialog(null);
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to delete item");
+    } finally {
+      setDeleting(false);
     }
   };
-
-  // Handle Marquee Delete
-  const handleDeleteMarquee = async (id) => {
-    if (!confirm("Are you sure you want to delete this marquee item?")) return;
-    try {
-      const res = await fetch(`/api/proud-marquee?id=${id}`, { method: "DELETE" });
-      if (res.ok) {
-        toast.success("Marquee item deleted successfully");
-        setMarquee((prev) => prev.filter((m) => m.id !== id));
-      } else {
-        throw new Error("Delete failed");
-      }
-    } catch (error) {
-      toast.error(error.message);
-    }
-  };
-
-  if (loading) return <div className="p-10">Loading section data...</div>;
 
   return (
-    <div className="p-6 bg-card text-card-foreground rounded-xl border border-border shadow-sm m-4">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Manage &quot;We Proud to Have&quot; Section</h1>
-        <div className="flex gap-2">
-          {activeTab === "stats" ? (
-            <Button onClick={() => router.push("/admin/proud/stats/add")}>
-              <PlusIcon className="mr-2 h-4 w-4" /> Add New Stat
-            </Button>
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+      {/* Page Header */}
+      <AdminPageHeader
+        title='&quot;We Proud to Have&quot; Section'
+        description="Configure the key milestone numbers, participant impact counters, and animated community marquee on the homepage."
+        breadcrumbs={[
+          { label: "Dashboard", href: "/admin" },
+          { label: "Proud Section" },
+        ]}
+        primaryAction={
+          activeTab === "stats" ? (
+            <button
+              type="button"
+              onClick={() => router.push("/admin/proud/stats/add")}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#3B001B] text-white text-xs sm:text-sm font-semibold hover:bg-[#46001D] shadow-sm transition-all"
+            >
+              <PlusIcon className="size-4" />
+              <span>Add Metric Stat</span>
+            </button>
           ) : (
-            <Button onClick={() => router.push("/admin/proud/marquee/add")}>
-              <PlusIcon className="mr-2 h-4 w-4" /> Add Marquee Item
-            </Button>
-          )}
-        </div>
-      </div>
+            <button
+              type="button"
+              onClick={() => router.push("/admin/proud/marquee/add")}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#3B001B] text-white text-xs sm:text-sm font-semibold hover:bg-[#46001D] shadow-sm transition-all"
+            >
+              <PlusIcon className="size-4" />
+              <span>Add Marquee Text</span>
+            </button>
+          )
+        }
+      />
 
       {/* Tabs Selector */}
-      <div className="flex gap-4 border-b border-border pb-4 mb-6">
+      <div className="flex items-center gap-2 border-b border-stone-200/80 pb-3">
         <button
+          type="button"
           onClick={() => setActiveTab("stats")}
-          className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
             activeTab === "stats"
-              ? "bg-primary text-primary-foreground shadow"
-              : "text-muted-foreground hover:bg-muted"
+              ? "bg-[#3B001B] text-white shadow-sm"
+              : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
           }`}
         >
-          Statistics Cards
+          <TrendingUpIcon className="size-4" />
+          <span>Milestone Stats ({stats.length})</span>
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("marquee")}
-          className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
             activeTab === "marquee"
-              ? "bg-primary text-primary-foreground shadow"
-              : "text-muted-foreground hover:bg-muted"
+              ? "bg-[#3B001B] text-white shadow-sm"
+              : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
           }`}
         >
-          Curved Marquee Items
+          <SparklesIcon className="size-4" />
+          <span>Curved Marquee ({marquee.length})</span>
         </button>
       </div>
 
-      {/* Stats Tab Content */}
-      {activeTab === "stats" && (
-        <div>
-          {stats.length === 0 ? (
-            <p className="text-muted-foreground">No statistics cards found.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Label</TableHead>
-                  <TableHead>Number Value</TableHead>
-                  <TableHead>Sort Order</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stats.map((stat) => (
-                  <TableRow key={stat.id}>
-                    <TableCell className="font-medium">{stat.label}</TableCell>
-                    <TableCell>{stat.number}+</TableCell>
-                    <TableCell>{stat.sortOrder}</TableCell>
-                    <TableCell className="text-right flex justify-end gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        onClick={() => router.push(`/admin/proud/stats/edit/${stat.id}`)}
+      {loading ? (
+        <AdminLoadingState type="table" rows={4} />
+      ) : activeTab === "stats" ? (
+        stats.length === 0 ? (
+          <AdminEmptyState
+            title="No Statistics Configured"
+            description="Add milestone metrics such as 'Trips Completed' or 'Active Explorers' to highlight community scale."
+            icon={Award}
+            action={
+              <button
+                type="button"
+                onClick={() => router.push("/admin/proud/stats/add")}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#3B001B] text-white text-xs font-semibold"
+              >
+                <PlusIcon className="size-3.5" />
+                Add First Statistic
+              </button>
+            }
+          />
+        ) : (
+          <AdminTable>
+            <AdminTableHead>
+              <tr>
+                <AdminTableHeaderCell>Metric Label</AdminTableHeaderCell>
+                <AdminTableHeaderCell>Display Value</AdminTableHeaderCell>
+                <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
+              </tr>
+            </AdminTableHead>
+            <AdminTableBody>
+              {stats.map((stat) => (
+                <AdminTableRow key={stat.id}>
+                  <AdminTableCell className="font-semibold text-stone-900">
+                    {stat.label}
+                  </AdminTableCell>
+                  <AdminTableCell className="font-bold text-[#3B001B] font-mono text-base">
+                    {stat.number}+
+                  </AdminTableCell>
+                  <AdminTableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          router.push(`/admin/proud/stats/edit/${stat.id}`)
+                        }
+                        className="p-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors"
+                        title="Edit stat"
                       >
-                        <PencilIcon className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="destructive" 
-                        size="icon"
-                        onClick={() => handleDeleteStat(stat.id)}
+                        <PencilIcon className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDeleteDialog({
+                            type: "stat",
+                            id: stat.id,
+                            name: stat.label || "Statistic",
+                          })
+                        }
+                        className="p-1.5 rounded-lg border border-stone-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors"
+                        title="Delete stat"
                       >
-                        <TrashIcon className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
+                        <Trash2Icon className="size-3.5" />
+                      </button>
+                    </div>
+                  </AdminTableCell>
+                </AdminTableRow>
+              ))}
+            </AdminTableBody>
+          </AdminTable>
+        )
+      ) : marquee.length === 0 ? (
+        <AdminEmptyState
+          title="No Marquee Items"
+          description="Add inspiring phrases and community slogans for the curved marquee ticker."
+          icon={SparklesIcon}
+          action={
+            <button
+              type="button"
+              onClick={() => router.push("/admin/proud/marquee/add")}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#3B001B] text-white text-xs font-semibold"
+            >
+              <PlusIcon className="size-3.5" />
+              Add Marquee Text
+            </button>
+          }
+        />
+      ) : (
+        <AdminTable>
+          <AdminTableHead>
+            <tr>
+              <AdminTableHeaderCell>Marquee Slogan / Text</AdminTableHeaderCell>
+              <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
+            </tr>
+          </AdminTableHead>
+          <AdminTableBody>
+            {marquee.map((item) => (
+              <AdminTableRow key={item.id}>
+                <AdminTableCell className="font-semibold text-stone-900">
+                  {item.text}
+                </AdminTableCell>
+                <AdminTableCell className="text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        router.push(`/admin/proud/marquee/edit/${item.id}`)
+                      }
+                      className="p-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors"
+                      title="Edit marquee item"
+                    >
+                      <PencilIcon className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDeleteDialog({
+                          type: "marquee",
+                          id: item.id,
+                          name: item.text || "Marquee",
+                        })
+                      }
+                      className="p-1.5 rounded-lg border border-stone-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors"
+                      title="Delete marquee item"
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </button>
+                  </div>
+                </AdminTableCell>
+              </AdminTableRow>
+            ))}
+          </AdminTableBody>
+        </AdminTable>
       )}
 
-      {/* Marquee Tab Content */}
-      {activeTab === "marquee" && (
-        <div>
-          {marquee.length === 0 ? (
-            <p className="text-muted-foreground">No marquee items found.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Sort Order</TableHead>
-                  <TableHead>Image</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {marquee.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-medium">{item.title}</TableCell>
-                    <TableCell>{item.sortOrder}</TableCell>
-                    <TableCell>
-                      {item.img ? (
-                        <img 
-                          src={item.img} 
-                          alt={item.title} 
-                          className="h-10 w-16 object-cover rounded bg-muted border"
-                        />
-                      ) : (
-                        "No Image"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right flex justify-end gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        onClick={() => router.push(`/admin/proud/marquee/edit/${item.id}`)}
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="destructive" 
-                        size="icon"
-                        onClick={() => handleDeleteMarquee(item.id)}
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      )}
+      {/* Delete Confirmation Modal */}
+      <AdminConfirmDialog
+        open={Boolean(deleteDialog)}
+        onOpenChange={(open) => !open && setDeleteDialog(null)}
+        title={`Delete ${deleteDialog?.type === "stat" ? "Milestone Stat" : "Marquee Item"}?`}
+        description={`Are you sure you want to remove "${deleteDialog?.name}"? This action cannot be undone.`}
+        confirmText="Delete"
+        variant="danger"
+        loading={deleting}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }

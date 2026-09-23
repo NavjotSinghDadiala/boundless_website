@@ -17,8 +17,7 @@ export default function AddWhatsappGroupPage() {
     link: "", 
     category: "regional", 
     linkType: "", 
-    color: "#b6dbff",
-    sortOrder: "0" 
+    color: "#b6dbff"
   });
   const [image, setImage] = useState({ file: null, preview: null, base64: null });
 
@@ -53,7 +52,6 @@ export default function AddWhatsappGroupPage() {
         body: JSON.stringify({ 
           ...formData, 
           img: uploadData.links?.[0],
-          sortOrder: parseInt(formData.sortOrder) || 0
         }),
       });
 
@@ -136,12 +134,6 @@ export default function AddWhatsappGroupPage() {
               className="flex-1 font-mono"
             />
           </div>
-        </div>
-
-        {/* Sort Order */}
-        <div className="space-y-2">
-          <Label htmlFor="sortOrder">Sort Order (lower numbers show first)</Label>
-          <Input id="sortOrder" type="number" required value={formData.sortOrder} onChange={(e) => setFormData({ ...formData, sortOrder: e.target.value })} />
         </div>
 
         {/* Image */}

@@ -8,7 +8,14 @@ import {
     getDoc,
 } from "firebase/firestore";
 import { signOut } from "firebase/auth";
-import { ShieldAlertIcon, Mail, Compass, ArrowRight, ArrowLeft, CheckCircle2, FileText, Upload } from "lucide-react";
+import { ShieldAlertIcon, Mail, Compass, ArrowRight, ArrowLeft, CheckCircle2, FileText, Upload, MapPin } from "lucide-react";
+import LocationSelect from "@/components/ui/LocationSelect";
+import {
+    INDIAN_STATES_AND_UTS,
+    getDistrictsForState,
+    isValidState,
+    isValidDistrict,
+} from "@/lib/indiaLocations";
 
 const ScallopDivider = ({ topColor }) => (
   <div className="w-full h-[15px] relative z-10 -mt-[1px] mb-[1px]">
@@ -44,7 +51,7 @@ const CollapsibleDescription = ({ text }) => {
   );
 };
 
-export default function UserRegistrationForm({ user, setUser, tripId, autofillData, onSuccess }) {
+export default function UserRegistrationForm({ user, setUser, tripId, autofillData, studentProfile, onSuccess }) {
     const dbRef = useRef(null);
     const [dbReady, setDbReady] = useState(false);
     
@@ -63,24 +70,139 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
     const [showConsent, setShowConsent] = useState(false);
     const [consentFormTemplateUrl, setConsentFormTemplateUrl] = useState("");
     const [consentTemplates, setConsentTemplates] = useState([]);
+    const [consentStatements, setConsentStatements] = useState([]);
+    const [consentAccepted, setConsentAccepted] = useState({});
     const [consentFiles, setConsentFiles] = useState({}); // mapping: templateId -> File object
     const [tripName, setTripName] = useState("Event");
     const [tripDescription, setTripDescription] = useState("");
 
-    // Student ID / Aadhaar State (for first time users only)
-    const isFirstTime = !autofillData || Object.keys(autofillData).length === 0 || (!autofillData["Student ID Card Copy"] && !autofillData["Aadhaar Card Copy"]);
-    const [aadhaarNum, setAadhaarNum] = useState("");
-    const [aadhaarFile, setAadhaarFile] = useState(null); // stores the uploaded Google Drive URL
+    // Student ID Verification State (canonical studentProfile is source of truth)
+    const isIdVerified = Boolean(studentProfile?.studentIdVerified);
+    const [studentIdNum, setStudentIdNum] = useState("");
+    const [studentIdFile, setStudentIdFile] = useState(null); // stores the uploaded Google Drive URL
 
     // Background upload tracking states
-    const [uploadingAadhaar, setUploadingAadhaar] = useState(false);
+    const [uploadingStudentId, setUploadingStudentId] = useState(false);
     const [uploadingConsent, setUploadingConsent] = useState({}); // mapping: templateId -> boolean
     const [uploadingDynamic, setUploadingDynamic] = useState({}); // mapping: fieldName -> boolean
+
+    // Location Profile State (State + City / District)
+    const [stateLocation, setStateLocation] = useState(
+        studentProfile?.state || autofillData?.["State"] || ""
+    );
+    const [districtLocation, setDistrictLocation] = useState(
+        studentProfile?.cityDistrict || autofillData?.["City / District"] || ""
+    );
+    const [isEditingLocation, setIsEditingLocation] = useState(false);
+    const [locationErrors, setLocationErrors] = useState({ state: null, district: null });
+
+    useEffect(() => {
+        if (studentProfile?.state) {
+            setStateLocation(studentProfile.state);
+        } else if (autofillData?.["State"]) {
+            setStateLocation(autofillData["State"]);
+        }
+        if (studentProfile?.cityDistrict) {
+            setDistrictLocation(studentProfile.cityDistrict);
+        } else if (autofillData?.["City / District"]) {
+            setDistrictLocation(autofillData["City / District"]);
+        }
+    }, [studentProfile, autofillData]);
+
+    // Canonical profile attribute mapper for trip form fields
+    const getCanonicalValueForField = (fieldName) => {
+        if (!studentProfile) return undefined;
+        const lower = (fieldName || "").toLowerCase().trim();
+
+        // Full Name
+        if (
+            lower === "name" ||
+            lower === "full name" ||
+            lower === "fullname" ||
+            (lower.includes("name") &&
+                !lower.includes("father") &&
+                !lower.includes("mother") &&
+                !lower.includes("emergency") &&
+                !lower.includes("parent"))
+        ) {
+            return studentProfile.name || undefined;
+        }
+
+        // Student ID / Roll Number
+        if (
+            lower === "roll number" ||
+            lower === "roll no" ||
+            lower === "rollno" ||
+            lower === "student id" ||
+            lower === "student id number" ||
+            lower.includes("roll")
+        ) {
+            return studentProfile.studentId || undefined;
+        }
+
+        // Gender
+        if (lower.includes("gender") || lower === "sex") {
+            if (studentProfile.gender && studentProfile.gender !== "unknown") {
+                return studentProfile.gender.charAt(0).toUpperCase() + studentProfile.gender.slice(1);
+            }
+        }
+
+        // Date of Birth
+        if (lower.includes("dob") || lower.includes("birth") || lower === "date of birth") {
+            return studentProfile.dob || undefined;
+        }
+
+        // Phone / Contact Number
+        if (
+            lower === "phone" ||
+            lower === "contact" ||
+            lower === "mobile" ||
+            lower === "contact number" ||
+            lower === "phone number" ||
+            (lower.includes("phone") && !lower.includes("emergency") && !lower.includes("parent")) ||
+            (lower.includes("contact") && !lower.includes("emergency") && !lower.includes("parent"))
+        ) {
+            return studentProfile.phone || undefined;
+        }
+
+        // WhatsApp Number
+        if (lower.includes("whatsapp")) {
+            return studentProfile.whatsapp || studentProfile.phone || undefined;
+        }
+
+        // Residence / Hostel / City
+        if (lower.includes("residence") || lower.includes("hostel") || lower.includes("address")) {
+            return studentProfile.residence || undefined;
+        }
+
+        // State
+        if (lower === "state" || (lower.includes("state") && !lower.includes("statement"))) {
+            return studentProfile.state || undefined;
+        }
+
+        // City / District
+        if (
+            lower === "city / district" ||
+            lower === "city/district" ||
+            lower === "citydistrict" ||
+            lower === "city or district" ||
+            lower === "district"
+        ) {
+            return studentProfile.cityDistrict || undefined;
+        }
+
+        return undefined;
+    };
 
     const isFieldDisabled = (fieldName) => {
         const field = fields.find(f => f.name === fieldName);
         if (!field) return false;
-        return !!(autofillData && autofillData[fieldName] !== undefined && field.allowEditIfPrefilled === false);
+        if (field.allowEditIfPrefilled === false) {
+            const canonicalVal = getCanonicalValueForField(fieldName);
+            if (canonicalVal !== undefined && canonicalVal !== "") return true;
+            if (autofillData && autofillData[fieldName] !== undefined && autofillData[fieldName] !== "") return true;
+        }
+        return false;
     };
 
     const isFieldVisible = (f) => {
@@ -108,20 +230,28 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                         ? data.consentTemplates
                         : (data?.consentFormTemplateUrl ? [{ id: "legacy-consent", name: "Completed Consent Form", templateUrl: data.consentFormTemplateUrl }] : []);
                     setConsentTemplates(templates);
+                    const statements = data?.consentStatements || [];
+                    setConsentStatements(statements);
+                    const initialAccepted = {};
+                    statements.forEach((s) => {
+                        initialAccepted[s.id] = false;
+                    });
+                    setConsentAccepted(initialAccepted);
                     const formFields = data?.form?.fields || [];
                     const sorted = [...formFields].sort((a, b) => a.sortOrder - b.sortOrder);
                     setFields(sorted);
 
-                    // Initialize formValues from autofillData
-                    if (autofillData) {
-                        const prefilled = {};
-                        sorted.forEach((field) => {
-                            if (autofillData[field.name] !== undefined) {
-                                prefilled[field.name] = autofillData[field.name];
-                            }
-                        });
-                        setFormValues(prefilled);
-                    }
+                    // Initialize formValues with priority: studentProfile -> historical autofillData -> empty
+                    const prefilled = {};
+                    sorted.forEach((field) => {
+                        const canonicalVal = getCanonicalValueForField(field.name);
+                        if (canonicalVal !== undefined && canonicalVal !== "") {
+                            prefilled[field.name] = canonicalVal;
+                        } else if (autofillData && autofillData[field.name] !== undefined) {
+                            prefilled[field.name] = autofillData[field.name];
+                        }
+                    });
+                    setFormValues(prefilled);
                 }
             } catch (err) {
                 console.error("Error loading trip form fields:", err);
@@ -130,7 +260,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
             }
         };
         fetchForm();
-    }, [dbReady, tripId, autofillData]);
+    }, [dbReady, tripId, autofillData, studentProfile]);
 
     const handleChange = (fieldName, value) => {
         setFormValues((prev) => ({ ...prev, [fieldName]: value }));
@@ -141,13 +271,22 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
         if (!isVisible) return null;
 
         const currentVal = formValues[field.name] || "";
+        const canonicalVal = getCanonicalValueForField(field.name);
+        const hasProfileSource = canonicalVal !== undefined && canonicalVal !== "";
         
         return (
-            <div key={field.id} className="space-y-1.5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div key={field.id} className="space-y-1.5 animate-in fade-in slide-in-from-bottom-2 duration-300 text-left">
                 {field.type !== "description_text" && (
-                    <label className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
-                        {field.name}
-                    </label>
+                    <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                            {field.name}
+                        </label>
+                        {hasProfileSource && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#3E1126]/10 text-[#3E1126] shrink-0">
+                                FROM YOUR PROFILE
+                            </span>
+                        )}
+                    </div>
                 )}
 
                 {field.type === "description_text" && (
@@ -315,9 +454,11 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 body: JSON.stringify({
                     images: [base64Image],
                     folder: "trip_registrations",
-                    email: user?.email || autofillData?.email || "anonymous",
+                    email: user?.email || studentProfile?.email || autofillData?.email || "anonymous",
                     tripName: tripName || "Event",
                     subFolderType: subFolderType,
+                    tripId: tripId || "",
+                    fieldName: fieldName || "",
                 }),
             });
             const data = await uploadRes.json();
@@ -451,30 +592,68 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
       }
     };
 
+    const hasConditional = fields.filter((field) => !!field.dependsOnFieldId).some(isFieldVisible);
+    const hasConsents = consentTemplates.length > 0;
+
     const handleNext = (e) => {
       if (e) e.preventDefault();
       
-      const hasConditional = fields.filter((field) => !!field.dependsOnFieldId).some(isFieldVisible);
-      
-      if (step === 2) {
+      if (step === 1) {
+        let hasLocError = false;
+        const errors = { state: null, district: null };
+        if (!stateLocation || !stateLocation.trim()) {
+          errors.state = "Please select your state.";
+          hasLocError = true;
+        } else if (!isValidState(stateLocation)) {
+          errors.state = "Please select a valid Indian State or Union Territory.";
+          hasLocError = true;
+        }
+
+        if (!districtLocation || !districtLocation.trim()) {
+          errors.district = "Please select your city/district.";
+          hasLocError = true;
+        } else if (stateLocation && !isValidDistrict(stateLocation, districtLocation)) {
+          errors.district = `Please select a valid district for ${stateLocation}.`;
+          hasLocError = true;
+        }
+
+        if (hasLocError) {
+          setLocationErrors(errors);
+          return;
+        }
+        setLocationErrors({ state: null, district: null });
+        setStep(2);
+      } else if (step === 2) {
         if (hasConditional) {
           setStep(3);
-        } else {
+        } else if (hasConsents) {
           setStep(4);
+        } else {
+          setStep(5);
         }
       } else if (step === 3) {
-        setStep(4);
-      } else {
-        setStep((prev) => prev + 1);
+        if (hasConsents) {
+          setStep(4);
+        } else {
+          setStep(5);
+        }
+      } else if (step === 4) {
+        setStep(5);
       }
     };
 
     const handleBack = (e) => {
       if (e) e.preventDefault();
       
-      const hasConditional = fields.filter((field) => !!field.dependsOnFieldId).some(isFieldVisible);
-      
-      if (step === 4) {
+      if (step === 5) {
+        if (hasConsents) {
+          setStep(4);
+        } else if (hasConditional) {
+          setStep(3);
+        } else {
+          setStep(2);
+        }
+      } else if (step === 4) {
         if (hasConditional) {
           setStep(3);
         } else {
@@ -482,8 +661,8 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
         }
       } else if (step === 3) {
         setStep(2);
-      } else {
-        setStep((prev) => prev - 1);
+      } else if (step === 2) {
+        setStep(1);
       }
     };
 
@@ -493,7 +672,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
         if (!user || !tripId) return;
 
         // Prevent submission if anything is still uploading
-        if (uploadingAadhaar || Object.values(uploadingConsent).some(Boolean) || Object.values(uploadingDynamic).some(Boolean)) {
+        if (uploadingStudentId || Object.values(uploadingConsent).some(Boolean) || Object.values(uploadingDynamic).some(Boolean)) {
             alert("Please wait for all file uploads to complete before submitting.");
             return;
         }
@@ -515,21 +694,38 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 }
             });
 
-            if (isFirstTime) {
-                if (!aadhaarFile || typeof aadhaarFile !== "string") {
+            // Snapshot location fields into formData
+            if (stateLocation) {
+                formDataObj["State"] = stateLocation;
+            }
+            if (districtLocation) {
+                formDataObj["City / District"] = districtLocation;
+            }
+
+            if (isIdVerified) {
+                // Verified student:
+                // If student explicitly uploaded a replacement, submit it; otherwise preserve past ID copy from autofill
+                if (studentIdFile && typeof studentIdFile === "string") {
+                    formDataObj["Student ID Card Copy"] = studentIdFile;
+                } else if (autofillData?.["Student ID Card Copy"]) {
+                    formDataObj["Student ID Card Copy"] = autofillData["Student ID Card Copy"];
+                }
+                const studentIdVal = studentProfile?.studentId || autofillData?.["Student ID Number"];
+                if (studentIdVal) {
+                    formDataObj["Student ID Number"] = studentIdVal;
+                }
+            } else {
+                // Unverified / first-time student:
+                const availableIdCopy = studentIdFile || autofillData?.["Student ID Card Copy"];
+                if (!availableIdCopy || typeof availableIdCopy !== "string") {
                     alert("Please upload your Student ID Card copy.");
                     setSubmitting(false);
                     return;
                 }
-                formDataObj["Student ID Card Copy"] = aadhaarFile;
-            } else {
-                const pastIdNum = autofillData["Student ID Number"] || autofillData["Aadhaar Number"];
-                if (pastIdNum) {
-                    formDataObj["Student ID Number"] = pastIdNum;
-                }
-                const pastIdCopy = autofillData["Student ID Card Copy"] || autofillData["Aadhaar Card Copy"];
-                if (pastIdCopy) {
-                    formDataObj["Student ID Card Copy"] = pastIdCopy;
+                formDataObj["Student ID Card Copy"] = availableIdCopy;
+                const studentIdVal = studentProfile?.studentId || autofillData?.["Student ID Number"];
+                if (studentIdVal) {
+                    formDataObj["Student ID Number"] = studentIdVal;
                 }
             }
 
@@ -546,13 +742,32 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 }
             }
 
+            // Validate mandatory student consent declarations
+            if (consentStatements.length > 0) {
+                const missing = consentStatements.filter(
+                    (s) => s.required !== false && !consentAccepted[s.id]
+                );
+                if (missing.length > 0) {
+                    alert("Please accept all required participation declarations before submitting.");
+                    setSubmitting(false);
+                    return;
+                }
+            }
+
+            const consentResponses = consentStatements.map((stmt) => ({
+                statementId: stmt.id,
+                statementText: stmt.text,
+                accepted: Boolean(consentAccepted[stmt.id]),
+                acceptedAt: new Date().toISOString(),
+            }));
+
             const res = await fetch("/api/user-registration", {
                 method: "POST",
                 headers: { 
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${token}`
                 },
-                body: JSON.stringify({ tripId, formData: formDataObj }),
+                body: JSON.stringify({ tripId, formData: formDataObj, consentResponses }),
             });
 
             const data = await res.json();
@@ -579,18 +794,23 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
       );
     }
 
-    const hasConditional = fields.filter((field) => !!field.dependsOnFieldId).some(isFieldVisible);
-    const totalSteps = hasConditional ? 4 : 3;
-    let currentStep = step;
-    let stepLabel = "Personal Details";
+    const stepMap = [1, 2];
+    if (hasConditional) stepMap.push(3);
+    if (hasConsents) stepMap.push(4);
+    stepMap.push(5);
 
+    const totalSteps = stepMap.length;
+    const currentStepIndex = Math.max(1, stepMap.indexOf(step) + 1);
+
+    let stepLabel = "Personal Details";
     if (step === 2) {
-      stepLabel = "Travel Info";
+      stepLabel = "Trip Details";
     } else if (step === 3) {
       stepLabel = "Specific Details";
     } else if (step === 4) {
-      currentStep = hasConditional ? 4 : 3;
-      stepLabel = "Final Steps";
+      stepLabel = "Required Consents";
+    } else if (step === 5) {
+      stepLabel = "Review & Submit";
     }
 
     return (
@@ -601,12 +821,14 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
           
           {/* Progress Indicators */}
           <div className="absolute top-4 left-0 right-0 flex justify-center gap-2">
-            <div className={`h-1.5 rounded-full transition-all duration-300 ${currentStep >= 1 ? 'w-8 bg-[#3E1126]' : 'w-2 bg-[#3E1126]/20'}`}></div>
-            <div className={`h-1.5 rounded-full transition-all duration-300 ${currentStep >= 2 ? 'w-8 bg-[#3E1126]' : 'w-2 bg-[#3E1126]/20'}`}></div>
-            {hasConditional && (
-              <div className={`h-1.5 rounded-full transition-all duration-300 ${currentStep >= 3 ? 'w-8 bg-[#3E1126]' : 'w-2 bg-[#3E1126]/20'}`}></div>
-            )}
-            <div className={`h-1.5 rounded-full transition-all duration-300 ${currentStep >= totalSteps ? 'w-8 bg-[#3E1126]' : 'w-2 bg-[#3E1126]/20'}`}></div>
+            {stepMap.map((s, idx) => (
+              <div
+                key={s}
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  currentStepIndex >= idx + 1 ? 'w-8 bg-[#3E1126]' : 'w-2 bg-[#3E1126]/20'
+                }`}
+              />
+            ))}
           </div>
 
           <div className="w-12 h-12 bg-[#3E1126] rounded-full flex items-center justify-center shadow-md mb-3 text-white">
@@ -616,7 +838,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
             Join The Journey
           </h2>
           <p className="text-xs sm:text-sm font-medium text-[#3E1126]/70 mt-1">
-            Step {currentStep} of {totalSteps} • {stepLabel}
+            Step {currentStepIndex} of {totalSteps} • {stepLabel}
           </p>
         </div>
 
@@ -625,7 +847,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
 
         <div className="p-6 sm:p-8 bg-white relative z-20 overflow-y-auto max-h-[60vh] custom-scrollbar" data-lenis-prevent>
           
-          {/* STEP 1: Basic Info & Aadhaar */}
+          {/* STEP 1: Basic Info & Student ID */}
           {step === 1 && (
             <form onSubmit={handleNext} className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               
@@ -633,10 +855,15 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 <CollapsibleDescription text={tripDescription} />
               )}
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
-                  IITM Email Address
-                </label>
+              <div className="space-y-1.5 text-left">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                    IITM Email Address
+                  </label>
+                  <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#3E1126]/10 text-[#3E1126] shrink-0">
+                    FROM YOUR PROFILE
+                  </span>
+                </div>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-400">
                     <Mail className="h-4 w-4" />
@@ -650,7 +877,21 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 </div>
               </div>
 
-              {isFirstTime && (
+              {isIdVerified ? (
+                <div className="bg-green-50 border-2 border-green-600/20 rounded-xl p-5 space-y-2">
+                  <div className="flex items-center gap-2 text-green-800 font-oswald font-bold text-sm uppercase tracking-wider">
+                    <CheckCircle2 className="w-5 h-5 text-green-600" /> Student ID Verified
+                  </div>
+                  <p className="text-xs text-green-700/90 font-medium leading-relaxed">
+                    Your Student ID is verified in your student profile. No re-upload is required.
+                  </p>
+                  {studentProfile?.studentId && (
+                    <div className="pt-1 text-xs text-green-900 font-semibold">
+                      Roll / ID Number: <span className="font-mono">{studentProfile.studentId}</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
                 <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-xl p-5 space-y-4">
                   <h4 className="font-oswald font-bold text-sm uppercase tracking-wider flex items-center gap-2 text-[#3E1126]">
                     <ShieldAlertIcon className="w-4 h-4" /> First-Time Registration
@@ -658,17 +899,15 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                   <p className="text-xs text-[#3E1126]/80 font-medium leading-relaxed">
                     Student ID verification is mandatory for first-time event registrations. This will be securely saved for auto-filling future event forms.
                   </p>
-                  
-
 
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Student ID Card Copy (Front & Back)</label>
                     <div className="relative space-y-1.5">
                       <input
                         type="file"
-                        required={!aadhaarFile}
+                        required={!studentIdFile && !autofillData?.["Student ID Card Copy"]}
                         accept="image/*,.pdf"
-                        disabled={uploadingAadhaar}
+                        disabled={uploadingStudentId}
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
@@ -677,25 +916,124 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                             e.target.value = "";
                             return;
                           }
-                          setUploadingAadhaar(true);
+                          setUploadingStudentId(true);
                           const url = await uploadFileToDrive(file, "Student IDs", "Student ID Card Copy");
                           if (url) {
-                            setAadhaarFile(url);
+                            setStudentIdFile(url);
                           } else {
                             e.target.value = "";
-                            setAadhaarFile(null);
+                            setStudentIdFile(null);
                           }
-                          setUploadingAadhaar(false);
+                          setUploadingStudentId(false);
                         }}
                         className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#3E1126] file:text-white hover:file:bg-[#3E1126]/80 file:cursor-pointer file:transition-colors bg-white border-2 border-zinc-200 rounded-xl p-1"
                       />
-                      {uploadingAadhaar && (
+                      {uploadingStudentId && (
                         <p className="text-xs text-amber-600 font-bold animate-pulse">Uploading file... Please wait.</p>
                       )}
-                      {aadhaarFile && typeof aadhaarFile === "string" && aadhaarFile.startsWith("http") && (
+                      {studentIdFile && typeof studentIdFile === "string" && studentIdFile.startsWith("http") && (
                         <p className="text-xs text-green-600 font-bold">Uploaded successfully! ✅</p>
                       )}
+                      {!studentIdFile && autofillData?.["Student ID Card Copy"] && (
+                        <p className="text-xs text-zinc-500 font-medium">Previous ID on file. You can keep it or upload a new copy.</p>
+                      )}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Location Profile Section */}
+              {!isEditingLocation && (studentProfile?.state && studentProfile?.cityDistrict) ? (
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-xl p-5 space-y-3 text-left">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-[#3E1126]" />
+                      <span className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                        Current Location
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#3E1126]/10 text-[#3E1126] shrink-0">
+                        FROM YOUR PROFILE
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingLocation(true)}
+                        className="text-xs font-bold text-[#3E1126] underline hover:text-[#3E1126]/80 focus:outline-none"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">State</span>
+                      <span className="text-sm font-semibold text-[#3E1126] mt-0.5 block">{stateLocation}</span>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">City / District</span>
+                      <span className="text-sm font-semibold text-[#3E1126] mt-0.5 block">{districtLocation}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-xl p-5 space-y-4 text-left">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-[#3E1126]" />
+                      <span className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                        Current Location <span className="text-red-500">*</span>
+                      </span>
+                    </div>
+                    {studentProfile?.state && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingLocation(false)}
+                        className="text-xs font-bold text-zinc-500 hover:text-zinc-800"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#3E1126]/75 font-medium leading-relaxed">
+                    Please select your general residential state and city/district for event travel coordination.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <LocationSelect
+                      id="trip-reg-state"
+                      label="State"
+                      required
+                      value={stateLocation}
+                      options={INDIAN_STATES_AND_UTS}
+                      placeholder="Select state"
+                      searchPlaceholder="Search Indian state..."
+                      error={locationErrors.state}
+                      onChange={(newState) => {
+                        setStateLocation(newState);
+                        // Clear district when state changes
+                        setDistrictLocation("");
+                        setLocationErrors((prev) => ({ ...prev, state: null, district: null }));
+                      }}
+                    />
+
+                    <LocationSelect
+                      id="trip-reg-city-district"
+                      label="City / District"
+                      required
+                      value={districtLocation}
+                      options={stateLocation ? getDistrictsForState(stateLocation) : []}
+                      disabled={!stateLocation}
+                      disabledPlaceholder="Select state first"
+                      placeholder={stateLocation ? "Select city / district" : "Select state first"}
+                      searchPlaceholder={`Search district in ${stateLocation || "state"}...`}
+                      error={locationErrors.district}
+                      onChange={(newDistrict) => {
+                        setDistrictLocation(newDistrict);
+                        setLocationErrors((prev) => ({ ...prev, district: null }));
+                      }}
+                    />
                   </div>
                 </div>
               )}
@@ -703,11 +1041,11 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={uploadingAadhaar}
+                  disabled={uploadingStudentId}
                   className="w-full flex justify-center items-center gap-2 text-sm font-bold text-black bg-[#FCE16D] px-6 py-3.5 rounded-full shadow-[0_4px_14px_0_rgba(252,225,109,0.4)] hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-55 disabled:cursor-not-allowed"
                 >
-                  {uploadingAadhaar ? "Uploading ID..." : "Continue"}
-                  {!uploadingAadhaar && <ArrowRight className="h-4 w-4" />}
+                  {uploadingStudentId ? "Uploading ID..." : "Continue"}
+                  {!uploadingStudentId && <ArrowRight className="h-4 w-4" />}
                 </button>
               </div>
             </form>
@@ -769,9 +1107,9 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
             </form>
           )}
 
-          {/* STEP 4: Consent Form & Submission */}
+          {/* STEP 4: Consent Form Checkpoint */}
           {step === 4 && (
-            <form onSubmit={handleSubmit} className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+            <form onSubmit={handleNext} className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500 text-left">
               <button 
                 type="button"
                 onClick={handleBack}
@@ -837,7 +1175,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                           className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#3E1126] file:text-white hover:file:bg-[#3E1126]/80 file:cursor-pointer file:transition-colors bg-white border-2 border-zinc-200 rounded-xl p-1"
                         />
                         {uploadingConsent[t.id] && (
-                          <p className="text-xs text-amber-600 font-bold animate-pulse mt-1">Uploading copy... Please wait.</p>
+                          <p className="text-xs text-amber-600 font-bold animate-pulse mt-1">Uploading copy to Google Drive... Please wait.</p>
                         )}
                         {consentFiles[t.id] && typeof consentFiles[t.id] === "string" && consentFiles[t.id].startsWith("http") && (
                           <p className="text-xs text-green-600 font-bold mt-1">Uploaded successfully! ✅</p>
@@ -849,30 +1187,193 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
               ) : (
                 <div className="text-center py-6">
                   <CheckCircle2 className="w-12 h-12 text-[#3E1126]/20 mx-auto mb-3" />
-                  <p className="text-sm font-medium text-zinc-500">You're almost there! Just submit your registration to complete the process.</p>
+                  <p className="text-sm font-medium text-zinc-500">No additional consent forms required for this trip.</p>
                 </div>
               )}
 
-              <div className="flex items-start gap-2 pt-2">
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={Object.values(uploadingConsent).some(Boolean)}
+                  className="w-full flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-black bg-[#FCE16D] px-6 py-3.5 rounded-full shadow-[0_4px_14px_0_rgba(252,225,109,0.4)] hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-55 disabled:cursor-not-allowed"
+                >
+                  {Object.values(uploadingConsent).some(Boolean) ? "Uploading Consents..." : "Review Registration"}
+                  {!Object.values(uploadingConsent).some(Boolean) && <ArrowRight className="h-4 w-4" />}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* STEP 5: REVIEW YOUR REGISTRATION & FINAL SUBMISSION */}
+          {step === 5 && (
+            <form onSubmit={handleSubmit} className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
+              <button 
+                type="button"
+                onClick={handleBack}
+                disabled={submitting}
+                className="mb-2 -mt-2 inline-flex items-center text-xs font-bold font-oswald uppercase tracking-wider text-zinc-400 hover:text-[#3E1126] transition-colors"
+              >
+                <ArrowLeft className="w-3 h-3 mr-1" /> Back
+              </button>
+
+              <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-2xl p-5 space-y-4 text-left shadow-sm">
+                <div className="flex items-center justify-between border-b border-zinc-200/80 pb-3">
+                  <h4 className="font-oswald font-bold text-sm uppercase tracking-wider text-[#3E1126] flex items-center gap-2">
+                    <FileText className="w-4 h-4" /> REVIEW YOUR REGISTRATION
+                  </h4>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
+                    Checkpoint
+                  </span>
+                </div>
+
+                {/* Student Details */}
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between py-1 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Name:</span>
+                    <strong className="text-[#3E1126] font-semibold">
+                      {studentProfile?.name || formValues["Full Name"] || formValues["Name"] || user?.displayName || "Student"}
+                    </strong>
+                  </div>
+
+                  <div className="flex justify-between py-1 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Student ID / Roll No:</span>
+                    <strong className="text-[#3E1126] font-mono font-semibold">
+                      {studentProfile?.studentId || formValues["Roll Number"] || formValues["Student ID"] || "—"}
+                    </strong>
+                  </div>
+
+                  <div className="flex justify-between py-1 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Email:</span>
+                    <strong className="text-[#3E1126] font-semibold">{user?.email}</strong>
+                  </div>
+
+                  <div className="flex justify-between py-1 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Trip:</span>
+                    <strong className="text-[#3E1126] font-semibold">{tripName}</strong>
+                  </div>
+
+                  <div className="flex justify-between py-1 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Location:</span>
+                    <strong className="text-[#3E1126] font-semibold">
+                      {stateLocation && districtLocation ? `${districtLocation}, ${stateLocation}` : "—"}
+                    </strong>
+                  </div>
+
+                  {/* Dynamic Trip-Specific Fields */}
+                  {fields
+                    .filter((f) => f.type !== "description_text" && isFieldVisible(f))
+                    .filter((f) => !["name", "full name", "fullname", "roll number", "roll no", "rollno", "student id", "email"].includes(f.name.toLowerCase().trim()))
+                    .slice(0, 6)
+                    .map((f) => (
+                      <div key={f.id} className="flex justify-between py-1 border-b border-zinc-100">
+                        <span className="text-zinc-500 font-medium truncate max-w-[45%]">{f.name}:</span>
+                        <span className="text-[#3E1126] font-medium truncate max-w-[50%]">
+                          {String(formValues[f.name] || "—")}
+                        </span>
+                      </div>
+                    ))}
+
+                  {/* Student ID Verification Status */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Student ID Status:</span>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                      isIdVerified
+                        ? "bg-green-100 text-green-800"
+                        : studentIdFile || autofillData?.["Student ID Card Copy"]
+                        ? "bg-blue-100 text-blue-800"
+                        : "bg-red-100 text-red-800"
+                    }`}>
+                      {isIdVerified ? "Verified ✅" : studentIdFile || autofillData?.["Student ID Card Copy"] ? "Attached (Google Drive) 📄" : "Missing ⚠️"}
+                    </span>
+                  </div>
+
+                  {/* Consent status */}
+                  {consentTemplates.length > 0 && (
+                    <div className="pt-2">
+                      <span className="text-[10px] font-bold uppercase text-zinc-400 block mb-1.5">Required Consents</span>
+                      <div className="space-y-1">
+                        {consentTemplates.map((t) => (
+                          <div key={t.id} className="flex justify-between items-center text-[11px] bg-white p-2 rounded-lg border border-zinc-200/60">
+                            <span className="text-zinc-700 font-medium truncate max-w-[70%]">{t.name}</span>
+                            <span className={`text-[10px] font-bold uppercase ${consentFiles[t.id] ? "text-green-600" : "text-amber-600"}`}>
+                              {consentFiles[t.id] ? "Uploaded ✅" : "Pending ⚠️"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Mandatory Student Participation Declarations */}
+              {consentStatements.length > 0 && (
+                <div className="bg-[#FFFBEA]/70 border border-[#3E1126]/15 rounded-2xl p-4 sm:p-5 space-y-3 text-left shadow-sm">
+                  <div className="flex items-center gap-2 border-b border-[#3E1126]/10 pb-2">
+                    <CheckCircle2 className="w-4 h-4 text-[#3E1126]" />
+                    <h5 className="font-oswald font-bold text-xs uppercase tracking-wider text-[#3E1126]">
+                      Student Consents & Declarations
+                    </h5>
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 ml-auto">
+                      Mandatory
+                    </span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {consentStatements.map((stmt, idx) => (
+                      <label
+                        key={stmt.id || idx}
+                        className="flex items-start gap-2.5 text-xs text-stone-700 cursor-pointer select-none leading-relaxed p-2 rounded-xl hover:bg-[#3E1126]/5 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(consentAccepted[stmt.id])}
+                          onChange={(e) => {
+                            const val = e.target.checked;
+                            setConsentAccepted((prev) => ({ ...prev, [stmt.id]: val }));
+                          }}
+                          disabled={submitting}
+                          className="mt-0.5 w-4 h-4 cursor-pointer accent-[#3E1126] rounded-sm shrink-0"
+                        />
+                        <span className="flex-1 font-medium">
+                          {stmt.text}
+                          {stmt.required !== false && <span className="text-red-500 font-bold ml-1">*</span>}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-start gap-2 pt-1 text-left">
                 <input
                   type="checkbox"
-                  id="consent-check"
+                  id="review-consent-check"
                   required
+                  disabled={submitting}
                   className="mt-1 w-4 h-4 cursor-pointer accent-[#3E1126] rounded-sm"
                 />
-                <label htmlFor="consent-check" className="text-xs font-medium text-zinc-600 cursor-pointer select-none leading-tight">
-                  I agree to the <button type="button" onClick={() => setShowConsent(true)} className="font-bold text-[#3E1126] hover:underline">Terms & Conditions</button> and confirm that all provided information is accurate.
+                <label htmlFor="review-consent-check" className="text-xs font-medium text-zinc-600 cursor-pointer select-none leading-tight">
+                  I confirm that all provided details are accurate and agree to the{" "}
+                  <button type="button" onClick={() => setShowConsent(true)} className="font-bold text-[#3E1126] hover:underline">
+                    Boundless Terms & Conditions
+                  </button>.
                 </label>
               </div>
 
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={submitting || Object.values(uploadingConsent).some(Boolean)}
-                  className="w-full flex justify-center items-center gap-2 text-sm font-bold text-white bg-[#3E1126] px-6 py-3.5 rounded-full shadow-[0_4px_14px_0_rgba(62,17,38,0.3)] hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-70 disabled:hover:scale-100 disabled:cursor-not-allowed"
+                  disabled={submitting || Object.values(uploadingConsent).some(Boolean) || uploadingStudentId || Object.values(uploadingDynamic).some(Boolean)}
+                  className="w-full flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-white bg-[#3E1126] px-6 py-3.5 rounded-full shadow-[0_4px_14px_0_rgba(62,17,38,0.3)] hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-60 disabled:hover:scale-100 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {submitting ? "Submitting..." : Object.values(uploadingConsent).some(Boolean) ? "Uploading Consent..." : "Submit Registration"}
-                  {!submitting && !Object.values(uploadingConsent).some(Boolean) && <CheckCircle2 className="h-4 w-4" />}
+                  {submitting ? (
+                    <span>Submitting Registration...</span>
+                  ) : (
+                    <>
+                      <span>SUBMIT REGISTRATION</span>
+                      <CheckCircle2 className="h-4 w-4" />
+                    </>
+                  )}
                 </button>
               </div>
             </form>

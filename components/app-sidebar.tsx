@@ -1,44 +1,36 @@
-"use client"
+"use client";
 
-import * as React from "react"
+import * as React from "react";
+import Image from "next/image";
+import Link from "next/link";
 import {
-  ArrowUpCircleIcon,
-  BarChartIcon,
   CameraIcon,
   ClipboardListIcon,
-  DatabaseIcon,
-  FileCodeIcon,
-  FileIcon,
-  FileTextIcon,
-  FolderIcon,
-  HelpCircleIcon,
   LayoutDashboardIcon,
-  ListIcon,
-  SearchIcon,
   SettingsIcon,
   UsersIcon,
   Plane,
+  CalendarIcon,
   MapPinIcon,
   Vote,
   MessageSquare,
   Award,
-} from "lucide-react"
+  CompassIcon,
+  UserCheckIcon,
+  ShieldCheck,
+} from "lucide-react";
 
-import { NavDocuments } from "@/components/nav-documents"
-import { NavMain } from "@/components/nav-main"
-import { NavSecondary } from "@/components/nav-secondary"
-import { NavUser } from "@/components/nav-user"
+import { NavMain } from "@/components/nav-main";
+import { NavUser } from "@/components/nav-user";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar"
+} from "@/components/ui/sidebar";
 
-// Menu Data Configuration
 const data = {
   user: {
     name: "Admin",
@@ -48,18 +40,23 @@ const data = {
   navMain: [
     {
       title: "Dashboard",
-      url: "/admin", // Points to the main stats page
+      url: "/admin",
       icon: LayoutDashboardIcon,
-    },
-    {
-      title: "Previous Trips", // Updated title
-      url: "/admin/previous-trips", // Pointing to the table view
-      icon: Plane,
     },
     {
       title: "Upcoming Trips",
-      url: "/admin/trip/upcoming", // Points to the main stats page
-      icon: LayoutDashboardIcon,
+      url: "/admin/trip/upcoming",
+      icon: CalendarIcon,
+    },
+    {
+      title: "All Trips & Expeditions",
+      url: "/admin/trip",
+      icon: CompassIcon,
+    },
+    {
+      title: "Previous Trips",
+      url: "/admin/previous-trips",
+      icon: Plane,
     },
     {
       title: "Registrations",
@@ -67,10 +64,15 @@ const data = {
       icon: ClipboardListIcon,
     },
     {
+      title: "Trip Coordinators",
+      url: "/admin/coordinators",
+      icon: ShieldCheck,
+    },
+    {
       title: "Gallery",
       url: "/admin/gallery",
-      icon: CameraIcon, 
-    }, 
+      icon: CameraIcon,
+    },
     {
       title: "City Meetups",
       url: "/admin/city-meetups",
@@ -81,22 +83,6 @@ const data = {
       url: "/admin/election",
       icon: Vote,
     },
-
-    // {
-    //   title: "Lifecycle",
-    //   url: "#",
-    //   icon: ListIcon,
-    // },
-    // {
-    //   title: "Analytics",
-    //   url: "#",
-    //   icon: BarChartIcon,
-    // },
-    // {
-    //   title: "Projects",
-    //   url: "#",
-    //   icon: FolderIcon,
-    // },
     {
       title: "Team",
       url: "/admin/team",
@@ -117,118 +103,53 @@ const data = {
       url: "/admin/settings",
       icon: SettingsIcon,
     },
-  ],
-  navClouds: [
     {
-      title: "Capture",
-      icon: CameraIcon,
-      isActive: true,
-      url: "#",
-      items: [
-        {
-          title: "Active Proposals",
-          url: "#",
-        },
-        {
-          title: "Archived",
-          url: "#",
-        },
-      ],
-    },
-    {
-      title: "Proposal",
-      icon: FileTextIcon,
-      url: "#",
-      items: [
-        {
-          title: "Active Proposals",
-          url: "#",
-        },
-        {
-          title: "Archived",
-          url: "#",
-        },
-      ],
-    },
-    {
-      title: "Prompts",
-      icon: FileCodeIcon,
-      url: "#",
-      items: [
-        {
-          title: "Active Proposals",
-          url: "#",
-        },
-        {
-          title: "Archived",
-          url: "#",
-        },
-      ],
+      title: "Registered Users",
+      url: "/admin/users",
+      icon: UserCheckIcon,
     },
   ],
-  navSecondary: [
-    {
-      title: "Settings",
-      url: "#",
-      icon: SettingsIcon,
-    },
-    {
-      title: "Get Help",
-      url: "#",
-      icon: HelpCircleIcon,
-    },
-    {
-      title: "Search",
-      url: "#",
-      icon: SearchIcon,
-    },
-  ],
-  documents: [
-    {
-      name: "Data Library",
-      url: "#",
-      icon: DatabaseIcon,
-    },
-    {
-      name: "Reports",
-      url: "#",
-      icon: ClipboardListIcon,
-    },
-    {
-      name: "Word Assistant",
-      url: "#",
-      icon: FileIcon,
-    },
-  ],
-}
-
+};
 
 export default function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
-      <SidebarHeader>
+    <Sidebar collapsible="offcanvas" className="border-r border-stone-200/80 bg-white" {...props}>
+      <SidebarHeader className="border-b border-stone-100 p-4">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              className="data-[slot=sidebar-menu-button]:!p-1.5"
+            <Link
+              href="/admin"
+              className="flex items-center gap-3 p-1 rounded-lg hover:bg-stone-50 transition-colors group"
             >
-              <a href="/admin">
-                <ArrowUpCircleIcon className="h-5 w-5" />
-                <span className="text-base font-semibold">Boundless Admin</span>
-              </a>
-            </SidebarMenuButton>
+              <div className="size-9 rounded-xl bg-[#3B001B] flex items-center justify-center overflow-hidden border border-amber-300/30 shadow-sm shrink-0">
+                <Image
+                  src="/Logo Bound.png"
+                  alt="Boundless"
+                  width={28}
+                  height={28}
+                  className="object-contain"
+                />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-sm font-bold tracking-tight text-stone-900 group-hover:text-[#3B001B] transition-colors truncate">
+                  Boundless
+                </span>
+                <span className="text-[10px] font-semibold tracking-wider uppercase text-stone-500">
+                  Operations Console
+                </span>
+              </div>
+            </Link>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
-      <SidebarContent>
+
+      <SidebarContent className="py-2">
         <NavMain items={data.navMain} />
-        <NavDocuments items={data.documents} />
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>
-      <SidebarFooter>
+
+      <SidebarFooter className="border-t border-stone-100 p-3 bg-stone-50/50">
         <NavUser user={data.user} />
       </SidebarFooter>
     </Sidebar>
-  )
+  );
 }

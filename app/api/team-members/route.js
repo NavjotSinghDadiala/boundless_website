@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -154,6 +155,11 @@ export async function GET(req) {
 /* POST: Save a new team member */
 export async function POST(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     
     if (!body.name || !body.role || !body.type) {
@@ -181,6 +187,11 @@ export async function POST(req) {
 /* PUT: Update team member */
 export async function PUT(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const { id, name, role, image, type, term, sortOrder } = body;
 
@@ -209,6 +220,11 @@ export async function PUT(req) {
 /* DELETE: Remove team member */
 export async function DELETE(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 

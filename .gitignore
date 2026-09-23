@@ -1,29 +1,69 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
 
-# dependencies
-/node_modules
+# Next.js & Builds
+.next/
+out/
+build/
+dist/
+framer-welcome/
 
-# next.js
-/.next/
-/out/
+# Testing & Coverage
+coverage/
+.nyc_output/
 
-# production
-/build
+# QA & Visual Testing
+qa/
+.chrome-qa-temp/
 
-# debug
+# Scratch & Temporary Scripts
+scratch/
+tmp/
+temp/
+
+# Environment & Secrets (Never commit credentials)
+.env
+.env*.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.production
+!.env.example
+
+# Service Account & Key Files
+service-account*.json
+firebase-adminsdk*.json
+credentials*.json
+google-credentials*.json
+*.pem
+*.key
+*.p12
+
+# Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
-.env*
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# vercel
-.vercel
+# IDE & Editor Files
+.idea/
+*.swp
+*.swo
 
-# typescript
+# AI Assistant Files
+AGENTS.md
+CLAUDE.md
+
+# TypeScript & Vercel
 *.tsbuildinfo
 next-env.d.ts
-
-*.txt
+.vercel

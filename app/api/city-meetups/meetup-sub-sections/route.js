@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, getDocs, query, serverTimestamp, where } from "firebase/firestore";
 
@@ -19,7 +20,11 @@ export async function GET(request) {
         id: doc.id,
         ...doc.data(),
       }))
-      .sort((left, right) => (Number(left.priority) || 99) - (Number(right.priority) || 99));
+      .sort((a, b) => {
+        const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
+        const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
 
     return NextResponse.json({ subSections }, { status: 200 });
   } catch (error) {
@@ -30,13 +35,18 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
+    const session = await getServerSession();
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const body = await request.json();
     const subSectionData = {
       name: body.name,
-      priority: Number(body.priority) || 99,
       sectionId: body.sectionId || null,
       createdAt: serverTimestamp(),
     };
+    if (body.priority !== undefined) {
+      subSectionData.priority = Number(body.priority) || 0;
+    }
 
     const docRef = await addDoc(collection(db, "meetup_sub_sections"), subSectionData);
     return NextResponse.json({ message: "Sub Section added", id: docRef.id }, { status: 201 });

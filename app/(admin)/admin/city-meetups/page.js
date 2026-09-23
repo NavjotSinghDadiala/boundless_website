@@ -2,17 +2,40 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { TrashIcon, PlusIcon, PencilIcon } from "lucide-react";
+import {
+  Trash2Icon,
+  PlusIcon,
+  PencilIcon,
+  MapPinIcon,
+  CalendarIcon,
+  UsersIcon,
+  ExternalLinkIcon,
+  ImageIcon,
+} from "lucide-react";
+
+import {
+  AdminPageHeader,
+  AdminCard,
+  AdminLoadingState,
+  AdminEmptyState,
+  AdminConfirmDialog,
+  AdminTable,
+  AdminTableHead,
+  AdminTableBody,
+  AdminTableRow,
+  AdminTableCell,
+  AdminTableHeaderCell,
+} from "@/components/admin";
 
 export default function ManageCityMeetupsPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState("meetups"); // 'meetups' or 'campaigns'
+  const [activeTab, setActiveTab] = useState("meetups");
   const [meetups, setMeetups] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deleteDialog, setDeleteDialog] = useState(null); // { type: 'meetup' | 'campaign', id: string, name: string }
+  const [deleting, setDeleting] = useState(false);
 
   const fetchMeetups = async () => {
     try {
@@ -48,206 +71,278 @@ export default function ManageCityMeetupsPage() {
     loadData();
   }, []);
 
-  const handleDeleteMeetup = async (id) => {
-    if (!confirm("Are you sure you want to delete this meetup?")) return;
+  const handleDeleteConfirm = async () => {
+    if (!deleteDialog) return;
+    setDeleting(true);
     try {
-      const res = await fetch(`/api/city-meetups?id=${id}`, {
-        method: "DELETE",
-      });
-      if (res.ok) {
-        toast.success("Meetup deleted successfully");
-        setMeetups((prev) => prev.filter((meetup) => meetup.id !== id));
+      if (deleteDialog.type === "meetup") {
+        const res = await fetch(`/api/city-meetups?id=${deleteDialog.id}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          toast.success("Meetup deleted successfully");
+          setMeetups((prev) => prev.filter((m) => m.id !== deleteDialog.id));
+        } else {
+          throw new Error("Failed to delete");
+        }
       } else {
-        throw new Error("Failed to delete");
+        const res = await fetch(`/api/meetup-campaigns?id=${deleteDialog.id}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          toast.success("Campaign deleted successfully");
+          setCampaigns((prev) => prev.filter((c) => c.id !== deleteDialog.id));
+        } else {
+          throw new Error("Failed to delete");
+        }
       }
-    } catch (error) {
-      toast.error(error.message);
+      setDeleteDialog(null);
+    } catch (err) {
+      toast.error(err.message || "Failed to delete");
+    } finally {
+      setDeleting(false);
     }
   };
-
-  const handleDeleteCampaign = async (id) => {
-    if (!confirm("Are you sure you want to delete this campaign?")) return;
-    try {
-      const res = await fetch(`/api/meetup-campaigns?id=${id}`, {
-        method: "DELETE",
-      });
-      if (res.ok) {
-        toast.success("Campaign deleted successfully");
-        setCampaigns((prev) => prev.filter((c) => c.id !== id));
-      } else {
-        throw new Error("Failed to delete");
-      }
-    } catch (error) {
-      toast.error(error.message);
-    }
-  };
-
-  if (loading) return <div className="p-10">Loading city meetups...</div>;
 
   return (
-    <div className="p-6 bg-card text-card-foreground rounded-xl border border-border shadow-sm m-4">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Manage City Meetups & Campaigns</h1>
-        {activeTab === "meetups" ? (
-          <Button onClick={() => router.push("/admin/city-meetups/add")}>
-            <PlusIcon className="mr-2 h-4 w-4" /> Add New Meetup
-          </Button>
-        ) : (
-          <Button onClick={() => router.push("/admin/city-meetups/campaigns/add")}>
-            <PlusIcon className="mr-2 h-4 w-4" /> Add New Campaign
-          </Button>
-        )}
-      </div>
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+      {/* Page Header */}
+      <AdminPageHeader
+        title="City Chapters & Meetups"
+        description="Organize local alumni and student meetup chapters across cities, configure RSVP links, and run campaigns."
+        breadcrumbs={[
+          { label: "Dashboard", href: "/admin" },
+          { label: "City Meetups" },
+        ]}
+        primaryAction={
+          activeTab === "meetups" ? (
+            <button
+              type="button"
+              onClick={() => router.push("/admin/city-meetups/add")}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#3B001B] text-white text-xs sm:text-sm font-semibold hover:bg-[#46001D] shadow-sm transition-all"
+            >
+              <PlusIcon className="size-4" />
+              <span>Add City Meetup</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => router.push("/admin/city-meetups/campaigns/add")}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#3B001B] text-white text-xs sm:text-sm font-semibold hover:bg-[#46001D] shadow-sm transition-all"
+            >
+              <PlusIcon className="size-4" />
+              <span>Add Campaign</span>
+            </button>
+          )
+        }
+      />
 
-      {/* Tabs Selector */}
-      <div className="flex gap-4 border-b border-border pb-4 mb-6">
+      {/* Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-stone-200/80 pb-3">
         <button
+          type="button"
           onClick={() => setActiveTab("meetups")}
-          className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
             activeTab === "meetups"
-              ? "bg-primary text-primary-foreground shadow"
-              : "text-muted-foreground hover:bg-muted"
+              ? "bg-[#3B001B] text-white shadow-sm"
+              : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
           }`}
         >
-          Regional Meetup Cards
+          <MapPinIcon className="size-4" />
+          <span>Regional Chapters ({meetups.length})</span>
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("campaigns")}
-          className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl transition-all ${
             activeTab === "campaigns"
-              ? "bg-primary text-primary-foreground shadow"
-              : "text-muted-foreground hover:bg-muted"
+              ? "bg-[#3B001B] text-white shadow-sm"
+              : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
           }`}
         >
-          Highlight Campaigns (Homepage Slideshow)
+          <CalendarIcon className="size-4" />
+          <span>Meetup Campaigns ({campaigns.length})</span>
         </button>
       </div>
 
-      {/* Meetups Tab Content */}
-      {activeTab === "meetups" && (
-        <div>
-          {meetups.length === 0 ? (
-            <p className="text-muted-foreground">No city meetups found.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Main Section</TableHead>
-                  <TableHead>Sub Section</TableHead>
-                  <TableHead>City Name</TableHead>
-                  <TableHead>Color</TableHead>
-                  <TableHead>Image</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {meetups.map((meetup) => (
-                  <TableRow key={meetup.id}>
-                    <TableCell className="font-medium">{meetup.mainSection}</TableCell>
-                    <TableCell>{meetup.subSection}</TableCell>
-                    <TableCell>{meetup.cityName}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div 
-                          className="w-6 h-6 rounded-full border border-gray-300 shadow-sm" 
-                          style={{ backgroundColor: meetup.color || "#FEFAE7" }}
+      {loading ? (
+        <AdminLoadingState type="table" rows={4} />
+      ) : activeTab === "meetups" ? (
+        meetups.length === 0 ? (
+          <AdminEmptyState
+            title="No City Meetups Configured"
+            description="Start by adding your first regional city chapter meetup card."
+            icon={MapPinIcon}
+            action={
+              <button
+                type="button"
+                onClick={() => router.push("/admin/city-meetups/add")}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#3B001B] text-white text-xs font-semibold"
+              >
+                <PlusIcon className="size-3.5" />
+                Add First City Meetup
+              </button>
+            }
+          />
+        ) : (
+          <AdminTable>
+            <AdminTableHead>
+              <tr>
+                <AdminTableHeaderCell>Cover</AdminTableHeaderCell>
+                <AdminTableHeaderCell>City</AdminTableHeaderCell>
+                <AdminTableHeaderCell>Date & Timing</AdminTableHeaderCell>
+                <AdminTableHeaderCell>Community Link</AdminTableHeaderCell>
+                <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
+              </tr>
+            </AdminTableHead>
+            <AdminTableBody>
+              {meetups.map((item) => (
+                <AdminTableRow key={item.id}>
+                  <AdminTableCell className="w-16">
+                    {item.img ? (
+                      <div className="size-11 rounded-lg overflow-hidden border border-stone-200 bg-stone-100 shrink-0">
+                        <img
+                          src={item.img}
+                          alt={item.city || "Meetup"}
+                          className="h-full w-full object-cover"
                         />
-                        <span className="text-xs text-muted-foreground">
-                          {meetup.color || "#FEFAE7"}
-                        </span>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      {meetup.img ? (
-                        <img 
-                          src={meetup.img} 
-                          alt={meetup.cityName} 
-                          className="h-10 w-16 object-cover rounded bg-muted"
-                        />
-                      ) : (
-                        "No Image"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right flex justify-end gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        onClick={() => router.push(`/admin/city-meetups/edit/${meetup.id}`)}
+                    ) : (
+                      <div className="size-11 rounded-lg border border-stone-200 bg-stone-100 flex items-center justify-center text-stone-300">
+                        <ImageIcon className="size-4" />
+                      </div>
+                    )}
+                  </AdminTableCell>
+                  <AdminTableCell className="font-semibold text-stone-900">
+                    {item.city}
+                  </AdminTableCell>
+                  <AdminTableCell className="text-stone-500 whitespace-nowrap">
+                    {item.date || "Date TBA"}
+                  </AdminTableCell>
+                  <AdminTableCell>
+                    {item.link ? (
+                      <a
+                        href={item.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-[#3B001B] hover:underline font-mono inline-flex items-center gap-1"
                       >
-                        <PencilIcon className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="destructive" 
-                        size="icon"
-                        onClick={() => handleDeleteMeetup(meetup.id)}
+                        <span className="truncate max-w-[200px]">{item.link}</span>
+                        <ExternalLinkIcon className="size-3" />
+                      </a>
+                    ) : (
+                      <span className="text-xs text-stone-400">—</span>
+                    )}
+                  </AdminTableCell>
+                  <AdminTableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          router.push(`/admin/city-meetups/edit/${item.id}`)
+                        }
+                        className="p-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors"
+                        title="Edit meetup"
                       >
-                        <TrashIcon className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
+                        <PencilIcon className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDeleteDialog({
+                            type: "meetup",
+                            id: item.id,
+                            name: item.city || "Meetup",
+                          })
+                        }
+                        className="p-1.5 rounded-lg border border-stone-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors"
+                        title="Delete meetup"
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </button>
+                    </div>
+                  </AdminTableCell>
+                </AdminTableRow>
+              ))}
+            </AdminTableBody>
+          </AdminTable>
+        )
+      ) : campaigns.length === 0 ? (
+        <AdminEmptyState
+          title="No Meetup Campaigns"
+          description="Create a community campaign to gather interest for upcoming cities."
+          icon={CalendarIcon}
+          action={
+            <button
+              type="button"
+              onClick={() => router.push("/admin/city-meetups/campaigns/add")}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#3B001B] text-white text-xs font-semibold"
+            >
+              <PlusIcon className="size-3.5" />
+              Add First Campaign
+            </button>
+          }
+        />
+      ) : (
+        <AdminTable>
+          <AdminTableHead>
+            <tr>
+              <AdminTableHeaderCell>Campaign City</AdminTableHeaderCell>
+              <AdminTableHeaderCell>Votes / Interest</AdminTableHeaderCell>
+              <AdminTableHeaderCell>Target Date</AdminTableHeaderCell>
+              <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
+            </tr>
+          </AdminTableHead>
+          <AdminTableBody>
+            {campaigns.map((camp) => (
+              <AdminTableRow key={camp.id}>
+                <AdminTableCell className="font-semibold text-stone-900">
+                  {camp.city}
+                </AdminTableCell>
+                <AdminTableCell className="text-stone-600">
+                  <span className="font-bold text-stone-900">
+                    {camp.votes || camp.count || 0}
+                  </span>{" "}
+                  students interested
+                </AdminTableCell>
+                <AdminTableCell className="text-stone-500 whitespace-nowrap">
+                  {camp.targetDate || "Open Campaign"}
+                </AdminTableCell>
+                <AdminTableCell className="text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDeleteDialog({
+                          type: "campaign",
+                          id: camp.id,
+                          name: camp.city || "Campaign",
+                        })
+                      }
+                      className="p-1.5 rounded-lg border border-stone-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors"
+                      title="Delete campaign"
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </button>
+                  </div>
+                </AdminTableCell>
+              </AdminTableRow>
+            ))}
+          </AdminTableBody>
+        </AdminTable>
       )}
 
-      {/* Campaigns Tab Content */}
-      {activeTab === "campaigns" && (
-        <div>
-          {campaigns.length === 0 ? (
-            <p className="text-muted-foreground">No campaigns found.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>City/Campaign Name</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Sort Order</TableHead>
-                  <TableHead>Image</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {campaigns.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-medium">{c.city}</TableCell>
-                    <TableCell>{c.title}</TableCell>
-                    <TableCell>{c.sortOrder}</TableCell>
-                    <TableCell>
-                      {c.img ? (
-                        <img 
-                          src={c.img} 
-                          alt={c.city} 
-                          className="h-10 w-16 object-cover rounded bg-muted border"
-                        />
-                      ) : (
-                        "No Image"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right flex justify-end gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        onClick={() => router.push(`/admin/city-meetups/campaigns/edit/${c.id}`)}
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="destructive" 
-                        size="icon"
-                        onClick={() => handleDeleteCampaign(c.id)}
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      )}
+      {/* Confirmation Dialog */}
+      <AdminConfirmDialog
+        open={Boolean(deleteDialog)}
+        onOpenChange={(open) => !open && setDeleteDialog(null)}
+        title={`Delete ${deleteDialog?.type === "meetup" ? "City Meetup" : "Campaign"}?`}
+        description={`Are you sure you want to delete "${deleteDialog?.name}"? This action cannot be undone.`}
+        confirmText="Delete"
+        variant="danger"
+        loading={deleting}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }

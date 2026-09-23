@@ -11,7 +11,7 @@ import { Loader2Icon } from "lucide-react";
 export default function AddProudStatPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ label: "", number: "", sortOrder: "0" });
+  const [formData, setFormData] = useState({ label: "", number: "" });
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -23,7 +23,6 @@ export default function AddProudStatPage() {
         body: JSON.stringify({
           label: formData.label,
           number: parseInt(formData.number) || 0,
-          sortOrder: parseInt(formData.sortOrder) || 0,
         }),
       });
 
@@ -54,11 +53,6 @@ export default function AddProudStatPage() {
         <div className="space-y-2">
           <Label htmlFor="number">Value (e.g. 5200 for 5200+)</Label>
           <Input id="number" type="number" required value={formData.number} onChange={(e) => setFormData({ ...formData, number: e.target.value })} />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="sortOrder">Sort Order</Label>
-          <Input id="sortOrder" type="number" required value={formData.sortOrder} onChange={(e) => setFormData({ ...formData, sortOrder: e.target.value })} />
         </div>
 
         <div className="flex gap-4">

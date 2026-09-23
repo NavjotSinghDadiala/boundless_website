@@ -13,7 +13,7 @@ export default function EditProudMarqueePage() {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [formData, setFormData] = useState({ title: "", sortOrder: "0", img: "" });
+  const [formData, setFormData] = useState({ title: "", img: "" });
   const [newImage, setNewImage] = useState({ file: null, preview: null, base64: null });
 
   useEffect(() => {
@@ -24,7 +24,6 @@ export default function EditProudMarqueePage() {
         if (res.ok) {
           setFormData({
             title: data.title || "",
-            sortOrder: String(data.sortOrder || "0"),
             img: data.img || "",
           });
         } else {
@@ -77,7 +76,6 @@ export default function EditProudMarqueePage() {
           id,
           title: formData.title,
           img: imageUrl,
-          sortOrder: parseInt(formData.sortOrder) || 0,
         }),
       });
 
@@ -105,11 +103,6 @@ export default function EditProudMarqueePage() {
         <div className="space-y-2">
           <Label htmlFor="title">Destination Title</Label>
           <Input id="title" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="sortOrder">Sort Order</Label>
-          <Input id="sortOrder" type="number" required value={formData.sortOrder} onChange={(e) => setFormData({ ...formData, sortOrder: e.target.value })} />
         </div>
 
         {/* Image Preview & Upload */}

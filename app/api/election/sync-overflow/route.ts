@@ -1,22 +1,45 @@
 // app/api/election/sync-overflow/route.ts
 // Transfers overflow votes from secondary Firebase (boundless-recovery)
-// back to the primary Firebase (boundless-785f1) after quota resets.
+// back to the primary Firebase after quota resets.
 
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { getSecondaryDb } from "@/lib/firebase-admin-secondary";
 import { FieldValue } from "firebase-admin/firestore";
 
-export async function GET(req: NextRequest) {
+async function isAuthorizedAdmin(req: NextRequest): Promise<boolean> {
+  const session = await getServerSession();
+  if (session) return true;
+
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return NextResponse.json({ error: "Missing token" }, { status: 401 });
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    try {
+      const decoded = await adminAuth.verifyIdToken(token);
+      const userEmail = decoded.email?.toLowerCase();
+      if (!userEmail) return false;
+
+      const adminEmail = process.env.ADMIN_EMAIL?.toLowerCase();
+      if (adminEmail && userEmail === adminEmail) return true;
+
+      const allowedEmails = (process.env.NEXT_PUBLIC_ALLOWED_RESULT_EMAILS ?? "")
+        .split(",")
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (allowedEmails.includes(userEmail)) return true;
+
+      if (decoded.admin === true) return true;
+    } catch {
+      return false;
+    }
   }
 
-  const token = authHeader.substring(7);
-  try {
-    await adminAuth.verifyIdToken(token);
-  } catch {
+  return false;
+}
+
+export async function GET(req: NextRequest) {
+  if (!(await isAuthorizedAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -47,15 +70,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return NextResponse.json({ error: "Missing token" }, { status: 401 });
-  }
-
-  const token = authHeader.substring(7);
-  try {
-    await adminAuth.verifyIdToken(token);
-  } catch {
+  if (!(await isAuthorizedAdmin(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

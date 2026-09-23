@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import { doc, deleteDoc, updateDoc } from "firebase/firestore";
 
 export async function DELETE(request, { params }) {
   try {
+    const session = await getServerSession();
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
 
@@ -18,6 +22,9 @@ export async function DELETE(request, { params }) {
 
 export async function PUT(request, { params }) {
   try {
+    const session = await getServerSession();
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const resolvedParams = await params;
     const { id } = resolvedParams;
     const body = await request.json();

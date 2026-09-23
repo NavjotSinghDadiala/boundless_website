@@ -20,7 +20,6 @@ export default function EditWhatsappGroupPage() {
     category: "regional", 
     linkType: "", 
     color: "#b6dbff",
-    sortOrder: "0",
     img: "" 
   });
   
@@ -38,7 +37,6 @@ export default function EditWhatsappGroupPage() {
             category: data.category || "regional", 
             linkType: data.linkType || "", 
             color: data.color || "#b6dbff",
-            sortOrder: String(data.sortOrder || "0"),
             img: data.img || "" 
           });
         } else {
@@ -91,7 +89,6 @@ export default function EditWhatsappGroupPage() {
           id, 
           ...formData, 
           img: imageUrl,
-          sortOrder: parseInt(formData.sortOrder) || 0
         }),
       });
 
@@ -186,18 +183,6 @@ export default function EditWhatsappGroupPage() {
               className="flex-1 font-mono"
             />
           </div>
-        </div>
-
-        {/* Sort Order */}
-        <div className="space-y-2">
-          <Label htmlFor="sortOrder">Sort Order</Label>
-          <Input
-            id="sortOrder"
-            type="number"
-            required
-            value={formData.sortOrder}
-            onChange={(e) => setFormData({ ...formData, sortOrder: e.target.value })}
-          />
         </div>
 
         {/* Image Preview & Upload */}

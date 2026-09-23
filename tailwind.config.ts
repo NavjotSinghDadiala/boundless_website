@@ -19,6 +19,15 @@ const config: Config = {
 				'brown': '#3b001b',
 				'cream': '#faebd4',
 				'bg-white': '#fefae7',
+				'boundless-cream': '#FFFBEA',
+				'boundless-maroon': '#3B001B',
+				'boundless-dark-maroon': '#46001D',
+				'boundless-gold': '#FFE878',
+				'boundless-gold-accent': '#FCE16D',
+				'boundless-muted-cream': '#FAF6ED',
+				'boundless-text': '#1C1917',
+				'boundless-muted': '#78716C',
+				'boundless-border': 'rgba(59, 0, 27, 0.12)',
 
 				card: {
 					DEFAULT: 'hsl(var(--card))',
@@ -72,7 +81,18 @@ const config: Config = {
 			borderRadius: {
 				lg: 'var(--radius)',
 				md: 'calc(var(--radius) - 2px)',
-				sm: 'calc(var(--radius) - 4px)'
+				sm: 'calc(var(--radius) - 4px)',
+				'boundless-sm': '0.375rem',
+				'boundless-md': '0.75rem',
+				'boundless-lg': '1.25rem',
+				'boundless-xl': '1.5rem',
+				'boundless-2xl': '2rem',
+				'boundless-pill': '9999px',
+			},
+			boxShadow: {
+				'boundless-card': '0 4px 20px -2px rgba(59, 0, 27, 0.08)',
+				'boundless-float': '0 12px 32px -4px rgba(59, 0, 27, 0.16)',
+				'boundless-modal': '0 24px 48px -12px rgba(59, 0, 27, 0.25)',
 			},
 			keyframes: {
 				'accordion-down': {
@@ -102,8 +122,12 @@ const config: Config = {
 				'spin-reverse': 'spin-reverse 1s linear infinite',
 			},
 			fontFamily: {
-				'oswald': ['Oswald', 'sans-serif'],
-				'pacifico': ['Pacifico', 'cursive'],
+				'oswald': ['var(--font-oswald)', 'Oswald', 'sans-serif'],
+				'pacifico': ['var(--font-pacifico)', 'Pacifico', 'cursive'],
+				'nosifer': ['var(--font-nosifer)', 'Nosifer', 'cursive'],
+				'display': ['var(--font-nosifer)', 'sans-serif'],
+				'heading': ['var(--font-oswald)', 'sans-serif'],
+				'accent': ['var(--font-pacifico)', 'cursive'],
 			}
 		}
 	},

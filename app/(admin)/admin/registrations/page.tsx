@@ -17,11 +17,21 @@ import {
   EditIcon,
   PlusCircleIcon,
   FileWarning,
-  XIcon
+  XIcon,
+  RotateCcwIcon,
+  SearchIcon,
+  AlertTriangleIcon,
+  CheckIcon,
+  ExternalLinkIcon,
+  FileTextIcon,
+  DownloadIcon,
+  MailIcon,
+  AlertCircleIcon
 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import SubmissionsTable from "./SubmissionsTable";
 
 interface Trip {
   id: string;
@@ -29,6 +39,8 @@ interface Trip {
   coordinators: any[];
   registrationOpen?: boolean;
   totalSeats?: number;
+  femaleReservedSeats?: number;
+  maleReservedSeats?: number;
   femaleJoined?: number;
   totalJoined?: number;
   finalRosterSaved?: boolean;
@@ -58,12 +70,19 @@ export interface Registration {
   consentFormFileUrl?: string;
   consentFormVerified?: boolean;
   verifiedConsentForms?: Record<string, boolean>;
+  approvalEmailSentAt?: string;
+  approvalEmailStatus?: "pending" | "sent" | "failed" | "disabled";
+  approvalEmailError?: string;
+  approvalEmailLastAttemptAt?: string;
+  approvalEmailMessageId?: string;
   conversationHistory?: Array<{
-    type: "admin_request" | "student_reply";
-    message: string;
-    fields?: string[];         // admin_request: which fields to fix
-    updatedFields?: string[];  // student_reply: non-reply fields updated
-    fileFields?: string[];     // student_reply: file fields re-uploaded
+    type: string;
+    actor?: string;
+    message?: string;
+    reason?: string;
+    fields?: string[];
+    updatedFields?: string[];
+    fileFields?: string[];
     timestamp: string | null;
   }>;
 }
@@ -94,6 +113,22 @@ const getDocumentUrl = (url: string) => {
   return `/api/downloadProxy/${encodeURIComponent(filename)}?url=${encodeURIComponent(url)}`;
 };
 
+const isUrlOrDriveLink = (val: unknown): boolean => {
+  if (typeof val !== "string") return false;
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  return (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("drive.google.com") ||
+    trimmed.startsWith("docs.google.com") ||
+    trimmed.includes("drive.google.com") ||
+    trimmed.includes("docs.google.com") ||
+    trimmed.includes("res.cloudinary.com") ||
+    trimmed.includes("storage.googleapis.com")
+  );
+};
+
 export default function SubmissionsPage() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [selectedTripId, setSelectedTripId] = useState("");
@@ -110,19 +145,35 @@ export default function SubmissionsPage() {
   const [reuploadIssueText, setReuploadIssueText] = useState("");
   const [reuploadFields, setReuploadFields] = useState<string[]>([]);
 
+  // Stage 4 Queue & Action states
+  const [queueTab, setQueueTab] = useState<"pending" | "approved" | "action_required" | "rejected" | "all">("pending");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [approveConfirmReg, setApproveConfirmReg] = useState<Registration | null>(null);
+  const [rejectConfirmReg, setRejectConfirmReg] = useState<Registration | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [revokeConfirmReg, setRevokeConfirmReg] = useState<Registration | null>(null);
+  const [revokeReason, setRevokeReason] = useState("");
+
   // Tabs Navigation
-  const [activeTab, setActiveTab] = useState("registrations"); // "registrations" | "edit-event" | "create-event"
-  const [subTab, setSubTab] = useState<"female" | "male" | "other">("female");
+  const [activeTab, setActiveTab] = useState<"students" | "controls" | "edit-event" | "create-event">("students");
+  const [subTab, setSubTab] = useState<"all" | "female" | "male" | "other">("all");
+  const [tableViewMode, setTableViewMode] = useState<"queue" | "responses">("queue");
 
   // Quick Controls Form
   const [regOpen, setRegOpen] = useState(true);
+  const [controlsTotalSeats, setControlsTotalSeats] = useState<number | string>(50);
+  const [controlsMaleSeats, setControlsMaleSeats] = useState<number | string>(25);
+  const [controlsFemaleSeats, setControlsFemaleSeats] = useState<number | string>(25);
 
   // Edit Event Form state
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editTotalSeats, setEditTotalSeats] = useState<number | string>(50);
+  const [editMaleSeats, setEditMaleSeats] = useState<number | string>(25);
+  const [editFemaleSeats, setEditFemaleSeats] = useState<number | string>(25);
   const [editCoordinators, setEditCoordinators] = useState<any[]>([]);
   const [editFields, setEditFields] = useState<any[]>([]);
-  const [editFee, setEditFee] = useState(0);
+  const [editFee, setEditFee] = useState<number | string>(0);
   const [editConsentTemplate, setEditConsentTemplate] = useState("");
   const [editWhatsappLink, setEditWhatsappLink] = useState("");
   const [editQrCode, setEditQrCode] = useState("");
@@ -130,6 +181,9 @@ export default function SubmissionsPage() {
   // Create Event Form state
   const [createName, setCreateName] = useState("");
   const [createDesc, setCreateDesc] = useState("");
+  const [createTotalSeats, setCreateTotalSeats] = useState<number | string>(50);
+  const [createMaleSeats, setCreateMaleSeats] = useState<number | string>(25);
+  const [createFemaleSeats, setCreateFemaleSeats] = useState<number | string>(25);
   const [createCoordinators, setCreateCoordinators] = useState<any[]>([
     { id: "c1", name: "", email: "" }
   ]);
@@ -138,7 +192,7 @@ export default function SubmissionsPage() {
     { id: "2", name: "Roll Number", type: "short_text", sortOrder: 1 },
     { id: "3", name: "Gender", type: "radio", options: ["Male", "Female", "Other"], sortOrder: 2 },
   ]);
-  const [createFee, setCreateFee] = useState(0);
+  const [createFee, setCreateFee] = useState<number | string>(0);
 
   const availableAssignedOptions = Array.from(
     new Set(
@@ -177,9 +231,15 @@ export default function SubmissionsPage() {
         const res = await fetch("/api/trip");
         if (res.ok) {
           const data = await res.json();
-          setTrips(data.trips || []);
-          if (data.trips && data.trips.length > 0) {
-            setSelectedTripId(data.trips[0].id);
+          const tripList = data.trips || [];
+          setTrips(tripList);
+          const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+          const queryTripId = urlParams?.get("tripId");
+          const matched = tripList.find((t: any) => t.id === queryTripId);
+          if (matched) {
+            setSelectedTripId(matched.id);
+          } else if (tripList.length > 0) {
+            setSelectedTripId(tripList[0].id);
           }
         }
       } catch (err) {
@@ -209,6 +269,9 @@ export default function SubmissionsPage() {
       if (tripMatch) {
         setSelectedTrip(tripMatch);
         setRegOpen(tripMatch.registrationOpen !== false);
+        setControlsTotalSeats(tripMatch.totalSeats !== undefined ? tripMatch.totalSeats : 50);
+        setControlsFemaleSeats(tripMatch.femaleReservedSeats !== undefined ? tripMatch.femaleReservedSeats : 0);
+        setControlsMaleSeats(tripMatch.maleReservedSeats !== undefined ? tripMatch.maleReservedSeats : Math.max(0, (tripMatch.totalSeats || 50) - (tripMatch.femaleReservedSeats || 0)));
       }
     } catch (err) {
       console.error(err);
@@ -360,25 +423,117 @@ export default function SubmissionsPage() {
     }
   };
 
-  const handleVerifyStudentId = async (regId: string) => {
+  const getStudentIdDocUrl = (reg: Registration): string | null => {
+    if (!reg || !reg.formData) return null;
+
+    if (reg.formData["Student ID Card Copy"] && isUrlOrDriveLink(reg.formData["Student ID Card Copy"])) {
+      return reg.formData["Student ID Card Copy"];
+    }
+    if (reg.formData["Aadhaar Card Copy"] && isUrlOrDriveLink(reg.formData["Aadhaar Card Copy"])) {
+      return reg.formData["Aadhaar Card Copy"];
+    }
+
+    for (const [k, v] of Object.entries(reg.formData)) {
+      const lower = k.toLowerCase();
+      if ((lower.includes("id") || lower.includes("card") || lower.includes("roll")) && isUrlOrDriveLink(v)) {
+        return String(v);
+      }
+    }
+
+    for (const [, v] of Object.entries(reg.formData)) {
+      if (typeof v === "string" && (v.includes("drive.google.com") || v.includes("docs.google.com"))) {
+        return v;
+      }
+    }
+
+    return null;
+  };
+
+  const getStudentId = (reg: Registration): string => {
+    if (!reg) return "—";
+
+    if (reg.formData) {
+      const textIdKey = Object.keys(reg.formData).find((k) => {
+        const lower = k.toLowerCase();
+        const val = reg.formData[k];
+        if (isUrlOrDriveLink(val)) return false;
+        if (lower.includes("copy") || lower.includes("file") || lower.includes("upload") || lower.includes("link")) return false;
+        return lower.includes("roll") || lower.includes("student id") || lower.includes("studentid") || lower.includes("id number");
+      });
+
+      if (textIdKey && reg.formData[textIdKey]) {
+        const val = String(reg.formData[textIdKey]).trim();
+        if (val && !isUrlOrDriveLink(val)) {
+          return val;
+        }
+      }
+    }
+
+    if (reg.email) {
+      const prefix = reg.email.split("@")[0]?.trim();
+      if (prefix && prefix.length >= 5) {
+        return prefix.toUpperCase();
+      }
+    }
+
+    if (reg.uid) {
+      return reg.uid.slice(0, 10);
+    }
+
+    return "—";
+  };
+
+  const getStudentName = (reg: Registration): string => {
+    if (!reg) return "Student";
+    if (reg.formData) {
+      const nameKey = Object.keys(reg.formData).find((k) => {
+        const lower = k.toLowerCase();
+        const val = reg.formData[k];
+        if (isUrlOrDriveLink(val)) return false;
+        return lower.includes("name") || lower.includes("fullname");
+      });
+      if (nameKey && reg.formData[nameKey] && !isUrlOrDriveLink(reg.formData[nameKey])) {
+        const val = String(reg.formData[nameKey]).trim();
+        if (val) return val;
+      }
+    }
+    if (reg.email) {
+      const prefix = reg.email.split("@")[0]?.trim();
+      if (prefix) return prefix;
+    }
+    return "Student";
+  };
+
+  const isApprovable = (reg: Registration) => {
+    if (!reg.studentIdVerified) return false;
+    const templates = selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
+      ? selectedTrip.consentTemplates
+      : (selectedTrip?.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
+    if (templates.length > 0 && !reg.consentFormVerified) return false;
+    return true;
+  };
+
+  const handleToggleStudentIdVerification = async (regId: string, verified: boolean = true) => {
     try {
       const res = await fetch("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ registrationId: regId, studentIdVerified: true }),
+        body: JSON.stringify({
+          registrationId: regId,
+          action: "verify_student_id",
+          studentIdVerified: verified,
+        }),
       });
 
       if (res.ok) {
-        toast.success("Student ID verified successfully!");
-        fetchTripData();
+        toast.success(verified ? "Student ID verified successfully!" : "Student ID verification revoked.");
+        await fetchTripData();
         if (activeProfileReg && activeProfileReg.id === regId) {
-          setActiveProfileReg({
-            ...activeProfileReg,
-            studentIdVerified: true,
-          });
+          setActiveProfileReg((prev) => prev ? { ...prev, studentIdVerified: verified } : null);
         }
       } else {
-        toast.error("Failed to verify Student ID.");
+        const err = await res.json();
+        toast.error(err.error || "Failed to update Student ID verification.");
       }
     } catch (e) {
       console.error(e);
@@ -386,44 +541,273 @@ export default function SubmissionsPage() {
     }
   };
 
-  const handleVerifyConsentForm = async (regId: string, templateId: string = "legacy-consent") => {
+  const handleToggleConsentVerification = async (
+    regId: string,
+    templateId: string = "legacy-consent",
+    verified: boolean = true
+  ) => {
     try {
       const res = await fetch("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           registrationId: regId,
-          verifiedConsentForms: { [templateId]: true },
+          action: "verify_consent_form",
+          consentTemplateId: templateId,
+          verified,
         }),
       });
 
       if (res.ok) {
-        toast.success("Consent Form verified successfully!");
-        fetchTripData();
+        toast.success(verified ? "Consent Form verified successfully!" : "Consent Form verification revoked.");
+        await fetchTripData();
         if (activeProfileReg && activeProfileReg.id === regId) {
-          const updatedVerifiedMap = {
-            ...(activeProfileReg.verifiedConsentForms || {}),
-            [templateId]: true,
-          };
-          
-          const templates = selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
-            ? selectedTrip.consentTemplates
-            : (selectedTrip?.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
-          
-          const allOk = templates.every((t) => updatedVerifiedMap[t.id]);
-
-          setActiveProfileReg({
-            ...activeProfileReg,
-            verifiedConsentForms: updatedVerifiedMap,
-            consentFormVerified: allOk,
+          setActiveProfileReg((prev) => {
+            if (!prev) return null;
+            const updatedMap = { ...(prev.verifiedConsentForms || {}), [templateId]: verified };
+            const templates = selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
+              ? selectedTrip.consentTemplates
+              : (selectedTrip?.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
+            const allOk = templates.length > 0 && templates.every((t) => updatedMap[t.id]);
+            return {
+              ...prev,
+              verifiedConsentForms: updatedMap,
+              consentFormVerified: allOk,
+            };
           });
         }
       } else {
-        toast.error("Failed to verify Consent Form.");
+        const err = await res.json();
+        toast.error(err.error || "Failed to update Consent Form verification.");
       }
     } catch (e) {
       console.error(e);
       toast.error("An error occurred.");
+    }
+  };
+
+  const handleApproveRegistration = async (reg: Registration) => {
+    if (!isApprovable(reg)) {
+      toast.error("Cannot approve: Student ID and all required consent forms must be verified first.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/registrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registrationId: reg.id,
+          action: "approve",
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        if (data.email?.sent) {
+          toast.success("✓ Student approved & confirmation email sent!");
+        } else if (data.email?.status === "already_sent") {
+          toast.success("✓ Student approved (confirmation email was already sent previously).");
+        } else if (data.email?.status === "disabled") {
+          toast.success("✓ Student approved (trip emails are disabled).");
+        } else if (data.email?.status === "failed") {
+          toast.warning(`⚠ Student approved, but confirmation email could not be sent: ${data.email.error || "Delivery error"}`);
+        } else {
+          toast.success("✓ Student approved successfully.");
+        }
+        setApproveConfirmReg(null);
+        await fetchTripData();
+        if (activeProfileReg && activeProfileReg.id === reg.id) {
+          setActiveProfileReg((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: data.registrationStatus || data.status || "mail_sent",
+                  approvalEmailStatus: data.email?.status || prev.approvalEmailStatus,
+                  approvalEmailError: data.email?.error || prev.approvalEmailError,
+                }
+              : null
+          );
+        }
+      } else {
+        toast.error(data.error || "Failed to approve registration.");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("An error occurred while approving.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleResendApprovalEmail = async (reg: Registration) => {
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/registrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registrationId: reg.id,
+          action: "resend_approval_email",
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.email?.sent) {
+        toast.success("✓ Confirmation email resent successfully!");
+        await fetchTripData();
+        if (activeProfileReg && activeProfileReg.id === reg.id) {
+          setActiveProfileReg((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: data.registrationStatus || data.status || "mail_sent",
+                  approvalEmailStatus: "sent",
+                  approvalEmailError: undefined,
+                }
+              : null
+          );
+        }
+      } else {
+        toast.error(data.email?.error || data.error || "Failed to resend confirmation email.");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("An error occurred while resending the email.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRejectRegistration = async () => {
+    if (!rejectConfirmReg) return;
+    if (!rejectReason.trim()) {
+      toast.error("Rejection reason is mandatory.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/registrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registrationId: rejectConfirmReg.id,
+          action: "reject",
+          reason: rejectReason.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        toast.success("Registration rejected.");
+        const regId = rejectConfirmReg.id;
+        setRejectConfirmReg(null);
+        setRejectReason("");
+        await fetchTripData();
+        if (activeProfileReg && activeProfileReg.id === regId) {
+          setActiveProfileReg((prev) => prev ? { ...prev, status: "rejected", issueText: rejectReason.trim() } : null);
+        }
+      } else {
+        toast.error(data.error || "Failed to reject registration.");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("An error occurred while rejecting.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRevokeApproval = async () => {
+    if (!revokeConfirmReg) return;
+    if (!revokeReason.trim()) {
+      toast.error("Revocation reason is mandatory.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/registrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registrationId: revokeConfirmReg.id,
+          action: "revoke_approval",
+          reason: revokeReason.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        toast.success("Approval revoked. Registration returned to pending review.");
+        const regId = revokeConfirmReg.id;
+        setRevokeConfirmReg(null);
+        setRevokeReason("");
+        await fetchTripData();
+        if (activeProfileReg && activeProfileReg.id === regId) {
+          setActiveProfileReg((prev) => prev ? { ...prev, status: "registered", issueText: revokeReason.trim() } : null);
+        }
+      } else {
+        toast.error(data.error || "Failed to revoke approval.");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("An error occurred while revoking approval.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSendReuploadRequest = async () => {
+    if (!reuploadRegId) return;
+    if (!reuploadIssueText.trim()) {
+      toast.error("Correction reason is mandatory.");
+      return;
+    }
+    if (reuploadFields.length === 0) {
+      toast.error("Please select at least one field or document requiring correction.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/registrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          registrationId: reuploadRegId,
+          action: "request_reupload",
+          reason: reuploadIssueText.trim(),
+          actionRequiredFields: reuploadFields,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        toast.success("Correction request sent to student.");
+        const regId = reuploadRegId;
+        setReuploadRegId(null);
+        setReuploadIssueText("");
+        setReuploadFields([]);
+        await fetchTripData();
+        if (activeProfileReg && activeProfileReg.id === regId) {
+          setActiveProfileReg((prev) => prev ? {
+            ...prev,
+            status: "action_required",
+            issueText: reuploadIssueText.trim(),
+            actionRequiredFields: reuploadFields,
+          } : null);
+        }
+      } else {
+        toast.error(data.error || "Failed to request correction.");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("An error occurred while sending correction request.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -674,18 +1058,22 @@ export default function SubmissionsPage() {
         body: JSON.stringify({
           tripId: selectedTripId,
           registrationOpen: regOpen,
-          totalSeats: 999999,
+          totalSeats: Number(controlsTotalSeats) || 0,
+          femaleReservedSeats: Number(controlsFemaleSeats) || 0,
+          maleReservedSeats: Number(controlsMaleSeats) || 0,
         }),
       });
 
       if (res.ok) {
-        toast.success("Event controls updated successfully!");
+        toast.success("Event controls and slots updated successfully!");
         const updatedTrips = trips.map((t) => {
           if (t.id === selectedTripId) {
             return {
               ...t,
               registrationOpen: regOpen,
-              totalSeats: 999999,
+              totalSeats: Number(controlsTotalSeats) || 0,
+              femaleReservedSeats: Number(controlsFemaleSeats) || 0,
+              maleReservedSeats: Number(controlsMaleSeats) || 0,
             };
           }
           return t;
@@ -705,7 +1093,7 @@ export default function SubmissionsPage() {
   // Complete and Archive Event
   const handleCompleteEvent = async () => {
     if (!selectedTripId) return;
-    if (!confirm("Are you sure you want to mark this event as completed? This will archive the roster, close registration & payment, and remove user access to register.")) return;
+    if (!confirm("Are you sure you want to mark this event as completed? This will archive the roster, close registration, and remove user access to register.")) return;
     setSubmitting(true);
     try {
       const res = await fetch("/api/admin/registrations", {
@@ -873,9 +1261,11 @@ export default function SubmissionsPage() {
             email: c.email.trim(),
             assignedOption: c.assignedOption ? c.assignedOption.trim() : "",
           })).filter((c) => c.name && c.email),
-          totalSeats: 999999,
+          totalSeats: Number(editTotalSeats) || 0,
+          femaleReservedSeats: Number(editFemaleSeats) || 0,
+          maleReservedSeats: Number(editMaleSeats) || 0,
           formFields: editFields,
-          fee: Number(editFee),
+          fee: Number(editFee) || 0,
           consentFormTemplateUrl: editConsentTemplate,
           consentTemplates: editConsentTemplates,
           whatsappLink: editWhatsappLink,
@@ -893,7 +1283,7 @@ export default function SubmissionsPage() {
           const tripData = await tripRes.json();
           setTrips(tripData.trips || []);
         }
-        setActiveTab("registrations");
+        setActiveTab("students");
       } else {
         const err = await res.json();
         toast.error(err.error || "Failed to save changes.");
@@ -982,12 +1372,13 @@ export default function SubmissionsPage() {
             email: c.email.trim(),
             assignedOption: c.assignedOption ? c.assignedOption.trim() : "",
           })).filter((c) => c.name && c.email),
-          totalSeats: 999999,
-          femaleReservedSeats: 0,
+          totalSeats: Number(createTotalSeats) || 0,
+          femaleReservedSeats: Number(createFemaleSeats) || 0,
+          maleReservedSeats: Number(createMaleSeats) || 0,
           releasedSeats: 0,
           releasedSeatsType: "all",
           formFields: createFields,
-          fee: Number(createFee),
+          fee: Number(createFee) || 0,
           consentFormTemplateUrl: createConsentTemplate,
           consentTemplates: createConsentTemplates,
           whatsappLink: createWhatsappLink,
@@ -1008,7 +1399,7 @@ export default function SubmissionsPage() {
             setSelectedTripId(tripData.trips[0].id);
           }
         }
-        setActiveTab("registrations");
+        setActiveTab("students");
       } else {
         const err = await res.json();
         toast.error(err.error || "Failed to create event.");
@@ -1024,202 +1415,283 @@ export default function SubmissionsPage() {
   const renderRegistrationsTable = (filteredRegs: any[]) => {
     if (filteredRegs.length === 0) {
       return (
-        <div className="flex items-center justify-center h-48 border border-dashed rounded-xl text-muted-foreground text-sm font-semibold bg-muted/10">
-          No registration submissions found in this category.
+        <div className="flex flex-col items-center justify-center h-48 border border-dashed rounded-xl text-muted-foreground text-sm font-semibold bg-muted/10 p-6 text-center">
+          <FileTextIcon className="w-8 h-8 mb-2 opacity-40" />
+          <p>No registration submissions found in this category.</p>
+          <p className="text-xs text-muted-foreground mt-1">Try switching tabs or adjusting your search query.</p>
         </div>
       );
     }
 
+    const hasTripConsents = Boolean(
+      selectedTrip?.consentFormTemplateUrl ||
+      (selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0)
+    );
+
     return (
-      <div className="border border-border rounded-xl overflow-hidden shadow-sm bg-background">
+      <div className="border border-stone-200/80 rounded-xl overflow-hidden shadow-xs bg-white">
         <Table>
           <TableHeader>
-            <TableRow>
-              <TableHead>Email</TableHead>
-              <TableHead>Gender</TableHead>
-              <TableHead>ID Status</TableHead>
-              <TableHead>Consent Status</TableHead>
-              <TableHead>Documents</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Coordinators Flag</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+            <TableRow className="bg-stone-50/70 border-b border-stone-200/80">
+              <TableHead className="font-semibold text-stone-600 text-xs uppercase tracking-wider">Student Name</TableHead>
+              <TableHead className="font-semibold text-stone-600 text-xs uppercase tracking-wider">Student ID</TableHead>
+              <TableHead className="font-semibold text-stone-600 text-xs uppercase tracking-wider">Email</TableHead>
+              <TableHead className="font-semibold text-stone-600 text-xs uppercase tracking-wider">Gender</TableHead>
+              <TableHead className="font-semibold text-stone-600 text-xs uppercase tracking-wider">Submitted At</TableHead>
+              <TableHead className="font-semibold text-stone-600 text-xs uppercase tracking-wider">Verification Status</TableHead>
+              <TableHead className="text-right font-semibold text-stone-600 text-xs uppercase tracking-wider">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredRegs.map((reg) => {
-              const studentFlags = concerns.filter((c) => c.studentEmail === reg.email);
+              const studentName = getStudentName(reg);
+              const studentId = getStudentId(reg);
+              const studentIdDoc = getStudentIdDocUrl(reg);
+              const approvable = isApprovable(reg);
+              const isPending = reg.status === "registered";
+              const isApproved = reg.status === "approved_to_pay" || reg.status === "mail_sent" || reg.status === "paid";
+              const isActionRequired = reg.status === "action_required";
+              const isRejected = reg.status === "rejected";
+
+              const formattedDate = reg.submittedAt
+                ? new Date(reg.submittedAt).toLocaleString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "—";
+
               return (
-                <TableRow key={reg.id} className="hover:bg-muted/50 transition">
+                <TableRow
+                  key={reg.id}
+                  onClick={() => setActiveProfileReg(reg)}
+                  className="hover:bg-stone-50/80 transition cursor-pointer border-b border-stone-100 last:border-0"
+                >
+                  {/* 1. Student Name */}
                   <TableCell>
-                    <div className="font-semibold text-sm">{reg.email}</div>
-                    <button
-                      onClick={() => setActiveProfileReg(reg)}
-                      className="text-[10px] text-indigo-900 font-black underline hover:text-indigo-800 mt-1 block text-left"
-                    >
-                      View Full Profile & Files ↗
-                    </button>
-                  </TableCell>
-                  <TableCell className="capitalize text-xs font-semibold">{reg.gender}</TableCell>
-                  
-                  {/* ID Status */}
-                  <TableCell>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded border uppercase ${
-                      reg.studentIdVerified 
-                        ? "bg-green-100 text-green-700 border-green-200" 
-                        : "bg-red-100 text-red-700 border-red-200"
-                    }`}>
-                      {reg.studentIdVerified ? "Verified ✅" : "Unverified ❌"}
-                    </span>
+                    <div className="font-bold text-sm text-stone-900 hover:text-[#3B001B] transition">
+                      {studentName}
+                    </div>
+                    <span className="text-[10px] text-stone-400">Click row to review ↗</span>
                   </TableCell>
 
-                  {/* Consent Status */}
+                  {/* 2. Student ID */}
                   <TableCell>
-                    {selectedTrip?.consentFormTemplateUrl ? (
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded border uppercase ${
-                        reg.consentFormVerified 
-                          ? "bg-green-100 text-green-700 border-green-200" 
-                          : "bg-red-100 text-red-700 border-red-200"
-                      }`}>
-                        {reg.consentFormVerified ? "Verified ✅" : "Unverified ❌"}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded-md bg-stone-100 border border-stone-200/80 text-stone-800">
+                        {studentId}
                       </span>
-                    ) : (
-                      <span className="text-[10px] font-bold text-zinc-400">N/A</span>
-                    )}
-                  </TableCell>
-
-                  {/* Documents Access */}
-                  <TableCell>
-                    <div className="flex flex-col gap-1 text-[10px]">
-                      {reg.formData?.["Student ID Card Copy"] ? (
+                      {studentIdDoc && (
                         <a
-                          href={getDocumentUrl(reg.formData["Student ID Card Copy"])}
+                          href={studentIdDoc}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="bg-muted px-2 py-1 rounded border hover:bg-muted/80 text-foreground font-semibold flex items-center justify-between gap-1 w-28 text-[9px] text-left"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[#3B001B]/5 hover:bg-[#3B001B] text-[#3B001B] hover:text-white border border-[#3B001B]/20 transition-all shadow-xs shrink-0"
+                          title="Open Google Drive document in new tab"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          🪪 ID Copy ↗
+                          <span>View ID</span>
+                          <ExternalLinkIcon className="size-2.5" />
                         </a>
-                      ) : (
-                        <span className="text-muted-foreground italic text-[9px]">No ID Copy</span>
-                      )}
-                      {reg.formData?.["Completed Consent Form"] ? (
-                        <a
-                          href={getDocumentUrl(reg.formData["Completed Consent Form"])}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="bg-muted px-2 py-1 rounded border hover:bg-muted/80 text-foreground font-semibold flex items-center justify-between gap-1 w-28 text-[9px] text-left"
-                        >
-                          📝 Signed Consent ↗
-                        </a>
-                      ) : (
-                        <span className="text-muted-foreground italic text-[9px]">No Consent Form</span>
                       )}
                     </div>
                   </TableCell>
 
+                  {/* 3. Email */}
                   <TableCell>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded border uppercase ${
-                      reg.status === "paid" ? "bg-green-100 text-green-700 border-green-200" :
-                      reg.status === "mail_sent" ? "bg-emerald-100 text-emerald-700 border-emerald-200" :
-                      reg.status === "approved_to_pay" ? "bg-indigo-100 text-indigo-700 border-indigo-200" :
-                      reg.status === "rejected" ? "bg-red-100 text-red-700 border-red-200" :
-                      "bg-yellow-100 text-yellow-700 border-yellow-200"
-                    }`}>{reg.status === "mail_sent" ? "mail sent" : reg.status === "approved_to_pay" ? "approved" : reg.status}</span>
-                    {/* Show student's Custom Reply or User Reply if they submitted one */}
-                    {(reg.formData?.["Custom Reply"] || reg.formData?.["User Reply"]) && (
-                      <button
-                        onClick={() => setActiveProfileReg(reg)}
-                        className="mt-1.5 w-full text-left text-[10px] text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-2 py-1 leading-snug hover:bg-indigo-100 transition-colors"
-                        title="Click to view full reply"
-                      >
-                        <span className="font-black block text-indigo-500 uppercase tracking-wide mb-0.5">💬 Student Reply ↗</span>
-                        <span className="line-clamp-2">{reg.formData["Custom Reply"] || reg.formData["User Reply"]}</span>
-                      </button>
-                    )}
+                    <span className="text-xs text-stone-600 font-mono font-medium">{reg.email}</span>
                   </TableCell>
+
+                  {/* 4. Gender */}
                   <TableCell>
-                    {studentFlags.length > 0 ? (
+                    <span className="capitalize text-xs font-medium text-stone-700">
+                      {reg.gender || "—"}
+                    </span>
+                  </TableCell>
+
+                  {/* 5. Submitted At */}
+                  <TableCell>
+                    <span className="text-xs text-stone-500 whitespace-nowrap">
+                      {formattedDate}
+                    </span>
+                  </TableCell>
+
+                  {/* 6. Verification Status */}
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex flex-col gap-1 text-[10px]">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={`font-bold px-1.5 py-0.5 rounded border uppercase text-[9px] ${
+                            reg.studentIdVerified
+                              ? "bg-green-100 text-green-700 border-green-200"
+                              : "bg-red-100 text-red-700 border-red-200"
+                          }`}
+                        >
+                          ID: {reg.studentIdVerified ? "Verified ✅" : "Missing ❌"}
+                        </span>
+                        {hasTripConsents ? (
+                          <span
+                            className={`font-bold px-1.5 py-0.5 rounded border uppercase text-[9px] ${
+                              reg.consentFormVerified
+                                ? "bg-green-100 text-green-700 border-green-200"
+                                : "bg-red-100 text-red-700 border-red-200"
+                            }`}
+                          >
+                            Consent: {reg.consentFormVerified ? "Verified ✅" : "Missing ❌"}
+                          </span>
+                        ) : (
+                          <span className="text-stone-400 text-[9px]">Consent: N/A</span>
+                        )}
+                      </div>
+                      {isPending && (
+                        <div>
+                          {approvable ? (
+                            <span className="text-emerald-700 font-bold text-[10px] flex items-center gap-1">
+                              ● Ready for Approval
+                            </span>
+                          ) : (
+                            <span className="text-amber-700 font-semibold text-[10px]">
+                              ● Verification Needed
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {!isPending && (
+                        <div className="flex flex-col gap-1">
+                          <span
+                            className={`font-bold px-2 py-0.5 rounded border uppercase text-[9px] ${
+                              isApproved
+                                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                : isActionRequired
+                                ? "bg-amber-100 text-amber-800 border-amber-300"
+                                : isRejected
+                                ? "bg-red-100 text-red-800 border-red-300"
+                                : "bg-stone-100 text-stone-700 border-stone-200"
+                            }`}
+                          >
+                            {reg.status === "mail_sent"
+                              ? "Approved (Mail Sent)"
+                              : reg.status === "approved_to_pay"
+                              ? "Approved"
+                              : reg.status === "paid"
+                              ? "Paid"
+                              : reg.status === "action_required"
+                              ? "Reupload Requested"
+                              : reg.status}
+                          </span>
+                          {reg.approvalEmailStatus === "failed" && (
+                            <span
+                              className="text-[9px] text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded font-semibold flex items-center gap-1"
+                              title={reg.approvalEmailError || "Approval email failed to send"}
+                            >
+                              <AlertCircleIcon className="w-2.5 h-2.5 shrink-0" /> Mail Failed
+                            </span>
+                          )}
+                          {(reg.approvalEmailStatus === "sent" || reg.status === "mail_sent") && (
+                            <span className="text-[9px] text-emerald-700 font-medium flex items-center gap-1">
+                              <MailIcon className="w-2.5 h-2.5" /> Email Sent
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+
+                  {/* 7. Action */}
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end items-center gap-1.5 flex-wrap">
                       <Button
                         size="sm"
                         variant="outline"
-                        className="text-xs bg-red-50 border-red-300 text-red-700 hover:bg-red-100 flex items-center gap-1.5 font-semibold"
-                        onClick={() => setActiveConcernEmail(reg.email)}
+                        className="text-xs h-7 px-2.5 bg-white hover:bg-stone-50 border border-stone-200 text-stone-800 font-semibold rounded-lg shadow-xs"
+                        onClick={() => setActiveProfileReg(reg)}
                       >
-                        <ShieldAlertIcon className="w-3.5 h-3.5" /> View Flags ({studentFlags.length})
+                        Review
                       </Button>
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground italic">No concerns</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {!selectedTrip?.isCompleted ? (
-                      <div className="flex justify-end gap-1.5">
-                        {reg.status === "registered" && (
+
+                      {isPending && !selectedTrip?.isCompleted && (
+                        <>
                           <Button
                             size="sm"
-                            variant="outline"
                             title={
-                              !reg.studentIdVerified
-                                ? "Student ID must be verified first"
-                                : (!reg.consentFormVerified && (
-                                    (selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0) ||
-                                    selectedTrip?.consentFormTemplateUrl
-                                  ))
-                                ? "All consent forms must be verified first"
-                                : "Approve"
+                              !approvable
+                                ? "Student ID and all required consent forms must be verified before approving"
+                                : "Approve this student's registration"
                             }
-                            disabled={
-                              !reg.studentIdVerified ||
-                              !!(
-                                !reg.consentFormVerified && (
-                                  (selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0) ||
-                                  selectedTrip?.consentFormTemplateUrl
-                                )
-                              )
-                            }
-                            className="text-xs px-2.5 py-1 bg-green-50 border-green-300 text-green-700 hover:bg-green-100 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:border-zinc-200 disabled:cursor-not-allowed"
-                            onClick={() => handleStatusChange(reg.id, "approved_to_pay")}
+                            disabled={!approvable || submitting}
+                            className="text-xs h-7 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white disabled:bg-stone-100 disabled:text-stone-400 disabled:border-stone-200 disabled:cursor-not-allowed font-semibold rounded-lg shadow-xs"
+                            onClick={() => setApproveConfirmReg(reg)}
                           >
                             <CheckCircle2Icon className="w-3.5 h-3.5 mr-1" /> Approve
                           </Button>
-                        )}
 
-                        {reg.status !== "paid" && reg.status !== "rejected" && (
                           <Button
                             size="sm"
                             variant="outline"
-                            className="text-xs px-2.5 py-1 bg-red-50 border-red-300 text-red-700 hover:bg-red-100"
-                            onClick={() => handleStatusChange(reg.id, "rejected")}
-                          >
-                            <XCircleIcon className="w-3.5 h-3.5 mr-1" /> Decline
-                          </Button>
-                        )}
-
-                        {reg.status === "rejected" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs px-2.5 py-1 bg-yellow-50 border-yellow-300 text-yellow-700 hover:bg-yellow-100"
-                            onClick={() => handleStatusChange(reg.id, "registered")}
-                          >
-                            Restore
-                          </Button>
-                        )}
-
-                        {(reg.status === "registered" || reg.status === "rejected") && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs px-2.5 py-1 bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100"
-                            onClick={() => setReuploadRegId(reg.id)}
+                            className="text-xs h-7 px-2 bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100 font-semibold rounded-lg"
+                            onClick={() => {
+                              setReuploadRegId(reg.id);
+                              setReuploadIssueText("");
+                              setReuploadFields([]);
+                            }}
                           >
                             <FileWarning className="w-3.5 h-3.5 mr-1" /> Re-upload
                           </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground italic font-semibold">No Actions (Archived)</span>
-                    )}
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7 px-2 bg-red-50 border-red-200 text-red-700 hover:bg-red-100 font-semibold rounded-lg"
+                            onClick={() => {
+                              setRejectConfirmReg(reg);
+                              setRejectReason("");
+                            }}
+                          >
+                            <XCircleIcon className="w-3.5 h-3.5 mr-1" /> Reject
+                          </Button>
+                        </>
+                      )}
+
+                      {(reg.status === "approved_to_pay" || reg.status === "mail_sent" || reg.status === "paid") && !selectedTrip?.isCompleted && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            title="Resend approval confirmation email"
+                            disabled={submitting}
+                            className="text-xs h-7 px-2 bg-stone-50 border-stone-300 text-stone-700 hover:bg-stone-100 font-semibold rounded-lg"
+                            onClick={() => handleResendApprovalEmail(reg)}
+                          >
+                            <MailIcon className="w-3.5 h-3.5 mr-1 text-stone-500" /> Resend Mail
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7 px-2 bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100 font-semibold rounded-lg"
+                            onClick={() => {
+                              setRevokeConfirmReg(reg);
+                              setRevokeReason("");
+                            }}
+                          >
+                            <RotateCcwIcon className="w-3.5 h-3.5 mr-1" /> Revoke
+                          </Button>
+                        </>
+                      )}
+
+                      {isRejected && !selectedTrip?.isCompleted && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs h-7 px-2 bg-stone-100 border-stone-300 text-stone-700 hover:bg-stone-200 font-semibold rounded-lg"
+                          onClick={() => handleStatusChange(reg.id, "registered")}
+                        >
+                          Restore
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               );
@@ -1231,13 +1703,22 @@ export default function SubmissionsPage() {
   };
 
   return (
-    <main className="p-6 bg-card text-card-foreground rounded-xl border border-border shadow-sm m-4 space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       
       {/* Page Header */}
-      <div className="flex justify-between items-center border-b pb-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">📋 Registration Control Panel</h1>
-          <p className="text-xs text-muted-foreground mt-1">Manage attendees, approval gating, and payment thresholds.</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-stone-200/80">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-stone-900">
+              Registrations Console
+            </h1>
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#3B001B]/10 text-[#3B001B] border border-[#3B001B]/20">
+              Operations
+            </span>
+          </div>
+          <p className="text-xs sm:text-sm text-stone-600 max-w-2xl">
+            Review and verify student registrations, inspect credential documents, and manage approval queues.
+          </p>
         </div>
 
         {/* Trip Searchable Dropdown & Link Copier */}
@@ -1299,27 +1780,61 @@ export default function SubmissionsPage() {
             >
               🔗 Copy Link
             </Button>
+
+            <Button
+              onClick={() => {
+                const url = selectedTripId
+                  ? `/api/admin/email-preview?tripId=${encodeURIComponent(selectedTripId)}&dev=true`
+                  : "/api/admin/email-preview?dev=true";
+                window.open(url, "_blank");
+              }}
+              variant="outline"
+              size="sm"
+              className="font-bold flex items-center gap-1.5 text-xs h-[38px] px-3 bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-300"
+              title="Preview approval confirmation email template"
+            >
+              <MailIcon className="w-3.5 h-3.5 text-stone-600" />
+              <span>Preview Email</span>
+            </Button>
           </div>
         )}
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-4 border-b border-border pb-px">
+      <div className="flex gap-2 sm:gap-4 border-b border-border pb-px overflow-x-auto">
         <button
-          onClick={() => setActiveTab("registrations")}
-          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 ${
-            activeTab === "registrations" 
+          onClick={() => setActiveTab("students")}
+          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === "students" 
               ? "border-primary text-primary" 
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
         >
-          <UsersIcon className="w-4 h-4" /> Registrations & Controls
+          <UsersIcon className="w-4 h-4" /> Students List (Pending & Approved)
+          {registrations.length > 0 && (
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 font-mono">
+              {registrations.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setActiveTab("controls")}
+          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
+            activeTab === "controls" 
+              ? "border-primary text-primary" 
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <SettingsIcon className="w-4 h-4" /> Registration & Controls
         </button>
         <button
           onClick={() => {
             if (selectedTrip) {
               setEditName(selectedTrip.name);
               setEditDesc(selectedTrip.description || "");
+              setEditTotalSeats(selectedTrip.totalSeats !== undefined ? selectedTrip.totalSeats : 50);
+              setEditFemaleSeats(selectedTrip.femaleReservedSeats !== undefined ? selectedTrip.femaleReservedSeats : 0);
+              setEditMaleSeats(selectedTrip.maleReservedSeats !== undefined ? selectedTrip.maleReservedSeats : Math.max(0, (selectedTrip.totalSeats || 50) - (selectedTrip.femaleReservedSeats || 0)));
               
               // Map coordinators (strings to objects backward compatible)
               const coords = (selectedTrip.coordinators || []).map((c: any, idx: number) => {
@@ -1341,7 +1856,7 @@ export default function SubmissionsPage() {
             setActiveTab("edit-event");
           }}
           disabled={!selectedTripId}
-          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 ${
+          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
             !selectedTripId ? "opacity-50 cursor-not-allowed" : ""
           } ${
             activeTab === "edit-event" 
@@ -1355,6 +1870,10 @@ export default function SubmissionsPage() {
           onClick={() => {
             setCreateName("");
             setCreateDesc("");
+            setCreateTotalSeats(50);
+            setCreateMaleSeats(25);
+            setCreateFemaleSeats(25);
+            setCreateFee(0);
             setCreateCoordinators([{ id: "c1", name: "", email: "", assignedOption: "" }]);
             setCreateFields([
               { id: "1", name: "Full Name", type: "short_text", allowEditIfPrefilled: false, sortOrder: 0 },
@@ -1367,7 +1886,7 @@ export default function SubmissionsPage() {
             setCreateCityWhatsapp({});
             setActiveTab("create-event");
           }}
-          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 ${
+          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
             activeTab === "create-event" 
               ? "border-primary text-primary" 
               : "border-transparent text-muted-foreground hover:text-foreground"
@@ -1383,193 +1902,510 @@ export default function SubmissionsPage() {
         return null;
       })()}
 
-      {/* Tab Contents */}
-      {activeTab === "registrations" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Side: Event Controls settings */}
-          <div className="bg-muted/40 p-4 rounded-xl border border-border space-y-4 h-fit">
-            <h2 className="font-bold text-sm flex items-center gap-1.5 uppercase text-muted-foreground">
-              <SettingsIcon className="w-4 h-4" /> Trip Settings
-            </h2>
-            
-            <form onSubmit={handleSaveControls} className="space-y-4">
-              {/* Registrations Open switch */}
-              <div className="flex justify-between items-center border-b pb-2">
-                <span className="text-xs font-bold">Registration Status</span>
+      {/* Tab 1: Students List (Pending & Approved) - 100% Full Width */}
+      {(activeTab === "students" || (activeTab as string) === "registrations") && (
+        <div className="space-y-6">
+          {(() => {
+            // Calculate stats dynamically based on loaded registration data
+            const femaleRegs = registrations.filter(r => r.gender?.toLowerCase() === "female");
+            const maleRegs = registrations.filter(r => r.gender?.toLowerCase() === "male");
+            const otherRegs = registrations.filter(r => r.gender?.toLowerCase() !== "female" && r.gender?.toLowerCase() !== "male");
+
+            const approvedRegs = registrations.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent");
+            const pendingRegs = registrations.filter(r => r.status === "registered");
+            const actionRequiredRegs = registrations.filter(r => r.status === "action_required");
+            const rejectedRegs = registrations.filter(r => r.status === "rejected");
+
+            const approvedFemales = femaleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
+            const approvedMales = maleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
+
+            // Filter by queue status tab
+            let queueFiltered = registrations;
+            if (queueTab === "pending") queueFiltered = pendingRegs;
+            else if (queueTab === "approved") queueFiltered = approvedRegs;
+            else if (queueTab === "action_required") queueFiltered = actionRequiredRegs;
+            else if (queueTab === "rejected") queueFiltered = rejectedRegs;
+
+            // Filter by gender subTab
+            if (subTab === "female") {
+              queueFiltered = queueFiltered.filter(r => r.gender?.toLowerCase() === "female");
+            } else if (subTab === "male") {
+              queueFiltered = queueFiltered.filter(r => r.gender?.toLowerCase() === "male");
+            } else if (subTab === "other") {
+              queueFiltered = queueFiltered.filter(r => r.gender?.toLowerCase() !== "female" && r.gender?.toLowerCase() !== "male");
+            }
+
+            // Filter by search query
+            if (searchQuery.trim()) {
+              const q = searchQuery.toLowerCase().trim();
+              queueFiltered = queueFiltered.filter(r => {
+                const sName = getStudentName(r).toLowerCase();
+                const sId = getStudentId(r).toLowerCase();
+                const sEmail = (r.email || "").toLowerCase();
+                return sName.includes(q) || sId.includes(q) || sEmail.includes(q);
+              });
+            }
+
+            return (
+              <>
+                {/* Dynamic Counters Card Grid */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-amber-700">Pending</span>
+                      <span className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center text-sm">⏳</span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                        {pendingRegs.length}
+                      </div>
+                      <span className="text-xs text-stone-500 font-medium">Awaiting review</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-700">Approved</span>
+                      <span className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm">✅</span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                        {approvedRegs.length}
+                      </div>
+                      <span className="text-xs text-stone-500 font-medium">Confirmed / Mail sent</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-700">Gender Slots</span>
+                      <span className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm">👥</span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-base font-bold text-stone-900 tracking-tight flex items-center justify-between gap-1">
+                        <span className="text-sky-800">🚹 {approvedMales} / {selectedTrip?.maleReservedSeats !== undefined ? selectedTrip.maleReservedSeats : Math.max(0, (selectedTrip?.totalSeats || 0) - (selectedTrip?.femaleReservedSeats || 0))}</span>
+                        <span className="text-stone-300">|</span>
+                        <span className="text-rose-800">🚺 {approvedFemales} / {selectedTrip?.femaleReservedSeats ?? 0}</span>
+                      </div>
+                      <span className="text-xs text-stone-500 font-medium block mt-1">Approved / Allocated slots</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-stone-600">Total</span>
+                      <span className="w-7 h-7 rounded-lg bg-stone-100 text-stone-600 flex items-center justify-center text-sm">📋</span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                        {registrations.length}
+                      </div>
+                      <span className="text-xs text-stone-500 font-medium">Total submissions</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Stage 4: Admin Registration Queue Filter Tabs */}
+                <div className="flex flex-col gap-3 pt-1">
+                  <div className="flex justify-between items-center flex-wrap gap-2">
+                    {/* Status Queue Tabs - Segmented control */}
+                    <div className="flex items-center gap-1 overflow-x-auto bg-stone-100/90 p-1 rounded-xl border border-stone-200/70">
+                      <button
+                        type="button"
+                        onClick={() => setQueueTab("pending")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                          queueTab === "pending"
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
+                        }`}
+                      >
+                        <span>Pending</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          queueTab === "pending" ? "bg-amber-100 text-amber-800" : "bg-stone-200/80 text-stone-600"
+                        }`}>
+                          {pendingRegs.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQueueTab("approved")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                          queueTab === "approved"
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
+                        }`}
+                      >
+                        <span>Approved</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          queueTab === "approved" ? "bg-emerald-100 text-emerald-800" : "bg-stone-200/80 text-stone-600"
+                        }`}>
+                          {approvedRegs.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQueueTab("action_required")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                          queueTab === "action_required"
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
+                        }`}
+                      >
+                        <span>Reupload</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          queueTab === "action_required" ? "bg-amber-100 text-amber-800" : "bg-stone-200/80 text-stone-600"
+                        }`}>
+                          {actionRequiredRegs.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQueueTab("rejected")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                          queueTab === "rejected"
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
+                        }`}
+                      >
+                        <span>Rejected</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          queueTab === "rejected" ? "bg-rose-100 text-rose-800" : "bg-stone-200/80 text-stone-600"
+                        }`}>
+                          {rejectedRegs.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQueueTab("all")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                          queueTab === "all"
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
+                        }`}
+                      >
+                        <span>All</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          queueTab === "all" ? "bg-stone-200 text-stone-800" : "bg-stone-200/80 text-stone-600"
+                        }`}>
+                          {registrations.length}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* View Mode & CSV Download */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center bg-stone-100 p-0.5 rounded-lg border border-stone-200/80 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setTableViewMode("queue")}
+                          className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                            tableViewMode === "queue"
+                              ? "bg-white text-stone-900 shadow-2xs"
+                              : "text-stone-500 hover:text-stone-900"
+                          }`}
+                        >
+                          Review Queue
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTableViewMode("responses")}
+                          className={`px-2.5 py-1 rounded-md font-semibold transition-all ${
+                            tableViewMode === "responses"
+                              ? "bg-white text-stone-900 shadow-2xs"
+                              : "text-stone-500 hover:text-stone-900"
+                          }`}
+                        >
+                          All Form Responses
+                        </button>
+                      </div>
+
+                      <Button
+                        onClick={handleDownloadCSV}
+                        variant="outline"
+                        size="sm"
+                        disabled={registrations.length === 0}
+                        className="font-bold flex items-center gap-1.5 text-xs h-8 px-3 text-stone-700 bg-white hover:bg-stone-50 border-stone-200"
+                      >
+                        <DownloadIcon className="w-3.5 h-3.5" /> Download CSV
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Search and Gender Filter Sub-bar */}
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center justify-between">
+                    <div className="relative flex-1">
+                      <SearchIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                      <input
+                        type="text"
+                        placeholder="Search student name, roll number, or email..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-9 pr-4 py-1.5 text-xs rounded-xl border border-stone-200 bg-white placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl border border-stone-200/70 text-xs self-start sm:self-auto shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setSubTab("all")}
+                        className={`px-2.5 py-1 rounded-lg transition-all ${
+                          subTab === "all" ? "bg-white text-stone-900 shadow-xs font-semibold" : "text-stone-600 hover:text-stone-900"
+                        }`}
+                      >
+                        All ({queueFiltered.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubTab("female")}
+                        className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
+                          subTab === "female" ? "bg-white text-rose-700 shadow-xs font-semibold" : "text-stone-600 hover:text-stone-900"
+                        }`}
+                      >
+                        <span>🚺 Female</span>
+                        <span className="text-[10px] text-stone-400">({femaleRegs.length})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubTab("male")}
+                        className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
+                          subTab === "male" ? "bg-white text-sky-700 shadow-xs font-semibold" : "text-stone-600 hover:text-stone-900"
+                        }`}
+                      >
+                        <span>🚹 Male</span>
+                        <span className="text-[10px] text-stone-400">({maleRegs.length})</span>
+                      </button>
+                      {otherRegs.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSubTab("other")}
+                          className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
+                            subTab === "other" ? "bg-white text-stone-900 shadow-xs font-semibold" : "text-stone-600 hover:text-stone-900"
+                          }`}
+                        >
+                          <span>👤 Other</span>
+                          <span className="text-[10px] text-stone-400">({otherRegs.length})</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Loading / Table Render - Full Width */}
+                {loading ? (
+                  <div className="flex items-center justify-center h-48 text-muted-foreground text-sm font-semibold">
+                    <Loader2Icon className="animate-spin mr-2" /> Fetching registration submissions...
+                  </div>
+                ) : tableViewMode === "responses" ? (
+                  <SubmissionsTable submissions={queueFiltered} />
+                ) : (
+                  renderRegistrationsTable(queueFiltered)
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Tab 2: Trip Settings & Controls - Dedicated Clean View */}
+      {activeTab === "controls" && (
+        <div className="max-w-4xl space-y-6">
+          <div className="bg-white p-6 sm:p-8 rounded-2xl border border-stone-200/90 shadow-2xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 pb-4">
+              <div>
+                <h2 className="font-bold text-base sm:text-lg text-stone-900 flex items-center gap-2">
+                  <SettingsIcon className="w-5 h-5 text-stone-500" /> Trip Settings & Controls
+                </h2>
+                <p className="text-xs sm:text-sm text-stone-500 mt-0.5">
+                  {selectedTrip ? `Managing controls for: ${selectedTrip.name}` : "Select a trip from the header dropdown to modify controls"}
+                </p>
+              </div>
+              {selectedTrip && (
+                <span className="text-xs font-mono text-stone-400 bg-stone-50 px-2.5 py-1 rounded-md border border-stone-200 self-start sm:self-auto">
+                  ID: {selectedTrip.id}
+                </span>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveControls} className="space-y-6">
+              {/* Registration Status switch */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-stone-50/80 p-4 rounded-xl border border-stone-200/80 gap-3">
+                <div>
+                  <span className="text-sm font-semibold text-stone-800 block">Registration Access Window</span>
+                  <span className="text-xs text-stone-500">Toggle whether students can view and submit new registrations for this trip</span>
+                </div>
                 <button
                   type="button"
                   onClick={() => setRegOpen(!regOpen)}
-                  className={`text-xs font-black px-3 py-1 rounded border transition ${
-                    regOpen ? "bg-green-100 text-green-700 border-green-200" : "bg-red-100 text-red-700 border-red-200"
+                  className={`text-xs font-bold px-4 py-2 rounded-xl border transition-all flex items-center gap-2 shadow-2xs self-start sm:self-auto ${
+                    regOpen 
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100" 
+                      : "bg-stone-100 text-stone-600 border-stone-300 hover:bg-stone-200"
                   }`}
                 >
-                  {regOpen ? "OPEN" : "CLOSED"}
+                  <span className={`w-2.5 h-2.5 rounded-full ${regOpen ? "bg-emerald-500 animate-pulse" : "bg-stone-400"}`} />
+                  <span>{regOpen ? "REGISTRATIONS OPEN" : "REGISTRATIONS CLOSED"}</span>
                 </button>
               </div>
 
-              <Button type="submit" disabled={submitting} className="w-full text-xs py-2 bg-primary text-primary-foreground hover:bg-primary/95 flex items-center justify-center gap-1.5 shadow">
-                <SaveIcon className="w-3.5 h-3.5" /> {submitting ? "Saving..." : "Save Event Controls"}
-              </Button>
-            </form>
-
-            {selectedTrip && (
-              <div className="pt-2">
-                <Button
-                  variant="destructive"
-                  className="w-full text-xs"
-                  disabled={submitting}
-                  onClick={handleDeleteTrip}
-                >
-                  Delete Event Completely
-                </Button>
-              </div>
-            )}
-
-            {/* Roster Auto-Save Status Badge */}
-            {selectedTrip && (
-              <div className="space-y-3 pt-4 border-t-2 border-dashed border-border">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="font-semibold text-muted-foreground">Roster Compilation:</span>
-                  <span className={`font-black px-2 py-0.5 rounded border uppercase text-[10px] ${
-                    selectedTrip.isCompleted || selectedTrip.finalRosterSaved 
-                      ? "bg-indigo-100 text-indigo-700 border-indigo-200" 
-                      : "bg-yellow-100 text-yellow-700 border-yellow-200"
-                  }`}>
-                    {selectedTrip.isCompleted || selectedTrip.finalRosterSaved ? "Completed / Archived ✅" : "Active / Live"}
+              {/* Capacity & Quotas Quick Controls */}
+              <div className="space-y-4 pt-4 border-t border-stone-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-bold text-stone-800 uppercase tracking-wider">
+                      Capacity & Slots Allocation
+                    </h3>
+                    <p className="text-xs text-stone-500">
+                      Configure total seat cap and gender-specific quotas for male and female applicants.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono text-stone-500 bg-stone-100 px-2.5 py-1 rounded-lg">
+                    {selectedTrip ? `${selectedTrip.totalJoined || 0} / ${controlsTotalSeats} Filled` : ""}
                   </span>
                 </div>
 
-                {(!selectedTrip.isCompleted && !selectedTrip.finalRosterSaved) && (
-                  <Button
-                    onClick={handleCompleteEvent}
-                    disabled={submitting}
-                    className="w-full text-xs bg-indigo-900 hover:bg-indigo-800 text-white flex items-center justify-center gap-1.5 shadow"
-                  >
-                    Complete & Archive Event
-                  </Button>
-                )}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="space-y-1.5 bg-stone-50/70 p-3.5 rounded-xl border border-stone-200/80">
+                    <label className="text-xs font-bold text-stone-700 uppercase flex items-center justify-between">
+                      <span>Total Slots</span>
+                      <span className="text-stone-400 font-normal text-[10px]">Capacity</span>
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={controlsTotalSeats}
+                      onChange={(e) => setControlsTotalSeats(e.target.value)}
+                      className="bg-white font-semibold text-stone-800"
+                    />
+                    <p className="text-[10px] text-stone-500">Maximum allowed participants</p>
+                  </div>
+
+                  <div className="space-y-1.5 bg-sky-50/40 p-3.5 rounded-xl border border-sky-200/70">
+                    <label className="text-xs font-bold text-sky-900 uppercase flex items-center justify-between">
+                      <span>🚹 Male Slots</span>
+                      <span className="text-sky-600 font-normal text-[10px]">Quota</span>
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={controlsMaleSeats}
+                      onChange={(e) => setControlsMaleSeats(e.target.value)}
+                      className="bg-white font-semibold text-stone-800"
+                    />
+                    <p className="text-[10px] text-stone-500">Reserved for male students</p>
+                  </div>
+
+                  <div className="space-y-1.5 bg-rose-50/40 p-3.5 rounded-xl border border-rose-200/70">
+                    <label className="text-xs font-bold text-rose-900 uppercase flex items-center justify-between">
+                      <span>🚺 Female Slots</span>
+                      <span className="text-rose-600 font-normal text-[10px]">Quota</span>
+                    </label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={controlsFemaleSeats}
+                      onChange={(e) => setControlsFemaleSeats(e.target.value)}
+                      className="bg-white font-semibold text-stone-800"
+                    />
+                    <p className="text-[10px] text-stone-500">Reserved for female students</p>
+                  </div>
+                </div>
+
+                {/* Helper chips & Validation feedback */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const total = Number(controlsTotalSeats) || 0;
+                        const half = Math.floor(total / 2);
+                        setControlsMaleSeats(half);
+                        setControlsFemaleSeats(total - half);
+                      }}
+                      className="text-xs h-7 px-2.5 font-semibold text-stone-700 bg-stone-50 hover:bg-stone-100"
+                    >
+                      ⚡ Split Evenly 50 / 50
+                    </Button>
+                    <span className="text-xs text-stone-500 font-mono">
+                      Sum: {Number(controlsMaleSeats || 0) + Number(controlsFemaleSeats || 0)} / {Number(controlsTotalSeats || 0)}
+                    </span>
+                  </div>
+
+                  {Number(controlsMaleSeats || 0) + Number(controlsFemaleSeats || 0) > Number(controlsTotalSeats || 0) && (
+                    <p className="text-xs text-rose-600 font-medium bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-lg">
+                      ⚠️ Male + Female slots ({Number(controlsMaleSeats || 0) + Number(controlsFemaleSeats || 0)}) exceed total capacity ({Number(controlsTotalSeats || 0)})
+                    </p>
+                  )}
+                </div>
+
+                <Button 
+                  type="submit" 
+                  disabled={submitting} 
+                  className="w-full sm:w-auto text-sm px-6 h-10 bg-[#3B001B] hover:bg-[#2A0013] text-white font-semibold rounded-xl flex items-center justify-center gap-2 shadow-xs transition-all"
+                >
+                  <SaveIcon className="w-4 h-4" /> {submitting ? "Saving Controls..." : "Save Event Controls & Slots"}
+                </Button>
               </div>
-            )}
-          </div>
+            </form>
 
-          {/* Right Side: Registrations Table */}
-          <div className="lg:col-span-2 space-y-4">
-            {(() => {
-              // Calculate stats dynamically based on loaded registration data
-              const femaleRegs = registrations.filter(r => r.gender?.toLowerCase() === "female");
-              const maleRegs = registrations.filter(r => r.gender?.toLowerCase() === "male");
-              const otherRegs = registrations.filter(r => r.gender?.toLowerCase() !== "female" && r.gender?.toLowerCase() !== "male");
+            {/* Lifecycle & Danger Zone */}
+            {selectedTrip && (
+              <div className="pt-6 border-t border-stone-200/80 space-y-4">
+                <h3 className="text-xs sm:text-sm font-bold text-stone-800 uppercase tracking-wider">
+                  Event Lifecycle & Maintenance
+                </h3>
 
-              const approvedFemales = femaleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
-              const pendingFemales = femaleRegs.filter(r => r.status === "registered" || r.status === "action_required").length;
-
-              const approvedMales = maleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
-              const pendingMales = maleRegs.filter(r => r.status === "registered" || r.status === "action_required").length;
-
-              const activeRegsList = subTab === "female" ? femaleRegs : subTab === "male" ? maleRegs : otherRegs;
-
-              return (
-                <>
-                  {/* Dynamic Counters Card Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-[#FFE878]/10 border border-[#FFE878]/30 rounded-xl p-4 flex flex-col justify-center items-center text-center">
-                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#3B001B]/70">Female Registrations</span>
-                      <div className="text-3xl font-black text-[#3B001B] font-oswald mt-1">
-                        {approvedFemales} <span className="text-sm font-semibold text-muted-foreground">Approved</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Roster Completion */}
+                  <div className="bg-stone-50/80 p-4 rounded-xl border border-stone-200/70 flex flex-col justify-between gap-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-stone-700 uppercase">Roster Status</span>
+                        <span className={`font-semibold px-2 py-0.5 rounded-md border text-[11px] ${
+                          selectedTrip.isCompleted || selectedTrip.finalRosterSaved 
+                            ? "bg-indigo-50 text-indigo-700 border-indigo-200" 
+                            : "bg-amber-50 text-amber-700 border-amber-200"
+                        }`}>
+                          {selectedTrip.isCompleted || selectedTrip.finalRosterSaved ? "Archived ✅" : "Active / Live"}
+                        </span>
                       </div>
-                      <span className="text-[10px] text-muted-foreground mt-1 font-medium">{pendingFemales} Pending review</span>
-                    </div>
-                    
-                    <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex flex-col justify-center items-center text-center">
-                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#3B001B]/70">Male Registrations</span>
-                      <div className="text-3xl font-black text-[#3B001B] font-oswald mt-1">
-                        {approvedMales} <span className="text-sm font-semibold text-muted-foreground">Approved</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-1 font-medium">{pendingMales} Pending review</span>
+                      <p className="text-xs text-stone-500">
+                        Marking as completed will archive the roster, close registration, and finalize records.
+                      </p>
                     </div>
 
-                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex flex-col justify-center items-center text-center">
-                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#3B001B]/70">Total Confirmed Seats</span>
-                      <div className="text-3xl font-black text-emerald-700 font-oswald mt-1">
-                        {approvedFemales + approvedMales} <span className="text-sm font-semibold text-emerald-600/70">Approved</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground mt-1 font-medium">({femaleRegs.length + maleRegs.length} Total Submissions)</span>
-                    </div>
-                  </div>
-
-                  {/* Header controls section */}
-                  <div className="flex justify-between items-center flex-wrap gap-2 pt-2">
-                    <div className="flex items-center gap-3">
-                      <h2 className="font-bold text-base flex items-center gap-1.5 text-muted-foreground">
-                        <UsersIcon className="w-4 h-4" /> Registration Entries ({registrations.length})
-                      </h2>
-                      {registrations.length > 0 && (
-                        <Button
-                          onClick={handleDownloadCSV}
-                          size="sm"
-                          variant="outline"
-                          className="text-xs h-7 px-2 bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 font-semibold"
-                        >
-                          📥 Download CSV
-                        </Button>
-                      )}
-                    </div>
-                    <div className="flex gap-4 text-xs font-bold text-muted-foreground">
-                      <span>Joined Count: {selectedTrip?.totalJoined || 0}</span>
-                      <span>Girls Count: {selectedTrip?.femaleJoined || 0}</span>
-                    </div>
-                  </div>
-
-                  {/* Sub-tab Selectors */}
-                  <div className="flex border-b border-zinc-200">
-                    <button
-                      type="button"
-                      onClick={() => setSubTab("female")}
-                      className={`py-2 px-4 text-xs font-black border-b-2 transition uppercase tracking-wider ${
-                        subTab === "female" 
-                          ? "border-[#3B001B] text-[#3B001B] bg-[#3B001B]/5 rounded-t-lg" 
-                          : "border-transparent text-muted-foreground hover:text-[#3B001B]"
-                      }`}
-                    >
-                      🚺 Female Submissions ({femaleRegs.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSubTab("male")}
-                      className={`py-2 px-4 text-xs font-black border-b-2 transition uppercase tracking-wider ${
-                        subTab === "male" 
-                          ? "border-[#3B001B] text-[#3B001B] bg-[#3B001B]/5 rounded-t-lg" 
-                          : "border-transparent text-muted-foreground hover:text-[#3B001B]"
-                      }`}
-                    >
-                      🚹 Male Submissions ({maleRegs.length})
-                    </button>
-                    {otherRegs.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setSubTab("other")}
-                        className={`py-2 px-4 text-xs font-black border-b-2 transition uppercase tracking-wider ${
-                          subTab === "other" 
-                            ? "border-[#3B001B] text-[#3B001B] bg-[#3B001B]/5 rounded-t-lg" 
-                            : "border-transparent text-muted-foreground hover:text-[#3B001B]"
-                        }`}
+                    {(!selectedTrip.isCompleted && !selectedTrip.finalRosterSaved) && (
+                      <Button
+                        onClick={handleCompleteEvent}
+                        disabled={submitting}
+                        className="text-xs h-9 bg-stone-800 hover:bg-stone-900 text-white rounded-xl flex items-center justify-center gap-1.5 shadow-2xs font-semibold transition-all"
                       >
-                        👤 Others ({otherRegs.length})
-                      </button>
+                        Complete & Archive Event
+                      </Button>
                     )}
                   </div>
 
-                  {/* Loading / Table Render */}
-                  {loading ? (
-                    <div className="flex items-center justify-center h-48 text-muted-foreground text-sm font-semibold">
-                      <Loader2Icon className="animate-spin mr-2" /> Fetching submissions...
+                  {/* Danger Zone: Delete Trip */}
+                  <div className="bg-rose-50/40 p-4 rounded-xl border border-rose-200/70 flex flex-col justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-bold text-rose-800 uppercase block mb-1">Danger Zone</span>
+                      <p className="text-xs text-stone-500">
+                        Permanently delete this event and remove all associated configuration data.
+                      </p>
                     </div>
-                  ) : (
-                    renderRegistrationsTable(activeRegsList)
-                  )}
-                </>
-              );
-            })()}
+                    <Button
+                      variant="outline"
+                      className="text-xs h-9 text-rose-600 hover:text-white hover:bg-rose-600 border-rose-200/80 hover:border-rose-600 rounded-xl transition-all font-semibold"
+                      disabled={submitting}
+                      onClick={handleDeleteTrip}
+                    >
+                      Delete Event Completely
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1579,12 +2415,22 @@ export default function SubmissionsPage() {
         <form onSubmit={handleSaveEventDetails} className="space-y-6 max-w-4xl bg-muted/20 p-6 rounded-xl border border-border">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-bold text-muted-foreground uppercase">Event Name</label>
+              <label className="text-sm font-bold text-muted-foreground uppercase">Event Name *</label>
               <Input
                 required
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 placeholder="e.g. Coorg Exploration 2026"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-muted-foreground uppercase">Event Fee (₹)</label>
+              <Input
+                type="number"
+                min={0}
+                value={editFee}
+                onChange={(e) => setEditFee(e.target.value)}
+                placeholder="e.g. 500"
               />
             </div>
             <div className="flex items-center gap-2 pt-2 sm:col-span-2">
@@ -1599,6 +2445,122 @@ export default function SubmissionsPage() {
                 ⛔ Disable Email Notifications (Do not send any automated emails for approvals or re-uploads)
               </label>
             </div>
+          </div>
+
+          {/* Event Capacity & Gender Slots Allocation Card */}
+          <div className="bg-white p-5 rounded-2xl border border-stone-200/90 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-stone-100 pb-3">
+              <div>
+                <h3 className="font-bold text-sm text-[#3B001B] uppercase tracking-wide flex items-center gap-2">
+                  <UsersIcon className="w-4 h-4 text-[#8B263E]" /> Event Capacity & Gender Slots Allocation
+                </h3>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  Set total allowed participants and reserve slots specifically for male and female students.
+                </p>
+              </div>
+              <div className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 self-start sm:self-auto ${
+                (Number(editMaleSeats || 0) + Number(editFemaleSeats || 0) > Number(editTotalSeats || 0))
+                  ? "bg-rose-50 text-rose-700 border-rose-200"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
+              }`}>
+                <span>
+                  {Number(editMaleSeats || 0) + Number(editFemaleSeats || 0) > Number(editTotalSeats || 0) ? "⚠️ Quota Overallocated" : "✅ Slots Balanced"}
+                </span>
+                <span className="text-[11px] opacity-75 font-mono">
+                  ({Number(editMaleSeats || 0)}M + {Number(editFemaleSeats || 0)}F = {Number(editMaleSeats || 0) + Number(editFemaleSeats || 0)} / {Number(editTotalSeats || 0)} Total)
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Total Slots */}
+              <div className="space-y-1.5 bg-stone-50/70 p-3.5 rounded-xl border border-stone-200/80">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1.5">
+                    Total Slots *
+                  </label>
+                  <span className="text-[10px] text-stone-400 font-mono">Capacity</span>
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  required
+                  value={editTotalSeats}
+                  onChange={(e) => setEditTotalSeats(e.target.value)}
+                  placeholder="e.g. 50"
+                  className="bg-white font-semibold text-stone-800"
+                />
+                <p className="text-[10px] text-stone-500">Maximum registrations allowed</p>
+              </div>
+
+              {/* Male Slots */}
+              <div className="space-y-1.5 bg-sky-50/40 p-3.5 rounded-xl border border-sky-200/70">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-sky-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🚹</span> Male Slots *
+                  </label>
+                  <span className="text-[10px] text-sky-600 font-mono">Quota</span>
+                </div>
+                <Input
+                  type="number"
+                  min={0}
+                  value={editMaleSeats}
+                  onChange={(e) => setEditMaleSeats(e.target.value)}
+                  placeholder="e.g. 25"
+                  className="bg-white font-semibold text-stone-800"
+                />
+                <p className="text-[10px] text-stone-500">Reserved quota for male participants</p>
+              </div>
+
+              {/* Female Slots */}
+              <div className="space-y-1.5 bg-rose-50/40 p-3.5 rounded-xl border border-rose-200/70">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🚺</span> Female Slots *
+                  </label>
+                  <span className="text-[10px] text-rose-600 font-mono">Quota</span>
+                </div>
+                <Input
+                  type="number"
+                  min={0}
+                  value={editFemaleSeats}
+                  onChange={(e) => setEditFemaleSeats(e.target.value)}
+                  placeholder="e.g. 25"
+                  className="bg-white font-semibold text-stone-800"
+                />
+                <p className="text-[10px] text-stone-500">Reserved quota for female participants</p>
+              </div>
+            </div>
+
+            {/* Helper status & Auto-balance */}
+            {Number(editMaleSeats || 0) + Number(editFemaleSeats || 0) > Number(editTotalSeats || 0) ? (
+              <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 p-2.5 rounded-xl flex items-center gap-2">
+                <AlertTriangleIcon className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>Male and female reserved slots ({Number(editMaleSeats || 0) + Number(editFemaleSeats || 0)}) exceed total slots ({Number(editTotalSeats || 0)}). Please adjust the quotas to avoid overbooking.</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between text-xs text-stone-500 bg-stone-50/50 p-2.5 rounded-xl border border-stone-200/50">
+                <span>
+                  {Number(editTotalSeats || 0) - (Number(editMaleSeats || 0) + Number(editFemaleSeats || 0)) > 0 ? (
+                    <>🔓 <strong>{Number(editTotalSeats || 0) - (Number(editMaleSeats || 0) + Number(editFemaleSeats || 0))} unreserved slots</strong> available for either gender.</>
+                  ) : (
+                    <>🎯 100% of event capacity allocated across male and female quotas.</>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const total = Number(editTotalSeats) || 50;
+                    const half = Math.floor(total / 2);
+                    setEditMaleSeats(half);
+                    setEditFemaleSeats(total - half);
+                  }}
+                  className="text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline ml-2 shrink-0 cursor-pointer"
+                >
+                  Split 50 / 50
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-dashed">
@@ -2028,7 +2990,7 @@ export default function SubmissionsPage() {
             <Button type="submit" disabled={submitting} className="bg-primary text-primary-foreground hover:bg-primary/95 px-8">
               {submitting ? "Saving..." : "Save Event Details & Form Fields"}
             </Button>
-            <Button type="button" variant="outline" onClick={() => setActiveTab("registrations")}>
+            <Button type="button" variant="outline" onClick={() => setActiveTab("students")}>
               Cancel
             </Button>
           </div>
@@ -2040,12 +3002,22 @@ export default function SubmissionsPage() {
         <form onSubmit={handleCreateEvent} className="space-y-6 max-w-4xl bg-muted/20 p-6 rounded-xl border border-border">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-bold text-muted-foreground uppercase">Event Name</label>
+              <label className="text-sm font-bold text-muted-foreground uppercase">Event Name *</label>
               <Input
                 required
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
                 placeholder="e.g. Himachal Trek 2026"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-muted-foreground uppercase">Event Fee (₹)</label>
+              <Input
+                type="number"
+                min={0}
+                value={createFee}
+                onChange={(e) => setCreateFee(e.target.value)}
+                placeholder="e.g. 500"
               />
             </div>
             <div className="flex items-center gap-2 pt-2 sm:col-span-2">
@@ -2060,6 +3032,122 @@ export default function SubmissionsPage() {
                 ⛔ Disable Email Notifications (Do not send any automated emails for approvals or re-uploads)
               </label>
             </div>
+          </div>
+
+          {/* Event Capacity & Gender Slots Allocation Card */}
+          <div className="bg-white p-5 rounded-2xl border border-stone-200/90 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-stone-100 pb-3">
+              <div>
+                <h3 className="font-bold text-sm text-[#3B001B] uppercase tracking-wide flex items-center gap-2">
+                  <UsersIcon className="w-4 h-4 text-[#8B263E]" /> Event Capacity & Gender Slots Allocation
+                </h3>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  Set total allowed participants and reserve slots specifically for male and female students.
+                </p>
+              </div>
+              <div className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-1.5 self-start sm:self-auto ${
+                (Number(createMaleSeats || 0) + Number(createFemaleSeats || 0) > Number(createTotalSeats || 0))
+                  ? "bg-rose-50 text-rose-700 border-rose-200"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
+              }`}>
+                <span>
+                  {Number(createMaleSeats || 0) + Number(createFemaleSeats || 0) > Number(createTotalSeats || 0) ? "⚠️ Quota Overallocated" : "✅ Slots Balanced"}
+                </span>
+                <span className="text-[11px] opacity-75 font-mono">
+                  ({Number(createMaleSeats || 0)}M + {Number(createFemaleSeats || 0)}F = {Number(createMaleSeats || 0) + Number(createFemaleSeats || 0)} / {Number(createTotalSeats || 0)} Total)
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Total Slots */}
+              <div className="space-y-1.5 bg-stone-50/70 p-3.5 rounded-xl border border-stone-200/80">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1.5">
+                    Total Slots *
+                  </label>
+                  <span className="text-[10px] text-stone-400 font-mono">Capacity</span>
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  required
+                  value={createTotalSeats}
+                  onChange={(e) => setCreateTotalSeats(e.target.value)}
+                  placeholder="e.g. 50"
+                  className="bg-white font-semibold text-stone-800"
+                />
+                <p className="text-[10px] text-stone-500">Maximum registrations allowed</p>
+              </div>
+
+              {/* Male Slots */}
+              <div className="space-y-1.5 bg-sky-50/40 p-3.5 rounded-xl border border-sky-200/70">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-sky-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🚹</span> Male Slots *
+                  </label>
+                  <span className="text-[10px] text-sky-600 font-mono">Quota</span>
+                </div>
+                <Input
+                  type="number"
+                  min={0}
+                  value={createMaleSeats}
+                  onChange={(e) => setCreateMaleSeats(e.target.value)}
+                  placeholder="e.g. 25"
+                  className="bg-white font-semibold text-stone-800"
+                />
+                <p className="text-[10px] text-stone-500">Reserved quota for male participants</p>
+              </div>
+
+              {/* Female Slots */}
+              <div className="space-y-1.5 bg-rose-50/40 p-3.5 rounded-xl border border-rose-200/70">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-rose-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <span>🚺</span> Female Slots *
+                  </label>
+                  <span className="text-[10px] text-rose-600 font-mono">Quota</span>
+                </div>
+                <Input
+                  type="number"
+                  min={0}
+                  value={createFemaleSeats}
+                  onChange={(e) => setCreateFemaleSeats(e.target.value)}
+                  placeholder="e.g. 25"
+                  className="bg-white font-semibold text-stone-800"
+                />
+                <p className="text-[10px] text-stone-500">Reserved quota for female participants</p>
+              </div>
+            </div>
+
+            {/* Helper status & Auto-balance */}
+            {Number(createMaleSeats || 0) + Number(createFemaleSeats || 0) > Number(createTotalSeats || 0) ? (
+              <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 p-2.5 rounded-xl flex items-center gap-2">
+                <AlertTriangleIcon className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>Male and female reserved slots ({Number(createMaleSeats || 0) + Number(createFemaleSeats || 0)}) exceed total slots ({Number(createTotalSeats || 0)}). Please adjust the quotas to avoid overbooking.</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between text-xs text-stone-500 bg-stone-50/50 p-2.5 rounded-xl border border-stone-200/50">
+                <span>
+                  {Number(createTotalSeats || 0) - (Number(createMaleSeats || 0) + Number(createFemaleSeats || 0)) > 0 ? (
+                    <>🔓 <strong>{Number(createTotalSeats || 0) - (Number(createMaleSeats || 0) + Number(createFemaleSeats || 0))} unreserved slots</strong> available for either gender.</>
+                  ) : (
+                    <>🎯 100% of event capacity allocated across male and female quotas.</>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const total = Number(createTotalSeats) || 50;
+                    const half = Math.floor(total / 2);
+                    setCreateMaleSeats(half);
+                    setCreateFemaleSeats(total - half);
+                  }}
+                  className="text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 underline ml-2 shrink-0 cursor-pointer"
+                >
+                  Split 50 / 50
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-dashed">
@@ -2490,7 +3578,7 @@ export default function SubmissionsPage() {
             <Button type="submit" disabled={submitting} className="bg-primary text-primary-foreground hover:bg-primary/95 px-8">
               {submitting ? "Creating..." : "Create & Initialize Event"}
             </Button>
-            <Button type="button" variant="outline" onClick={() => setActiveTab("registrations")}>
+            <Button type="button" variant="outline" onClick={() => setActiveTab("students")}>
               Cancel
             </Button>
           </div>
@@ -2539,326 +3627,729 @@ export default function SubmissionsPage() {
         </div>
       )}
 
+      {/* Stage 4: Detailed Admin Review Modal */}
       {activeProfileReg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-lenis-prevent>
-          <div className="bg-white border-2 border-black rounded-xl max-w-lg w-full p-6 space-y-4 shadow-2xl relative text-black text-left max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border border-stone-200/90 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl relative text-stone-900 text-left max-h-[92vh] flex flex-col">
             <button
               onClick={() => setActiveProfileReg(null)}
-              className="absolute top-3 right-3 text-gray-500 hover:text-black font-black z-10"
+              className="absolute top-4 right-4 text-stone-400 hover:text-stone-800 p-1 rounded-full hover:bg-stone-100 z-10 transition-colors"
+              aria-label="Close modal"
             >
-              ✕
+              <XIcon className="w-5 h-5" />
             </button>
-            <h3 className="font-bold text-lg text-indigo-950 uppercase border-b pb-2 shrink-0">
-              👤 Student Profile Review
-            </h3>
+
+            {/* Modal Header */}
+            <div className="border-b border-stone-100 pb-3 shrink-0 space-y-1">
+              <div className="flex items-center justify-between pr-8 flex-wrap gap-2">
+                <h3 className="font-bold text-xl text-stone-900 flex items-center gap-2">
+                  <span>👤</span> {getStudentName(activeProfileReg)}
+                </h3>
+                <span className={`font-semibold px-2.5 py-0.5 rounded-full border text-[11px] tracking-wide ${
+                  activeProfileReg.status === "mail_sent" || activeProfileReg.status === "approved_to_pay" || activeProfileReg.status === "paid"
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                    : activeProfileReg.status === "action_required"
+                    ? "bg-amber-50 text-amber-800 border-amber-200"
+                    : activeProfileReg.status === "rejected"
+                    ? "bg-rose-50 text-rose-800 border-rose-200"
+                    : "bg-blue-50 text-blue-800 border-blue-200"
+                }`}>
+                  {activeProfileReg.status === "mail_sent"
+                    ? "Approved (Mail Sent)"
+                    : activeProfileReg.status === "approved_to_pay"
+                    ? "Approved to Pay"
+                    : activeProfileReg.status === "paid"
+                    ? "Confirmed / Paid"
+                    : activeProfileReg.status === "action_required"
+                    ? "Re-upload Requested"
+                    : activeProfileReg.status === "rejected"
+                    ? "Rejected"
+                    : "Registered"}
+                </span>
+              </div>
+              <p className="text-xs text-stone-500 font-medium">
+                Review applicant profile, verify credentials and consent forms, and approve registration.
+              </p>
+            </div>
             
+            {/* Modal Body */}
             <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-sm" data-lenis-prevent>
-              <div>
-                <span className="font-bold text-xs text-gray-500 uppercase block">Email Address</span>
-                <span className="font-semibold text-gray-850">{activeProfileReg.email}</span>
-              </div>
               
-              <div>
-                <span className="font-bold text-xs text-gray-500 uppercase block">Gender</span>
-                <span className="font-semibold text-gray-850 capitalize">{activeProfileReg.gender}</span>
+              {/* Approval Email Delivery Status Banner */}
+              {activeProfileReg.approvalEmailStatus === "failed" && (
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-start gap-2.5 text-xs text-rose-900">
+                  <AlertCircleIcon className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-bold text-rose-800">Approval email delivery failed</p>
+                    <p className="text-rose-700 mt-0.5">
+                      {activeProfileReg.approvalEmailError || "The email provider encountered an error while attempting delivery."}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={submitting}
+                    onClick={() => handleResendApprovalEmail(activeProfileReg)}
+                    className="h-7 text-xs bg-white border-rose-300 text-rose-800 hover:bg-rose-50 font-bold shrink-0"
+                  >
+                    Retry Sending
+                  </Button>
+                </div>
+              )}
+              {(activeProfileReg.approvalEmailStatus === "sent" || activeProfileReg.status === "mail_sent") && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 flex items-center justify-between text-xs text-emerald-900">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2Icon className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      Confirmation email successfully sent to <strong>{activeProfileReg.email}</strong>
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={submitting}
+                    onClick={() => handleResendApprovalEmail(activeProfileReg)}
+                    className="h-6 text-[11px] text-emerald-800 hover:bg-emerald-100/60 font-semibold"
+                  >
+                    Resend
+                  </Button>
+                </div>
+              )}
+
+              {/* Profile Details Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-stone-50/80 p-3.5 rounded-xl border border-stone-200/80">
+                <div className="min-w-0">
+                  <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">Student ID / Roll No</span>
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    <span className="font-mono font-bold text-xs text-stone-900 truncate">
+                      {getStudentId(activeProfileReg)}
+                    </span>
+                    {getStudentIdDocUrl(activeProfileReg) && (
+                      <a
+                        href={getDocumentUrl(getStudentIdDocUrl(activeProfileReg)!)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#3B001B]/5 hover:bg-[#3B001B] text-[#3B001B] hover:text-white border border-[#3B001B]/15 transition-all shadow-2xs shrink-0"
+                        title="View Student ID Document"
+                      >
+                        <span>View ID</span>
+                        <ExternalLinkIcon className="size-2.5" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">Email Address</span>
+                  <span className="font-semibold text-xs text-stone-900 break-all select-all block mt-0.5" title={activeProfileReg.email}>
+                    {activeProfileReg.email}
+                  </span>
+                </div>
+                <div className="min-w-0">
+                  <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">Gender</span>
+                  <span className="font-semibold text-xs text-stone-900 capitalize block mt-0.5">
+                    {activeProfileReg.gender || "—"}
+                  </span>
+                </div>
+                <div className="min-w-0">
+                  <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">Submitted At</span>
+                  <span className="font-semibold text-xs text-stone-900 block mt-0.5">
+                    {activeProfileReg.submittedAt ? new Date(activeProfileReg.submittedAt).toLocaleDateString("en-IN") : "—"}
+                  </span>
+                </div>
               </div>
 
-              {/* Student ID Verification Details */}
+              {/* Student Residential Location */}
               {(() => {
-                const idCopy = activeProfileReg.formData["Student ID Card Copy"];
-                const isVerified = activeProfileReg.studentIdVerified || false;
-
+                const regState = activeProfileReg.formData?.["State"] || activeProfileReg.formData?.["state"];
+                const regDistrict = activeProfileReg.formData?.["City / District"] || activeProfileReg.formData?.["cityDistrict"] || activeProfileReg.formData?.["district"];
                 return (
-                  <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-2.5">
-                    <span className="font-bold text-xs text-amber-950 uppercase block">Student ID Gating Status</span>
-                    <div className="text-xs space-y-2">
-                      <p className="flex justify-between items-center">
-                        <span>Verification Status:</span>
-                        <span className={`font-black px-2 py-0.5 rounded border uppercase text-[10px] ${
-                          isVerified 
-                            ? "bg-green-100 text-green-700 border-green-200" 
-                            : "bg-red-100 text-red-700 border-red-200"
-                        }`}>
-                          {isVerified ? "Verified ✅" : "Unverified ❌"}
-                        </span>
-                      </p>
-
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        {idCopy && (
-                          <a
-                            href={getDocumentUrl(idCopy)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-amber-900 hover:bg-amber-800 text-white font-bold px-3 py-1.5 rounded text-[11px] shadow inline-flex items-center gap-1.5"
-                          >
-                            🪪 View Student ID Copy ↗
-                          </a>
-                        )}
-                        
-                        {!isVerified && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleVerifyStudentId(activeProfileReg.id)}
-                            className="bg-indigo-900 text-white hover:bg-indigo-800 font-bold px-3 py-1.5 rounded text-[11px]"
-                          >
-                            Verify Student ID
-                          </Button>
-                        )}
-                      </div>
+                  <div className="grid grid-cols-2 gap-3 bg-stone-50/80 p-3.5 rounded-xl border border-stone-200/80">
+                    <div className="min-w-0">
+                      <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">State</span>
+                      <span className="font-semibold text-xs text-stone-900 block mt-0.5">
+                        {regState || "—"}
+                      </span>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">City / District</span>
+                      <span className="font-semibold text-xs text-stone-900 block mt-0.5">
+                        {regDistrict || "—"}
+                      </span>
                     </div>
                   </div>
                 );
               })()}
 
-              {/* Consent Form Verification Details */}
-              {(() => {
-                const templates = selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
-                  ? selectedTrip.consentTemplates
-                  : (selectedTrip?.consentFormTemplateUrl ? [{ id: "legacy-consent", name: "Completed Consent Form", templateUrl: selectedTrip.consentFormTemplateUrl }] : []);
+              {/* Trip Context Box */}
+              {selectedTrip && (
+                <div className="bg-stone-50/80 p-3.5 rounded-xl border border-stone-200/80 flex justify-between items-center text-xs">
+                  <div>
+                    <span className="font-bold text-stone-900 block">{selectedTrip.name}</span>
+                    <span className="text-[10px] text-stone-500">Destination & Event</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-bold text-stone-900 block">{selectedTrip.fee ? `₹${selectedTrip.fee}` : "Free"}</span>
+                    <span className="text-[10px] text-stone-500">Trip Fee</span>
+                  </div>
+                </div>
+              )}
 
-                if (templates.length === 0) return null;
+              {/* Checkpoints Section */}
+              <div className="space-y-3 bg-amber-500/5 p-4 rounded-xl border border-amber-500/20">
+                <h4 className="font-bold text-xs text-amber-950 uppercase tracking-wide flex items-center gap-1.5">
+                  <CheckCircle2Icon className="w-4 h-4 text-amber-800" /> Verification Checkpoints
+                </h4>
 
-                return (
-                  <div className="bg-indigo-50/50 p-4 rounded-xl border border-indigo-100 space-y-4">
-                    <span className="font-bold text-xs text-indigo-950 uppercase block font-oswald tracking-wide">Consent Acknowledgments ({templates.length})</span>
-                    <div className="space-y-4">
+                {/* 1. Student ID Checkpoint */}
+                {(() => {
+                  const idCopy = activeProfileReg.formData?.["Student ID Card Copy"];
+                  const isVerified = Boolean(activeProfileReg.studentIdVerified);
+
+                  return (
+                    <div className="bg-white p-3 rounded-xl border border-stone-200 text-xs flex justify-between items-center flex-wrap gap-2 shadow-2xs">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-stone-900">🪪 Student ID Document</span>
+                          <span className={`font-semibold px-2 py-0.5 rounded-md border text-[10px] ${
+                            isVerified ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"
+                          }`}>
+                            {isVerified ? "Verified ✅" : "Unverified ❌"}
+                          </span>
+                        </div>
+                        {idCopy ? (
+                          <a
+                            href={getDocumentUrl(idCopy)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[#3B001B]/5 hover:bg-[#3B001B] text-[#3B001B] hover:text-white border border-[#3B001B]/15 hover:border-[#3B001B] transition-all shadow-2xs mt-1.5"
+                          >
+                            <span>View Student ID</span>
+                            <ExternalLinkIcon className="size-3" />
+                          </a>
+                        ) : (
+                          <span className="text-[10px] text-stone-400 italic block mt-1">No document uploaded</span>
+                        )}
+                      </div>
+
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStudentIdVerification(activeProfileReg.id, !isVerified)}
+                          className={`text-xs h-7 px-3 font-semibold rounded-lg transition-all border ${
+                            isVerified
+                              ? "bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200"
+                              : "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-2xs"
+                          }`}
+                        >
+                          {isVerified ? "Revoke ID Verification" : "Verify Student ID"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 2. Consent Forms Checkpoints */}
+                {(() => {
+                  const templates = selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
+                    ? selectedTrip.consentTemplates
+                    : (selectedTrip?.consentFormTemplateUrl ? [{ id: "legacy-consent", name: "Completed Consent Form", templateUrl: selectedTrip.consentFormTemplateUrl }] : []);
+
+                  if (templates.length === 0) return null;
+
+                  return (
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-bold text-stone-700 block">Required Consent Documents:</span>
                       {templates.map((t) => {
                         const fileKey = t.id === "legacy-consent" ? "Completed Consent Form" : `Completed Consent - ${t.name}`;
-                        const uploadedUrl = activeProfileReg.formData[fileKey];
+                        const uploadedUrl = activeProfileReg.formData?.[fileKey];
                         const isVerified = t.id === "legacy-consent" 
-                          ? activeProfileReg.consentFormVerified 
-                          : (activeProfileReg.verifiedConsentForms?.[t.id] || false);
+                          ? Boolean(activeProfileReg.consentFormVerified)
+                          : Boolean(activeProfileReg.verifiedConsentForms?.[t.id]);
 
                         return (
-                          <div key={t.id} className="border-b pb-3 last:border-0 last:pb-0 text-xs space-y-2">
-                            <div className="flex justify-between items-start gap-2">
-                              <div>
-                                <span className="font-bold text-gray-800">{t.name}</span>
-                                <span className="text-[10px] text-muted-foreground block mt-0.5">
-                                  Template: <a href={getDocumentUrl(t.templateUrl)} target="_blank" rel="noopener noreferrer" className="text-indigo-900 underline font-semibold">Download ↗</a>
+                          <div key={t.id} className="bg-white p-3 rounded-xl border border-stone-200 text-xs flex justify-between items-center flex-wrap gap-2 shadow-2xs">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-stone-900">📝 {t.name}</span>
+                                <span className={`font-semibold px-2 py-0.5 rounded-md border text-[10px] ${
+                                  isVerified ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"
+                                }`}>
+                                  {isVerified ? "Verified ✅" : "Unverified ❌"}
                                 </span>
                               </div>
-                              <span className={`font-black px-2 py-0.5 rounded border uppercase text-[10px] ${
-                                isVerified 
-                                  ? "bg-green-100 text-green-700 border-green-200" 
-                                  : "bg-red-100 text-red-700 border-red-200"
-                              }`}>
-                                {isVerified ? "Verified ✅" : "Unverified ❌"}
-                              </span>
-                            </div>
-                            
-                            <div>
-                              {uploadedUrl ? (
-                                <div className="flex flex-wrap gap-2 pt-1">
+                              <div className="flex items-center gap-3 mt-1.5 text-[10px]">
+                                {t.templateUrl && (
+                                  <a href={getDocumentUrl(t.templateUrl)} target="_blank" rel="noopener noreferrer" className="text-stone-500 hover:text-stone-800 underline">
+                                    Blank Template ↗
+                                  </a>
+                                )}
+                                {uploadedUrl ? (
                                   <a
                                     href={getDocumentUrl(uploadedUrl)}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="bg-indigo-900 hover:bg-indigo-800 text-white font-bold px-3 py-1.5 rounded text-[11px] shadow inline-flex items-center gap-1.5"
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[#3B001B]/5 hover:bg-[#3B001B] text-[#3B001B] hover:text-white border border-[#3B001B]/15 hover:border-[#3B001B] transition-all shadow-2xs"
                                   >
-                                    📝 View Signed Copy ↗
+                                    <span>View Signed Copy</span>
+                                    <ExternalLinkIcon className="size-3" />
                                   </a>
-                                  
-                                  {!isVerified && (
-                                    <Button
-                                      size="sm"
-                                      onClick={() => handleVerifyConsentForm(activeProfileReg.id, t.id)}
-                                      className="bg-green-700 text-white hover:bg-green-800 font-bold px-3 py-1.5 rounded text-[11px]"
-                                    >
-                                      Verify Form
-                                    </Button>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="space-y-2 pt-1">
-                                  <p className="text-red-700 font-semibold italic text-[11px]">✗ Signed copy has not been uploaded yet.</p>
-                                  {!isVerified && (
-                                    <Button
-                                      size="sm"
-                                      onClick={() => handleVerifyConsentForm(activeProfileReg.id, t.id)}
-                                      className="bg-green-700 text-white hover:bg-green-800 font-bold px-3 py-1.5 rounded text-[11px]"
-                                    >
-                                      Verify Form
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
+                                ) : (
+                                  <span className="text-rose-500 italic">Signed copy missing</span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleConsentVerification(activeProfileReg.id, t.id, !isVerified)}
+                                className={`text-xs h-7 px-3 font-semibold rounded-lg transition-all border ${
+                                  isVerified
+                                    ? "bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200"
+                                    : "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-2xs"
+                                }`}
+                              >
+                                {isVerified ? "Revoke Form" : "Verify Form"}
+                              </button>
                             </div>
                           </div>
                         );
                       })}
                     </div>
+                  );
+                })()}
+
+                {/* Checkpoint Status Banner */}
+                {(() => {
+                  const approvable = isApprovable(activeProfileReg);
+
+                  if (approvable) {
+                    return (
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 font-semibold flex items-center gap-2">
+                        <CheckCircle2Icon className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>All verification checkpoints passed. Registration is ready for approval.</span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 font-semibold flex items-center gap-2">
+                      <AlertTriangleIcon className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Registration cannot be approved until Student ID and all required Consent Forms are verified.</span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Form Answers */}
+              {(() => {
+                const filteredResponses = Object.entries(activeProfileReg.formData || {}).filter(
+                  ([k]) =>
+                    k !== "Student ID Number" &&
+                    k !== "Student ID Card Copy" &&
+                    k !== "Completed Consent Form" &&
+                    !k.startsWith("Completed Consent -") &&
+                    k !== "Custom Reply" &&
+                    k !== "User Reply"
+                );
+
+                return (
+                  <div className="space-y-2">
+                    <span className="font-bold text-xs text-stone-700 uppercase tracking-wider block">
+                      Registration Form Responses
+                    </span>
+                    {filteredResponses.length === 0 ? (
+                      <div className="bg-stone-50/70 p-4 rounded-xl border border-dashed border-stone-200 text-center text-xs text-stone-400 font-medium">
+                        No additional custom question responses recorded for this registration.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2 bg-stone-50/70 p-3.5 rounded-xl border border-stone-200/80">
+                        {filteredResponses.map(([key, val]) => (
+                          <div key={key} className="border-b border-stone-200/60 pb-2 last:border-0 last:pb-0 text-xs">
+                            <span className="font-bold text-stone-500 block text-[10px] uppercase tracking-wider">{key}</span>
+                            {typeof val === "string" && isUrlOrDriveLink(val) ? (
+                              <a
+                                href={
+                                  val.includes("res.cloudinary.com")
+                                    ? `/api/downloadProxy/custom_file?url=${encodeURIComponent(val)}`
+                                    : val.startsWith("http://") || val.startsWith("https://")
+                                    ? val
+                                    : `https://${val}`
+                                }
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[#3B001B]/5 hover:bg-[#3B001B] text-[#3B001B] hover:text-white border border-[#3B001B]/15 hover:border-[#3B001B] transition-all shadow-2xs mt-1"
+                              >
+                                <span>View Document</span>
+                                <ExternalLinkIcon className="size-3" />
+                              </a>
+                            ) : (
+                              <span className="font-semibold text-stone-900 block mt-0.5">{String(val || "—")}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
- 
-              {/* Conversation Thread */}
+
+              {/* Conversation & Audit History */}
               {activeProfileReg.conversationHistory && activeProfileReg.conversationHistory.length > 0 && (
-                <div className="space-y-2">
-                  <span className="font-bold text-xs text-gray-500 uppercase block">Q&amp;A Thread ({activeProfileReg.conversationHistory.length} exchanges)</span>
-                  <div className="space-y-3">
-                    {activeProfileReg.conversationHistory.map((entry, idx) => (
-                      <div
-                        key={idx}
-                        className={`rounded-xl p-3 text-xs border-2 ${
-                          entry.type === "admin_request"
-                            ? "bg-amber-50 border-amber-200 ml-0 mr-8"
-                            : "bg-indigo-50 border-indigo-200 ml-8 mr-0"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1.5 gap-2">
-                          <span className={`font-black text-[10px] uppercase tracking-wide ${
-                            entry.type === "admin_request" ? "text-amber-700" : "text-indigo-700"
-                          }`}>
-                            {entry.type === "admin_request" ? "🧑‍💼 Coordinator" : "🎓 Student"}
-                          </span>
-                          {entry.timestamp && (
-                            <span className="text-[9px] text-gray-400 shrink-0">
-                              {new Date(entry.timestamp).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                <div className="space-y-2 pt-2 border-t border-stone-100">
+                  <span className="font-bold text-xs text-stone-700 uppercase tracking-wider block">
+                    Audit & Conversation History ({activeProfileReg.conversationHistory.length} events)
+                  </span>
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {activeProfileReg.conversationHistory.map((entry, idx) => {
+                      const type = entry.type || "admin_request";
+                      const isApproved = type === "approved";
+                      const isRejected = type === "rejected";
+                      const isReupload = type === "reupload_requested" || type === "admin_request";
+                      const isRevoked = type === "approval_revoked";
+                      const isVerified = type === "checkpoint_verified";
+                      const isReply = type === "student_reply";
+
+                      const badgeClass = isApproved
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                        : isRejected
+                        ? "bg-rose-50 text-rose-800 border-rose-200"
+                        : isReupload
+                        ? "bg-amber-50 text-amber-800 border-amber-200"
+                        : isRevoked
+                        ? "bg-orange-50 text-orange-800 border-orange-200"
+                        : isVerified
+                        ? "bg-purple-50 text-purple-800 border-purple-200"
+                        : "bg-blue-50 text-blue-800 border-blue-200";
+
+                      const badgeLabel = isApproved
+                        ? "Approved"
+                        : isRejected
+                        ? "Rejected"
+                        : isReupload
+                        ? "Correction Requested"
+                        : isRevoked
+                        ? "Approval Revoked"
+                        : isVerified
+                        ? "Checkpoint Update"
+                        : "Student Reply";
+
+                      return (
+                        <div key={idx} className="bg-stone-50 border border-stone-200 rounded-xl p-3 text-xs space-y-1">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className={`font-semibold px-2 py-0.5 rounded border text-[9px] uppercase ${badgeClass}`}>
+                              {badgeLabel}
                             </span>
+                            <div className="flex items-center gap-2 text-[10px] text-stone-500">
+                              {entry.actor && <span className="font-semibold">By: {entry.actor}</span>}
+                              {entry.timestamp && (
+                                <span>{new Date(entry.timestamp).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</span>
+                              )}
+                            </div>
+                          </div>
+                          {(entry.message || entry.reason) && (
+                            <p className="text-stone-800 font-medium leading-relaxed mt-1">
+                              {entry.message || entry.reason}
+                            </p>
+                          )}
+                          {entry.fields && entry.fields.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {entry.fields.map((f: string) => (
+                                <span key={f} className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded text-[9px] font-semibold">
+                                  {f}
+                                </span>
+                              ))}
+                            </div>
                           )}
                         </div>
-                        {entry.message && (
-                          <p className="text-gray-800 font-medium leading-relaxed whitespace-pre-wrap mb-1.5">{entry.message}</p>
-                        )}
-                        {entry.type === "admin_request" && entry.fields && entry.fields.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {entry.fields.map(f => (
-                              <span key={f} className="bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded text-[9px] font-bold">{f}</span>
-                            ))}
-                          </div>
-                        )}
-                        {entry.type === "student_reply" && (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {(entry.updatedFields || []).map(f => (
-                              <span key={f} className="bg-indigo-200 text-indigo-900 px-1.5 py-0.5 rounded text-[9px] font-bold">✏️ {f}</span>
-                            ))}
-                            {(entry.fileFields || []).map(f => (
-                              <span key={f} className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded text-[9px] font-bold">📎 {f}</span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
-
-              {/* Student Reply Callout — shown prominently if present */}
-              {(activeProfileReg.formData?.["Custom Reply"] || activeProfileReg.formData?.["User Reply"]) && (
-                <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl p-4 space-y-1.5">
-                  <span className="font-black text-xs text-indigo-700 uppercase tracking-wide block">💬 Student Reply</span>
-                  <p className="text-sm text-indigo-900 font-medium leading-relaxed whitespace-pre-wrap">
-                    {activeProfileReg.formData["Custom Reply"] || activeProfileReg.formData["User Reply"]}
-                  </p>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <span className="font-bold text-xs text-gray-500 uppercase block">Registration Form Answers</span>
-                <div className="grid grid-cols-1 gap-2.5 bg-gray-50 p-3 rounded border">
-                  {Object.entries(activeProfileReg.formData)
-                    .filter(([k]) => k !== "Student ID Number" && k !== "Student ID Card Copy" && k !== "Completed Consent Form" && !k.startsWith("Completed Consent -") && k !== "Custom Reply" && k !== "User Reply")
-                    .map(([key, val]) => (
-                      <div key={key} className="border-b pb-1.5 last:border-0 last:pb-0">
-                        <span className="text-xs font-bold text-gray-600 block">{key}</span>
-                        {typeof val === "string" && (val.startsWith("http://") || val.startsWith("https://")) ? (
-                          <a
-                            href={val.includes("res.cloudinary.com") ? `/api/downloadProxy/custom_file?url=${encodeURIComponent(val)}` : val}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-indigo-900 font-bold underline text-xs hover:text-indigo-800"
-                          >
-                            View File Link ↗
-                          </a>
-                        ) : (
-                          <span className="text-xs font-semibold text-gray-850">{String(val)}</span>
-                        )}
-                      </div>
-                    ))}
-                </div>
-              </div>
             </div>
 
-            <div className="flex justify-end pt-2 border-t shrink-0">
-              <Button onClick={() => setActiveProfileReg(null)} className="text-xs">
+            {/* Modal Action Footer */}
+            <div className="flex justify-between items-center pt-3 border-t border-stone-100 shrink-0 flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {activeProfileReg.status === "registered" && !selectedTrip?.isCompleted && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!isApprovable(activeProfileReg) || submitting}
+                      onClick={() => setApproveConfirmReg(activeProfileReg)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl h-9 px-4 shadow-2xs disabled:bg-stone-100 disabled:text-stone-400 disabled:border-stone-200 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 border border-emerald-600"
+                    >
+                      <CheckCircle2Icon className="w-3.5 h-3.5" />
+                      <span>Approve Registration</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReuploadRegId(activeProfileReg.id);
+                        setReuploadIssueText("");
+                        setReuploadFields([]);
+                      }}
+                      className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-semibold rounded-xl h-9 px-4 transition-all flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <FileWarning className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Request Re-Upload</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRejectConfirmReg(activeProfileReg);
+                        setRejectReason("");
+                      }}
+                      className="bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-300 text-xs font-semibold rounded-xl h-9 px-4 transition-all flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <XCircleIcon className="w-3.5 h-3.5 text-rose-700" />
+                      <span>Reject</span>
+                    </button>
+                  </>
+                )}
+
+                {(activeProfileReg.status === "approved_to_pay" || activeProfileReg.status === "mail_sent" || activeProfileReg.status === "paid") && !selectedTrip?.isCompleted && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => handleResendApprovalEmail(activeProfileReg)}
+                      className="bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-300 text-xs font-semibold rounded-xl h-9 px-4 transition-all flex items-center gap-1.5 shadow-2xs disabled:opacity-50"
+                    >
+                      <MailIcon className="w-3.5 h-3.5 text-stone-600" />
+                      <span>Resend Email</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRevokeConfirmReg(activeProfileReg);
+                        setRevokeReason("");
+                      }}
+                      className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-semibold rounded-xl h-9 px-4 transition-all flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <RotateCcwIcon className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Revoke Approval</span>
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <button 
+                type="button"
+                onClick={() => setActiveProfileReg(null)} 
+                className="text-xs h-9 px-4 rounded-xl border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 font-semibold transition-all shadow-2xs"
+              >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stage 4: Approve Confirmation Dialog */}
+      {approveConfirmReg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border-2 border-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 text-emerald-700">
+              <CheckCircle2Icon className="w-6 h-6" />
+              <h3 className="font-bold text-lg text-zinc-900">Approve this student's registration?</h3>
+            </div>
+            <p className="text-sm text-zinc-600 leading-relaxed">
+              Are you sure you want to approve registration for <strong>{getStudentName(approveConfirmReg)}</strong> ({approveConfirmReg.email})?
+            </p>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 space-y-1">
+              <p className="font-bold">✉️ What happens upon approval:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-emerald-800">
+                <li>Confirmation email will be dispatched to their canonical IITM email.</li>
+                <li>Includes official trip WhatsApp joining link and coordinator contacts.</li>
+                <li>Confirms trip seat and updates confirmed seat counter.</li>
+              </ul>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setApproveConfirmReg(null)} disabled={submitting}>
+                Cancel
+              </Button>
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                disabled={submitting}
+                onClick={() => handleApproveRegistration(approveConfirmReg)}
+              >
+                {submitting ? "Approving..." : "Approve"}
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Request Re-upload Modal */}
+      {/* Stage 4: Reject Confirmation Dialog */}
+      {rejectConfirmReg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border-2 border-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 text-red-700">
+              <XCircleIcon className="w-6 h-6" />
+              <h3 className="font-bold text-lg text-zinc-900">Reject Registration</h3>
+            </div>
+            <p className="text-sm text-zinc-600">
+              Rejecting registration for <strong>{getStudentName(rejectConfirmReg)}</strong> ({rejectConfirmReg.email}).
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
+                Rejection Reason <span className="text-red-500">* (Mandatory)</span>
+              </label>
+              <textarea
+                required
+                rows={3}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Explain why this registration is rejected..."
+                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-sm focus:border-red-500 focus:outline-none resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => { setRejectConfirmReg(null); setRejectReason(""); }} disabled={submitting}>
+                Cancel
+              </Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700 text-white font-bold"
+                disabled={submitting || !rejectReason.trim()}
+                onClick={handleRejectRegistration}
+              >
+                {submitting ? "Rejecting..." : "Reject Registration"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stage 4: Revoke Approval Confirmation Dialog */}
+      {revokeConfirmReg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border-2 border-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 text-amber-600">
+              <AlertTriangleIcon className="w-6 h-6" />
+              <h3 className="font-bold text-lg text-zinc-900">Revoke Registration Approval</h3>
+            </div>
+            <p className="text-sm text-zinc-600">
+              Are you sure you want to revoke approval for <strong>{getStudentName(revokeConfirmReg)}</strong> ({revokeConfirmReg.email})?
+            </p>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+              <p className="font-bold">⚠️ Revocation Actions:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-amber-800">
+                <li>Registration returns to <strong>Pending Review</strong> status.</li>
+                <li>WhatsApp community link and coordinator contacts are deactivated on student portal.</li>
+                <li>Confirmed seat counter is decremented and seat is released.</li>
+                <li>Student is excluded from coordinator attendee roster.</li>
+              </ul>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
+                Revocation Reason <span className="text-red-500">* (Mandatory)</span>
+              </label>
+              <textarea
+                required
+                rows={3}
+                value={revokeReason}
+                onChange={(e) => setRevokeReason(e.target.value)}
+                placeholder="State why approval is being revoked..."
+                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-sm focus:border-amber-500 focus:outline-none resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => { setRevokeConfirmReg(null); setRevokeReason(""); }} disabled={submitting}>
+                Cancel
+              </Button>
+              <Button
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                disabled={submitting || !revokeReason.trim()}
+                onClick={handleRevokeApproval}
+              >
+                {submitting ? "Revoking..." : "Revoke Approval"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stage 4: Request Re-Upload / Correction Modal */}
       {reuploadRegId && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4 flex items-center justify-center backdrop-blur-sm" data-lenis-prevent>
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto space-y-4">
             <button
               onClick={() => { setReuploadRegId(null); setReuploadIssueText(""); setReuploadFields([]); }}
               className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-800 transition-colors"
             >
               <XIcon className="w-5 h-5" />
             </button>
-            <h3 className="font-oswald font-bold text-xl text-[#3E1126] uppercase mb-2">Request Re-Upload / Correction</h3>
-            <p className="text-sm text-zinc-600 mb-4">
-              Select which fields need to be corrected by the user, and optionally provide a message explaining why.
+            <h3 className="font-oswald font-bold text-xl text-[#3E1126] uppercase">Request Re-Upload / Correction</h3>
+            <p className="text-sm text-zinc-600">
+              Select which fields or documents need correction, and provide a mandatory explanation for the student.
             </p>
 
             {/* Checkboxes for fields */}
-            <div className="mb-4 space-y-2 border-2 border-zinc-100 rounded-xl p-3 max-h-48 overflow-y-auto">
-              {[
-                ...(selectedTrip?.form?.fields?.map(f => f.name) || []),
-                "Student ID Card Copy",
-                ...(selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
-                  ? selectedTrip.consentTemplates.map(t => `Completed Consent - ${t.name}`)
-                  : (selectedTrip?.consentFormTemplateUrl ? ["Completed Consent Form"] : [])),
-                "Custom Reply"
-              ].map(fieldName => (
-                <label key={fieldName} className="flex items-center gap-2 text-sm font-semibold text-zinc-700 cursor-pointer">
-                  <input 
-                    type="checkbox"
-                    className="rounded text-[#3E1126] focus:ring-[#3E1126]"
-                    checked={reuploadFields.includes(fieldName)}
-                    onChange={(e) => {
-                      if (e.target.checked) setReuploadFields([...reuploadFields, fieldName]);
-                      else setReuploadFields(reuploadFields.filter(f => f !== fieldName));
-                    }}
-                  />
-                  {fieldName}
-                </label>
-              ))}
+            <div>
+              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1.5">
+                Select Fields / Documents Needing Correction <span className="text-red-500">*</span>
+              </label>
+              <div className="space-y-2 border-2 border-zinc-100 rounded-xl p-3 max-h-48 overflow-y-auto bg-zinc-50">
+                {[
+                  "Student ID Card Copy",
+                  ...(selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
+                    ? selectedTrip.consentTemplates.map(t => `Completed Consent - ${t.name}`)
+                    : (selectedTrip?.consentFormTemplateUrl ? ["Completed Consent Form"] : [])),
+                  ...(selectedTrip?.form?.fields?.map(f => f.name) || []),
+                ].map(fieldName => (
+                  <label key={fieldName} className="flex items-center gap-2 text-sm font-semibold text-zinc-700 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      className="rounded text-[#3E1126] focus:ring-[#3E1126]"
+                      checked={reuploadFields.includes(fieldName)}
+                      onChange={(e) => {
+                        if (e.target.checked) setReuploadFields([...reuploadFields, fieldName]);
+                        else setReuploadFields(reuploadFields.filter(f => f !== fieldName));
+                      }}
+                    />
+                    {fieldName}
+                  </label>
+                ))}
+              </div>
             </div>
 
-            <textarea
-              className="w-full border-2 border-zinc-200 rounded-xl p-3 text-sm focus:border-[#3E1126]/40 focus:outline-none min-h-[100px] mb-4 resize-none"
-              placeholder="Describe the issue with their registration (optional if fields are selected)..."
-              value={reuploadIssueText}
-              onChange={(e) => setReuploadIssueText(e.target.value)}
-            />
-            <div className="flex justify-end gap-2">
+            <div>
+              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1.5">
+                Correction Reason / Instructions <span className="text-red-500">* (Mandatory)</span>
+              </label>
+              <textarea
+                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-sm focus:border-[#3E1126]/40 focus:outline-none min-h-[100px] resize-none"
+                placeholder="Describe what needs to be fixed or re-uploaded (mandatory)..."
+                value={reuploadIssueText}
+                onChange={(e) => setReuploadIssueText(e.target.value)}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
               <Button 
                 variant="outline" 
                 onClick={() => { setReuploadRegId(null); setReuploadIssueText(""); setReuploadFields([]); }}
+                disabled={submitting}
               >
                 Cancel
               </Button>
               <Button 
                 className="bg-amber-500 hover:bg-amber-600 text-white font-bold"
-                disabled={!reuploadIssueText.trim() && reuploadFields.length === 0}
-                onClick={() => {
-                  handleStatusChange(reuploadRegId, "action_required", reuploadIssueText.trim(), reuploadFields);
-                  setReuploadRegId(null);
-                  setReuploadIssueText("");
-                  setReuploadFields([]);
-                }}
+                disabled={submitting || !reuploadIssueText.trim() || reuploadFields.length === 0}
+                onClick={handleSendReuploadRequest}
               >
-                Submit Request
+                {submitting ? "Sending..." : "Submit Request"}
               </Button>
             </div>
           </div>
         </div>
       )}
 
-    </main>
+    </div>
   );
 }

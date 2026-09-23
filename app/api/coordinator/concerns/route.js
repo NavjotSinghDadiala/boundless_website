@@ -1,65 +1,14 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { db } from "@/lib/firebase";
-import { adminAuth } from "@/lib/firebase-admin";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
+import { getDeduplicatedRegistrationsForTrip } from "@/lib/tripRegistration";
 import {
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  serverTimestamp,
-  doc,
-  deleteDoc,
-  getDoc
-} from "firebase/firestore";
-
-async function checkAuth(req, tripId) {
-  try {
-    const session = await getServerSession();
-    if (session) return true;
-
-    const { searchParams } = new URL(req.url);
-    let token = searchParams.get("token");
-
-    if (!token && req.method !== "GET" && req.method !== "HEAD") {
-      try {
-        const clone = req.clone();
-        const body = await clone.json();
-        token = body.token;
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    if (!token) return false;
-
-    const decoded = await adminAuth.verifyIdToken(token);
-    const email = decoded.email;
-    if (!email) return false;
-
-    if (!tripId) {
-      return true;
-    }
-
-    const tripSnap = await getDoc(doc(db, "trips", tripId));
-    if (!tripSnap.exists()) return false;
-    const tripData = tripSnap.data();
-
-    const isCoordinated = (tripData.coordinators || []).some((c) => {
-      if (typeof c === "object" && c !== null) {
-        return c.email?.toLowerCase() === email.toLowerCase();
-      }
-      return String(c).toLowerCase() === email.toLowerCase();
-    });
-
-    return isCoordinated;
-  } catch (err) {
-    console.error("Auth check failed:", err);
-    return false;
-  }
-}
+  isAuthorizedAdmin,
+  getAuthenticatedCoordinator,
+  getCoordinatorTripScope,
+  isApprovedRegistrationStatus,
+} from "@/lib/coordinatorAuth";
+import { extractStudentFieldsFromFormData } from "@/lib/studentProfile";
 
 export async function GET(request) {
   try {
@@ -67,81 +16,99 @@ export async function GET(request) {
     const tripId = searchParams.get("tripId");
     const studentEmail = searchParams.get("studentEmail");
 
-    const authorized = await checkAuth(request, tripId);
-    if (!authorized) {
-      return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
-    }
-
-    // Determine coordinator's assignedOption restriction
+    const isAdmin = await isAuthorizedAdmin();
+    let coordinatorEmail = null;
     let assignedOption = null;
-    let email = null;
-    const session = await getServerSession();
-    if (!session) {
-      let token = searchParams.get("token");
-      if (token) {
-        try {
-          const decoded = await adminAuth.verifyIdToken(token);
-          email = decoded.email;
-        } catch (e) {}
+
+    if (!isAdmin) {
+      const coordinatorToken = await getAuthenticatedCoordinator(request);
+      if (!coordinatorToken) {
+        return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
       }
-    }
-    if (email && tripId) {
-      const tripSnap = await getDoc(doc(db, "trips", tripId));
-      if (tripSnap.exists()) {
-        const tripData = tripSnap.data();
-        const coordinator = (tripData.coordinators || []).find((c) => {
-          if (typeof c === "object" && c !== null) {
-            return c.email?.toLowerCase() === email.toLowerCase();
-          }
-          return String(c).toLowerCase() === email.toLowerCase();
-        });
-        if (coordinator && typeof coordinator === "object" && coordinator.assignedOption) {
-          assignedOption = coordinator.assignedOption.trim().toLowerCase();
+
+      coordinatorEmail = coordinatorToken.email;
+
+      if (tripId) {
+        const scope = await getCoordinatorTripScope(coordinatorEmail, tripId);
+        if (!scope.isAssigned) {
+          return NextResponse.json(
+            { error: "Forbidden: You are not assigned to coordinate this trip." },
+            { status: 403 }
+          );
         }
+        assignedOption = scope.assignedOption;
       }
     }
 
-    let q;
-    const concernsRef = collection(db, "coordinator_concerns");
+    let q = adminDb.collection("coordinator_concerns");
 
     if (tripId && studentEmail) {
-      q = query(
-        concernsRef,
-        where("tripId", "==", tripId),
-        where("studentEmail", "==", studentEmail)
-      );
+      q = q.where("tripId", "==", tripId).where("studentEmail", "==", studentEmail.toLowerCase());
     } else if (studentEmail) {
-      q = query(
-        concernsRef,
-        where("studentEmail", "==", studentEmail)
-      );
+      q = q.where("studentEmail", "==", studentEmail.toLowerCase());
     } else if (tripId) {
-      q = query(
-        concernsRef,
-        where("tripId", "==", tripId)
-      );
-    } else {
-      q = query(concernsRef);
+      q = q.where("tripId", "==", tripId);
     }
 
-    const snapshot = await getDocs(q);
+    const snapshot = await q.get();
     let concerns = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
       createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || null,
     }));
 
-    if (assignedOption && tripId) {
-      const regSnap = await getDocs(query(collection(db, "user-registrations"), where("tripId", "==", tripId)));
+    // If caller is a coordinator, enforce strict student data privacy and assignedOption scoping
+    if (!isAdmin) {
+      const allRegs = tripId ? await getDeduplicatedRegistrationsForTrip(tripId) : [];
+      const regMap = new Map();
+      for (const reg of allRegs) {
+        if (reg.email) {
+          const extracted = extractStudentFieldsFromFormData(reg.formData || {});
+          let matchesScope = true;
+          if (assignedOption) {
+            const opt = assignedOption.toLowerCase().trim();
+            matchesScope = Object.values(reg.formData || {}).some(
+              (val) => typeof val === "string" && val.trim().toLowerCase() === opt
+            );
+          }
+          regMap.set(reg.email.toLowerCase(), {
+            name: extracted.name || "Student",
+            phone: extracted.phone || "",
+            matchesScope,
+          });
+        }
+      }
+
+      // Filter out concerns for students outside assignedOption scope, and strip studentEmail
+      concerns = concerns
+        .filter((c) => {
+          if (!assignedOption) return true;
+          const info = regMap.get(c.studentEmail?.toLowerCase());
+          return info ? info.matchesScope : false;
+        })
+        .map((c) => {
+          const info = regMap.get(c.studentEmail?.toLowerCase());
+          return {
+            id: c.id,
+            tripId: c.tripId,
+            studentName: info?.name || "Student",
+            studentPhone: info?.phone || "",
+            concernText: c.concernText,
+            coordinatorEmail: c.coordinatorEmail,
+            createdAt: c.createdAt,
+          };
+        });
+    } else if (assignedOption && tripId) {
+      const allRegs = await getDeduplicatedRegistrationsForTrip(tripId);
       const studentEmailsToKeep = new Set(
-        regSnap.docs
-          .filter((d) => {
-            const fd = d.data().formData || {};
+        allRegs
+          .filter((reg) => {
+            const fd = reg.formData || {};
             return Object.values(fd).some(
               (val) => typeof val === "string" && val.trim().toLowerCase() === assignedOption
             );
           })
-          .map((d) => d.data().email?.toLowerCase())
+          .map((reg) => reg.email?.toLowerCase())
       );
       concerns = concerns.filter((c) => studentEmailsToKeep.has(c.studentEmail?.toLowerCase()));
     }
@@ -163,97 +130,111 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.clone().json();
-    const { tripId, studentEmail, concernText } = body;
+    const { tripId, studentEmail, registrationId, studentPhone, concernText } = body;
 
-    if (!tripId || !studentEmail || !concernText) {
+    let targetEmail = studentEmail ? studentEmail.toLowerCase().trim() : null;
+
+    if (!tripId || !concernText) {
       return NextResponse.json(
-        { error: "Missing required fields (tripId, studentEmail, concernText)" },
+        { error: "Missing required fields (tripId, concernText)" },
         { status: 400 }
       );
     }
 
-    const authorized = await checkAuth(request, tripId);
-    if (!authorized) {
-      return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
-    }
+    const isAdmin = await isAuthorizedAdmin();
+    let coordinatorEmail = "admin";
+    let scope = null;
 
-    // Check assignedOption restriction
-    let email = null;
-    const session = await getServerSession();
-    if (!session) {
-      const { searchParams } = new URL(request.url);
-      let token = searchParams.get("token") || body.token;
-      if (token) {
-        try {
-          const decoded = await adminAuth.verifyIdToken(token);
-          email = decoded.email;
-        } catch (e) {}
+    if (!isAdmin) {
+      const coordinatorToken = await getAuthenticatedCoordinator(request);
+      if (!coordinatorToken) {
+        return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
+      }
+
+      coordinatorEmail = coordinatorToken.email;
+
+      scope = await getCoordinatorTripScope(coordinatorEmail, tripId);
+      if (!scope.isAssigned) {
+        return NextResponse.json(
+          { error: "Forbidden: You are not assigned to coordinate this trip." },
+          { status: 403 }
+        );
       }
     }
 
-    if (email) {
-      const tripSnap = await getDoc(doc(db, "trips", tripId));
-      if (tripSnap.exists()) {
-        const tripData = tripSnap.data();
-        const coordinator = (tripData.coordinators || []).find((c) => {
-          if (typeof c === "object" && c !== null) {
-            return c.email?.toLowerCase() === email.toLowerCase();
-          }
-          return String(c).toLowerCase() === email.toLowerCase();
-        });
-        if (coordinator && typeof coordinator === "object" && coordinator.assignedOption) {
-          const assignedOption = coordinator.assignedOption.trim().toLowerCase();
-          // Find the student's registration for this trip
-          const regSnap = await getDocs(
-            query(
-              collection(db, "user-registrations"),
-              where("tripId", "==", tripId),
-              where("email", "==", studentEmail)
-            )
+    // Support resolution of studentEmail from registrationId or studentPhone
+    if (!targetEmail && (registrationId || studentPhone)) {
+      const allRegs = await getDeduplicatedRegistrationsForTrip(tripId);
+      const matched = allRegs.find((r) => {
+        if (registrationId && (r.id === registrationId || `${r.tripId}_${r.uid}` === registrationId)) {
+          return true;
+        }
+        if (studentPhone) {
+          const extracted = extractStudentFieldsFromFormData(r.formData || {});
+          return extracted.phone && extracted.phone.trim() === String(studentPhone).trim();
+        }
+        return false;
+      });
+      if (matched && matched.email) {
+        targetEmail = matched.email.toLowerCase().trim();
+      }
+    }
+
+    if (!targetEmail) {
+      return NextResponse.json(
+        { error: "Target student not identified. Provide studentEmail, registrationId, or studentPhone." },
+        { status: 400 }
+      );
+    }
+
+    if (!isAdmin) {
+      // Verify student registration exists and is APPROVED
+      const allRegs = await getDeduplicatedRegistrationsForTrip(tripId);
+      const studentReg = allRegs.find(
+        (r) => r.email?.toLowerCase() === targetEmail.toLowerCase()
+      );
+
+      if (!studentReg) {
+        return NextResponse.json({ error: "Student registration not found." }, { status: 404 });
+      }
+
+      if (!isApprovedRegistrationStatus(studentReg.status)) {
+        return NextResponse.json(
+          { error: "Forbidden: Coordinators can only raise concerns on approved student registrations." },
+          { status: 403 }
+        );
+      }
+
+      // If coordinator has assignedOption restriction, verify student registration matches
+      if (scope.assignedOption) {
+        const assignedOption = scope.assignedOption;
+        const matches = Object.values(studentReg.formData || {}).some(
+          (val) => typeof val === "string" && val.trim().toLowerCase() === assignedOption
+        );
+        if (!matches) {
+          return NextResponse.json(
+            { error: "Unauthorized: Registration does not belong to your assigned option/city." },
+            { status: 403 }
           );
-          if (!regSnap.empty) {
-            const matches = Object.values(regSnap.docs[0].data().formData || {}).some(
-              (val) => typeof val === "string" && val.trim().toLowerCase() === assignedOption
-            );
-            if (!matches) {
-              return NextResponse.json(
-                { error: "Unauthorized: Registration does not belong to your assigned option/city." },
-                { status: 403 }
-              );
-            }
-          } else {
-            return NextResponse.json({ error: "Student registration not found." }, { status: 404 });
-          }
         }
       }
     }
 
-    // Extract coordinatorEmail from the verified token (never trust client-supplied value)
-    let coordinatorEmail = "coordinator";
-    try {
-      const { searchParams } = new URL(request.url);
-      let token = searchParams.get("token") || body.token;
-      if (token) {
-        const decoded = await adminAuth.verifyIdToken(token);
-        coordinatorEmail = decoded.email || "coordinator";
-      }
-    } catch (_) { /* session-based auth — use fallback */ }
-
     // Check if trip is completed
-    const tripSnap = await getDoc(doc(db, "trips", tripId));
-    if (tripSnap.exists() && tripSnap.data().isCompleted) {
+    const tripSnap = await adminDb.collection("trips").doc(tripId).get();
+    if (tripSnap.exists && tripSnap.data()?.isCompleted) {
       return NextResponse.json(
         { error: "Trip is completed. Cannot add concerns." },
         { status: 400 }
       );
     }
 
-    const docRef = await addDoc(collection(db, "coordinator_concerns"), {
+    const docRef = await adminDb.collection("coordinator_concerns").add({
       tripId,
-      studentEmail,
+      studentEmail: targetEmail,
       coordinatorEmail,
       concernText,
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     return NextResponse.json({ success: true, id: docRef.id }, { status: 201 });
@@ -265,9 +246,12 @@ export async function POST(request) {
 
 export async function DELETE(request) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const isAdmin = await isAuthorizedAdmin();
+    if (!isAdmin) {
+      return NextResponse.json(
+        { error: "Forbidden: Only administrators can delete concern records." },
+        { status: 403 }
+      );
     }
 
     const { searchParams } = new URL(request.url);
@@ -277,7 +261,7 @@ export async function DELETE(request) {
       return NextResponse.json({ error: "Concern ID is required" }, { status: 400 });
     }
 
-    await deleteDoc(doc(db, "coordinator_concerns", id));
+    await adminDb.collection("coordinator_concerns").doc(id).delete();
     return NextResponse.json({ success: true, message: "Concern deleted successfully" }, { status: 200 });
   } catch (error) {
     console.error("DELETE Concern Error:", error);

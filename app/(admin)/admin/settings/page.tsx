@@ -1,9 +1,14 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { SaveIcon, TvIcon, HelpCircleIcon } from "lucide-react";
+import { SaveIcon, TvIcon, HelpCircleIcon, Loader2Icon } from "lucide-react";
+
+import {
+  AdminPageHeader,
+  AdminCard,
+  AdminLoadingState,
+} from "@/components/admin";
 
 export default function HomepageSettingsPage() {
   const [youtubeVideoId, setYoutubeVideoId] = useState("");
@@ -14,6 +19,7 @@ export default function HomepageSettingsPage() {
   // Fetch current setting
   const fetchSettings = async () => {
     try {
+      setLoading(true);
       const res = await fetch("/api/settings");
       if (res.ok) {
         const data = await res.json();
@@ -69,67 +75,83 @@ export default function HomepageSettingsPage() {
     }
   };
 
-  if (loading) {
-    return <div className="p-10 text-muted-foreground text-sm font-semibold">Loading homepage settings...</div>;
-  }
-
   return (
-    <div className="p-6 bg-card text-card-foreground rounded-xl border border-border shadow-sm m-4 space-y-6 max-w-4xl">
-      <div className="flex justify-between items-center border-b pb-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <TvIcon className="h-6 w-6 text-[#3B001B]" /> Homepage Video Configuration
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            Configure the YouTube video showcased in the circular background loop on the main landing page.
-          </p>
-        </div>
-      </div>
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
+      {/* Page Header */}
+      <AdminPageHeader
+        title="Homepage Settings"
+        description="Configure site-wide media, global notification banners, and landing page hero video playback."
+        breadcrumbs={[
+          { label: "Dashboard", href: "/admin" },
+          { label: "Homepage Settings" },
+        ]}
+      />
 
-      <form onSubmit={handleSave} className="space-y-4">
-        <div className="space-y-2">
-          <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
-            YouTube Video URL or ID
-          </label>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <input
-              type="text"
-              placeholder="e.g. https://www.youtube.com/watch?v=6tDnTV1wHKI"
-              value={inputUrl}
-              onChange={(e) => setInputUrl(e.target.value)}
-              className="flex-1 bg-background border border-input rounded-xl px-4 py-2.5 text-sm focus:border-[#3B001B]/40 focus:outline-none"
-              required
-            />
-            <Button type="submit" disabled={saving} className="bg-[#3B001B] hover:bg-[#3B001B]/95 text-white font-bold px-6 py-2.5 rounded-xl shrink-0">
-              <SaveIcon className="mr-2 h-4 w-4" />
-              {saving ? "Saving..." : "Save Settings"}
-            </Button>
-          </div>
-          <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-1">
-            <HelpCircleIcon className="h-3 w-3" /> Supports full video links, watch URLs, share links (youtu.be), or straight 11-digit IDs.
-          </span>
-        </div>
-      </form>
+      {loading ? (
+        <AdminLoadingState text="Loading homepage settings..." />
+      ) : (
+        <div className="space-y-6">
+          <AdminCard
+            title="Homepage Hero Video"
+            subtitle="Configure the ambient loop video displayed in the background of the landing page."
+            icon={TvIcon}
+          >
+            <form onSubmit={handleSave} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-stone-700 block">
+                  YouTube Video Link or ID *
+                </label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. https://www.youtube.com/watch?v=6tDnTV1wHKI"
+                    value={inputUrl}
+                    onChange={(e) => setInputUrl(e.target.value)}
+                    className="flex-1 px-4 py-2.5 text-sm rounded-xl border border-stone-200 bg-white text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-[#3B001B]/20 focus:border-[#3B001B] transition-all"
+                  />
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-[#3B001B] hover:bg-[#46001D] text-white text-xs sm:text-sm font-semibold disabled:opacity-50 shadow-sm transition-all shrink-0"
+                  >
+                    {saving ? (
+                      <Loader2Icon className="size-4 animate-spin" />
+                    ) : (
+                      <SaveIcon className="size-4" />
+                    )}
+                    <span>Save Video</span>
+                  </button>
+                </div>
+                <p className="text-xs text-stone-500 flex items-center gap-1.5 mt-1.5">
+                  <HelpCircleIcon className="size-3.5 text-stone-400 shrink-0" />
+                  <span>Supports full YouTube watch URLs, short youtu.be links, or straight 11-character video IDs.</span>
+                </p>
+              </div>
+            </form>
+          </AdminCard>
 
-      {/* Video Preview */}
-      {youtubeVideoId && (
-        <div className="border border-border rounded-xl p-4 bg-muted/40 space-y-3">
-          <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Active Video Preview</h3>
-          <div className="relative aspect-video w-full max-w-2xl bg-black rounded-lg overflow-hidden border border-border">
-            <iframe
-              width="100%"
-              height="100%"
-              src={`https://www.youtube.com/embed/${youtubeVideoId}`}
-              title="YouTube video player preview"
-              frameBorder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              className="absolute inset-0 w-full h-full"
-            ></iframe>
-          </div>
-          <div className="text-[10px] font-mono text-muted-foreground">
-            Current Video ID: <span className="font-semibold text-foreground">{youtubeVideoId}</span>
-          </div>
+          {/* Active Video Preview */}
+          {youtubeVideoId && (
+            <AdminCard
+              title="Active Video Live Preview"
+              subtitle={`Current Embedded ID: ${youtubeVideoId}`}
+              icon={TvIcon}
+            >
+              <div className="relative aspect-video w-full max-w-3xl rounded-xl overflow-hidden border border-stone-200 bg-black shadow-sm">
+                <iframe
+                  width="100%"
+                  height="100%"
+                  src={`https://www.youtube.com/embed/${youtubeVideoId}`}
+                  title="YouTube video player preview"
+                  frameBorder="0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="absolute inset-0 w-full h-full"
+                />
+              </div>
+            </AdminCard>
+          )}
         </div>
       )}
     </div>

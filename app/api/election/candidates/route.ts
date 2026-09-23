@@ -5,13 +5,13 @@
 // DELETE — delete a candidate (query param ?id=xxx)
 
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { adminDb } from "@/lib/firebase-admin";
 
-// Verify the admin session via the next-auth cookie header (simple check)
+// Verify the admin session via NextAuth
 async function isAdminRequest(req: NextRequest) {
-  // We allow requests that come from the same origin (admin panel)
-  // In production, add a proper NextAuth session check here.
-  return true;
+  const session = await getServerSession();
+  return !!session;
 }
 
 // ── Helpers for Auto Toggling Contesting Flag ───────────────────────────────

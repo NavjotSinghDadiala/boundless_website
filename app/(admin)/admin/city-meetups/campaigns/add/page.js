@@ -17,8 +17,7 @@ export default function AddCampaignPage() {
     title: "", 
     description: "", 
     badge: "", 
-    logo: "", 
-    sortOrder: "0" 
+    logo: "" 
   });
   const [image, setImage] = useState({ file: null, preview: null, base64: null });
 
@@ -53,7 +52,6 @@ export default function AddCampaignPage() {
         body: JSON.stringify({ 
           ...formData, 
           img: uploadData.links?.[0],
-          sortOrder: parseInt(formData.sortOrder) || 0
         }),
       });
 
@@ -96,11 +94,6 @@ export default function AddCampaignPage() {
             className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             placeholder="Add campaign details here..."
           />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="sortOrder">Sort Order</Label>
-          <Input id="sortOrder" type="number" required value={formData.sortOrder} onChange={(e) => setFormData({ ...formData, sortOrder: e.target.value })} />
         </div>
 
         <div className="space-y-2">

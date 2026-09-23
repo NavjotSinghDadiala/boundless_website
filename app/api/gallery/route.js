@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import {
   collection,
   addDoc,
@@ -56,6 +57,11 @@ export async function GET() {
 /* ─── POST → Upload image to Cloudinary then save to Firestore ─── */
 export async function POST(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const { name, imageData, link } = body;
     // imageData = base64 data URI from the client
@@ -95,6 +101,11 @@ export async function POST(req) {
 /* ─── PUT → Update (re-upload image only if new imageData provided) ─── */
 export async function PUT(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const { id, name, imageData, img, link } = body;
 
@@ -124,6 +135,11 @@ export async function PUT(req) {
 /* ─── DELETE → Remove ─── */
 export async function DELETE(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 

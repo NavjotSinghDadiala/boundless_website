@@ -2,10 +2,29 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { PencilIcon, TrashIcon, PlusIcon } from "lucide-react";
+import {
+  PencilIcon,
+  Trash2Icon,
+  PlusIcon,
+  UsersIcon,
+  UserCheckIcon,
+} from "lucide-react";
+
+import {
+  AdminPageHeader,
+  AdminCard,
+  AdminBadge,
+  AdminLoadingState,
+  AdminEmptyState,
+  AdminConfirmDialog,
+  AdminTable,
+  AdminTableHead,
+  AdminTableBody,
+  AdminTableRow,
+  AdminTableCell,
+  AdminTableHeaderCell,
+} from "@/components/admin";
 
 const TYPE_LABELS = {
   founder: "Founder",
@@ -16,30 +35,28 @@ const TYPE_LABELS = {
 export default function ManageTeamPage() {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [deleteId, setDeleteId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const router = useRouter();
 
   // Fetch all team members
   const fetchMembers = async () => {
     try {
+      setLoading(true);
       const res = await fetch("/api/team-members");
       const data = await res.json();
       if (res.ok) {
         const raw = data.members || [];
-        // Sort: founders first (no term), then by term ascending, then by type, then by sortOrder
         const TYPE_ORDER = { founder: 0, council: 1, dept_head: 2 };
         raw.sort((a, b) => {
           const aTerm = a.term || "";
           const bTerm = b.term || "";
-          // Founders (no term) go first
           if (!aTerm && bTerm) return -1;
           if (aTerm && !bTerm) return 1;
-          // Sort by term ascending (e.g. "2024-2025" < "2025-2026")
           if (aTerm !== bTerm) return aTerm.localeCompare(bTerm);
-          // Within same term, sort by type
           const aTypeOrder = TYPE_ORDER[a.type] ?? 99;
           const bTypeOrder = TYPE_ORDER[b.type] ?? 99;
           if (aTypeOrder !== bTypeOrder) return aTypeOrder - bTypeOrder;
-          // Finally by sortOrder
           return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
         });
         setMembers(raw);
@@ -58,95 +75,170 @@ export default function ManageTeamPage() {
   }, []);
 
   // Handle Delete
-  const handleDelete = async (id) => {
-    if (!confirm("Are you sure you want to delete this team member? This action cannot be undone.")) return;
-
+  const handleDelete = async () => {
+    if (!deleteId) return;
     try {
-      const res = await fetch(`/api/team-members?id=${id}`, {
+      setDeleting(true);
+      const res = await fetch(`/api/team-members?id=${deleteId}`, {
         method: "DELETE",
       });
 
       if (res.ok) {
         toast.success("Team member deleted successfully");
-        setMembers((prev) => prev.filter((m) => m.id !== id));
+        setMembers((prev) => prev.filter((m) => m.id !== deleteId));
+        setDeleteId(null);
       } else {
         const data = await res.json();
         throw new Error(data.error || "Failed to delete");
       }
     } catch (error) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to delete team member");
+    } finally {
+      setDeleting(false);
     }
   };
 
-  if (loading) return <div className="p-10">Loading team members...</div>;
-
   return (
-    <div className="p-6 bg-card text-card-foreground rounded-xl border border-border shadow-sm m-4">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Manage Team & Council</h1>
-        <Button onClick={() => router.push("/admin/team/add")}>
-          <PlusIcon className="mr-2 h-4 w-4" /> Add New Member
-        </Button>
-      </div>
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+      {/* Page Header */}
+      <AdminPageHeader
+        title="Team & Leadership Council"
+        description="Manage founders, elected council representatives, and department heads displayed on the public About and Team pages."
+        breadcrumbs={[
+          { label: "Dashboard", href: "/admin" },
+          { label: "Team Members" },
+        ]}
+        primaryAction={
+          <button
+            type="button"
+            onClick={() => router.push("/admin/team/add")}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#3B001B] text-white text-xs sm:text-sm font-semibold hover:bg-[#46001D] shadow-sm transition-all"
+          >
+            <PlusIcon className="size-4" />
+            <span>Add Member</span>
+          </button>
+        }
+      />
 
-      {members.length === 0 ? (
-        <p className="text-muted-foreground">No team members found.</p>
+      {loading ? (
+        <AdminLoadingState type="table" rows={5} />
+      ) : members.length === 0 ? (
+        <AdminEmptyState
+          title="No Team Members Found"
+          description="Add core founders and council leaders to represent Boundless leadership."
+          icon={UsersIcon}
+          action={
+            <button
+              type="button"
+              onClick={() => router.push("/admin/team/add")}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#3B001B] text-white text-xs font-semibold"
+            >
+              <PlusIcon className="size-3.5" />
+              Add First Member
+            </button>
+          }
+        />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Term</TableHead>
-              <TableHead>Sort Order</TableHead>
-              <TableHead>Image</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <AdminTable>
+          <AdminTableHead>
+            <tr>
+              <AdminTableHeaderCell>Member</AdminTableHeaderCell>
+              <AdminTableHeaderCell>Designated Role</AdminTableHeaderCell>
+              <AdminTableHeaderCell>Category</AdminTableHeaderCell>
+              <AdminTableHeaderCell>Term</AdminTableHeaderCell>
+              <AdminTableHeaderCell>Sort Order</AdminTableHeaderCell>
+              <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
+            </tr>
+          </AdminTableHead>
+          <AdminTableBody>
             {members.map((member) => (
-              <TableRow key={member.id}>
-                <TableCell className="font-medium">{member.name}</TableCell>
-                <TableCell>{member.role}</TableCell>
-                <TableCell>{TYPE_LABELS[member.type] || member.type}</TableCell>
-                <TableCell>{member.term || "N/A"}</TableCell>
-                <TableCell>{member.sortOrder}</TableCell>
-                <TableCell>
-                  {member.image ? (
-                    <img 
-                      src={member.image} 
-                      alt={member.name} 
-                      className="h-10 w-10 object-cover rounded bg-muted"
-                    />
-                  ) : (
-                    "No Image"
-                  )}
-                </TableCell>
-                <TableCell className="text-right flex justify-end gap-2">
-                  {/* Edit Button */}
-                  <Button 
-                    variant="outline" 
-                    size="icon"
-                    onClick={() => router.push(`/admin/team/edit/${member.id}`)}
+              <AdminTableRow key={member.id}>
+                <AdminTableCell>
+                  <div className="flex items-center gap-3">
+                    {member.image ? (
+                      <div className="size-10 rounded-full overflow-hidden border border-stone-200 bg-stone-100 shrink-0">
+                        <img
+                          src={member.image}
+                          alt={member.name}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="size-10 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center text-xs font-bold text-stone-500 shrink-0">
+                        {member.name?.charAt(0) || "U"}
+                      </div>
+                    )}
+                    <div>
+                      <div className="font-semibold text-stone-900">
+                        {member.name}
+                      </div>
+                    </div>
+                  </div>
+                </AdminTableCell>
+
+                <AdminTableCell className="text-stone-700 font-medium">
+                  {member.role || "—"}
+                </AdminTableCell>
+
+                <AdminTableCell>
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+                      member.type === "founder"
+                        ? "bg-[#3B001B]/10 text-[#3B001B] border border-[#3B001B]/20"
+                        : member.type === "council"
+                        ? "bg-amber-100 text-amber-900 border border-amber-300/80"
+                        : "bg-stone-100 text-stone-700 border border-stone-200"
+                    }`}
                   >
-                    <PencilIcon className="h-4 w-4" />
-                  </Button>
-                  
-                  {/* Delete Button */}
-                  <Button 
-                    variant="destructive" 
-                    size="icon"
-                    onClick={() => handleDelete(member.id)}
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
+                    {TYPE_LABELS[member.type] || member.type}
+                  </span>
+                </AdminTableCell>
+
+                <AdminTableCell className="text-stone-500 font-mono text-xs whitespace-nowrap">
+                  {member.term || "Permanent"}
+                </AdminTableCell>
+
+                <AdminTableCell className="text-stone-400 font-mono text-xs">
+                  {member.sortOrder ?? 0}
+                </AdminTableCell>
+
+                <AdminTableCell className="text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/admin/team/edit/${member.id}`)}
+                      className="p-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 hover:text-stone-900 transition-colors"
+                      title="Edit member"
+                    >
+                      <PencilIcon className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteId(member.id)}
+                      className="p-1.5 rounded-lg border border-stone-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors"
+                      title="Delete member"
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </button>
+                  </div>
+                </AdminTableCell>
+              </AdminTableRow>
             ))}
-          </TableBody>
-        </Table>
+          </AdminTableBody>
+        </AdminTable>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <AdminConfirmDialog
+        open={Boolean(deleteId)}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        title="Delete Team Member?"
+        description="Are you sure you want to remove this member from the Boundless council? This action cannot be undone."
+        confirmText="Delete Member"
+        variant="danger"
+        loading={deleting}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

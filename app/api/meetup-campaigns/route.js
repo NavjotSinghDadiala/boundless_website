@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -113,7 +114,7 @@ export async function GET(req) {
     await seedIfEmpty();
 
     const campaignsRef = collection(db, "meetup_campaigns");
-    const q = query(campaignsRef, orderBy("sortOrder", "asc"));
+    const q = query(campaignsRef, orderBy("createdAt", "desc"));
     const querySnapshot = await getDocs(q);
 
     const data = querySnapshot.docs.map((doc) => ({
@@ -121,11 +122,8 @@ export async function GET(req) {
       ...doc.data(),
     }));
 
-    // Sort by createdAt desc in-memory if sortOrder is equal
+    // Sort by createdAt desc in-memory
     data.sort((a, b) => {
-      if (a.sortOrder !== b.sortOrder) {
-        return a.sortOrder - b.sortOrder;
-      }
       const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
       const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
       return timeB - timeA;
@@ -141,6 +139,11 @@ export async function GET(req) {
 /* POST: Save new campaign */
 export async function POST(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     if (!body.city || !body.title || !body.img || !body.description) {
       return NextResponse.json({ error: "City, title, description and image are required" }, { status: 400 });
@@ -153,9 +156,11 @@ export async function POST(req) {
       description: body.description,
       badge: body.badge || "",
       logo: body.logo || "",
-      sortOrder: typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0,
       createdAt: serverTimestamp(),
     };
+    if (body.sortOrder !== undefined) {
+      campaignData.sortOrder = typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0;
+    }
 
     const docRef = await addDoc(collection(db, "meetup_campaigns"), campaignData);
     return NextResponse.json({ message: "Campaign added", id: docRef.id }, { status: 201 });
@@ -168,6 +173,11 @@ export async function POST(req) {
 /* PUT: Update campaign */
 export async function PUT(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const { id, city, img, title, description, badge, logo, sortOrder } = body;
 
@@ -182,9 +192,11 @@ export async function PUT(req) {
       description,
       badge: badge || "",
       logo: logo || "",
-      sortOrder: typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0,
       updatedAt: serverTimestamp(),
     };
+    if (sortOrder !== undefined) {
+      updateData.sortOrder = typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0;
+    }
 
     await updateDoc(doc(db, "meetup_campaigns", id), updateData);
     return NextResponse.json({ success: true, message: "Campaign updated" }, { status: 200 });
@@ -197,6 +209,11 @@ export async function PUT(req) {
 /* DELETE: Remove campaign */
 export async function DELETE(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 

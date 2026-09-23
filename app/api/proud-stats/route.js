@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -60,7 +61,7 @@ export async function GET(req) {
     await seedIfEmpty();
 
     const statsRef = collection(db, "proud_stats");
-    const q = query(statsRef, orderBy("sortOrder", "asc"));
+    const q = query(statsRef, orderBy("createdAt", "desc"));
     const querySnapshot = await getDocs(q);
 
     const data = querySnapshot.docs.map((doc) => ({
@@ -68,11 +69,8 @@ export async function GET(req) {
       ...doc.data(),
     }));
 
-    // Sort by createdAt desc in-memory if sortOrder is equal
+    // Sort by createdAt desc in-memory
     data.sort((a, b) => {
-      if (a.sortOrder !== b.sortOrder) {
-        return a.sortOrder - b.sortOrder;
-      }
       const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
       const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
       return timeB - timeA;
@@ -88,6 +86,11 @@ export async function GET(req) {
 /* POST: Save new stat */
 export async function POST(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     if (body.number === undefined || !body.label) {
       return NextResponse.json({ error: "Number and label are required" }, { status: 400 });
@@ -96,9 +99,11 @@ export async function POST(req) {
     const statData = {
       number: typeof body.number === "number" ? body.number : parseInt(body.number) || 0,
       label: body.label,
-      sortOrder: typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0,
       createdAt: serverTimestamp(),
     };
+    if (body.sortOrder !== undefined) {
+      statData.sortOrder = typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0;
+    }
 
     const docRef = await addDoc(collection(db, "proud_stats"), statData);
     return NextResponse.json({ message: "Stat added", id: docRef.id }, { status: 201 });
@@ -111,6 +116,11 @@ export async function POST(req) {
 /* PUT: Update stat */
 export async function PUT(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
     const { id, number, label, sortOrder } = body;
 
@@ -121,9 +131,11 @@ export async function PUT(req) {
     const updateData = {
       number: typeof number === "number" ? number : parseInt(number) || 0,
       label,
-      sortOrder: typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0,
       updatedAt: serverTimestamp(),
     };
+    if (sortOrder !== undefined) {
+      updateData.sortOrder = typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0;
+    }
 
     await updateDoc(doc(db, "proud_stats", id), updateData);
     return NextResponse.json({ success: true, message: "Stat updated" }, { status: 200 });
@@ -136,6 +148,11 @@ export async function PUT(req) {
 /* DELETE: Remove stat */
 export async function DELETE(req) {
   try {
+    const session = await getServerSession();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
 

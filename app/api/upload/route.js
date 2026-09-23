@@ -24,11 +24,18 @@ export async function POST(req) {
       );
     }
 
-    const urls = await uploadImages(images, { folder });
+    const results = await uploadImages(images, { folder });
+    const urls = results.map((r) => r.secure_url);
+    const imageObjects = results.map((r, index) => ({
+      url: r.secure_url,
+      publicId: r.public_id || `img_${index}`,
+      sortOrder: index,
+    }));
 
     return NextResponse.json({ 
       success: true, 
-      links: urls 
+      links: urls,
+      images: imageObjects
     });
 
   } catch (error) {
