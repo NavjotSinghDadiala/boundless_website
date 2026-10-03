@@ -184,6 +184,11 @@ export async function POST(req) {
         else fieldName = subFolderType;
       }
 
+      const isStudentId =
+        subFolderType === "Student IDs" ||
+        documentType === "Student ID" ||
+        fieldName === "Student ID Card Copy";
+
       const matches = image.match(/^data:(.+);base64,(.+)$/);
       if (!matches) {
         return NextResponse.json({ error: "Invalid base64 format" }, { status: 400 });
@@ -203,7 +208,16 @@ export async function POST(req) {
         if (parts[1]) extension = parts[1].split(";")[0];
       }
 
-      const fileName = `upload_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+      // New file naming architecture:
+      // Strictly Student-ID.<extension> for student ID-card documents.
+      // No hashes, no UIDs, no timestamps in the student ID filename.
+      const fileName = isStudentId
+        ? `Student-ID.${extension}`
+        : `upload_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+
+      // Resolve authoritative student identity
+      const resolvedStudentId = studentDoc?.studentId || body.studentId || body.rollNumber || "";
+      const resolvedStudentName = studentDoc?.name || body.studentName || "";
 
       // 30-second timeout — no Cloudinary fallback for student form uploads
       const driveTimeout = new Promise((_, reject) =>
@@ -222,20 +236,20 @@ export async function POST(req) {
               fileBase64: base64Data,
               email: studentDoc?.email || verifiedEmail || clientEmail || "anonymous",
               tripName: tripName || "Event",
-              subFolderType,
+              subFolderType: isStudentId ? "Student IDs" : subFolderType,
               secret: process.env.DRIVE_UPLOAD_SECRET || "",
               uid: uid || "",
               tripId: tripId || "",
-              studentName: studentDoc?.name || "",
+              studentName: resolvedStudentName,
               studentEmail: studentDoc?.email || verifiedEmail || clientEmail || "anonymous",
-              studentId: studentDoc?.studentId || "",
+              studentId: resolvedStudentId,
               gender: studentDoc?.gender || "",
               dob: studentDoc?.dob || "",
               phone: studentDoc?.phone || "",
               whatsapp: studentDoc?.whatsapp || "",
               residence: studentDoc?.residence || "",
-              documentType,
-              fieldName,
+              documentType: isStudentId ? "Student ID" : documentType,
+              fieldName: isStudentId ? "Student ID Card Copy" : fieldName,
             }),
             redirect: "follow",
           }),
@@ -278,13 +292,30 @@ export async function POST(req) {
       }
 
       if (driveResult.status === "success" && driveResult.fileUrl) {
+        const fileId =
+          driveResult.fileId ||
+          driveResult.id ||
+          driveResult.driveFileId ||
+          driveResult.fileUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1] ||
+          "";
+        const finalFileName = driveResult.fileName || fileName;
+
         return NextResponse.json(
           {
             success: true,
+            fileId,
+            driveFileId: fileId,
+            fileUrl: driveResult.fileUrl,
+            driveUrl: driveResult.fileUrl,
+            fileName: finalFileName,
             images: [
               {
                 secure_url: driveResult.fileUrl,
-                public_id: fileName,
+                public_id: fileId || finalFileName,
+                fileId,
+                driveFileId: fileId,
+                driveUrl: driveResult.fileUrl,
+                fileName: finalFileName,
                 width: 0,
                 height: 0,
               },

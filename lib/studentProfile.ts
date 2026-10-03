@@ -20,6 +20,7 @@ export interface StudentDocument {
   state?: string;
   cityDistrict?: string;
   studentIdVerified: boolean;
+  studentIdUrl?: string | null;
   createdAt: any;
   updatedAt: any;
 }
@@ -239,6 +240,16 @@ export async function getOrCreateStudentProfile(
 }
 
 /**
+ * Fetch a student profile document by uid from students/{uid}.
+ */
+export async function getStudentProfile(uid: string): Promise<StudentDocument | null> {
+  if (!uid) return null;
+  const doc = await adminDb.collection("students").doc(uid).get();
+  if (!doc.exists) return null;
+  return serializeStudentDoc(doc.data() || {});
+}
+
+/**
  * Safely update an existing student document in students/{uid}.
  * Protects immutable fields (uid, email, studentIdVerified, createdAt).
  */
@@ -273,6 +284,49 @@ export async function updateStudentProfile(
     throw new Error("No valid fields provided for profile update.");
   }
 
+  // Server-side validation for gender
+  if (sanitizedUpdates.gender !== undefined) {
+    const rawGender = String(sanitizedUpdates.gender).toLowerCase().trim();
+    if (rawGender.startsWith("f")) {
+      sanitizedUpdates.gender = "female";
+    } else if (rawGender.startsWith("m")) {
+      sanitizedUpdates.gender = "male";
+    } else if (rawGender.startsWith("o") || rawGender === "non-binary" || rawGender === "other") {
+      sanitizedUpdates.gender = "other";
+    } else {
+      throw new Error("Invalid gender: Please select Male, Female, or Other.");
+    }
+  }
+
+  // Server-side validation for phone
+  if (sanitizedUpdates.phone !== undefined) {
+    const rawPhone = String(sanitizedUpdates.phone).trim();
+    let digits = rawPhone.replace(/\D/g, "");
+    if (digits.length === 12 && digits.startsWith("91")) {
+      digits = digits.slice(2);
+    } else if (digits.length === 11 && digits.startsWith("0")) {
+      digits = digits.slice(1);
+    }
+    if (!/^[6-9]\d{9}$/.test(digits)) {
+      throw new Error("Invalid phone number: Please provide a valid 10-digit Indian mobile number.");
+    }
+    sanitizedUpdates.phone = digits;
+    if (!sanitizedUpdates.whatsapp) {
+      sanitizedUpdates.whatsapp = digits;
+    }
+  }
+
+  const studentDocRef = adminDb.collection("students").doc(uid);
+  const existingSnap = await studentDocRef.get();
+  const existingData = existingSnap.data() || {};
+
+  // Protect verified Student ID from arbitrary alteration
+  if (existingData.studentIdVerified === true && sanitizedUpdates.studentId) {
+    if (sanitizedUpdates.studentId.trim() !== String(existingData.studentId || "").trim()) {
+      throw new Error("Cannot modify a verified Student ID / Roll Number. Please contact coordinators for assistance.");
+    }
+  }
+
   // Server-side validation for state and cityDistrict
   if (sanitizedUpdates.state !== undefined) {
     if (!sanitizedUpdates.state || !isValidState(sanitizedUpdates.state)) {
@@ -282,11 +336,7 @@ export async function updateStudentProfile(
   }
 
   if (sanitizedUpdates.cityDistrict !== undefined) {
-    let targetState = sanitizedUpdates.state;
-    if (!targetState) {
-      const existingSnap = await adminDb.collection("students").doc(uid).get();
-      targetState = existingSnap.data()?.state;
-    }
+    let targetState = sanitizedUpdates.state || existingData.state;
     if (!targetState) {
       throw new Error("Please select your state before selecting a city or district.");
     }
@@ -298,8 +348,11 @@ export async function updateStudentProfile(
 
   sanitizedUpdates.updatedAt = FieldValue.serverTimestamp();
 
-  const studentDocRef = adminDb.collection("students").doc(uid);
   await studentDocRef.set(sanitizedUpdates, { merge: true });
+
+  // HISTORICAL SNAPSHOT RULE (Section 30):
+  // We NEVER retroactively mutate historical tripRegistrations.
+  // Historical registrations preserve the exact data submitted at the time of the event.
 
   const updatedSnap = await studentDocRef.get();
   const studentData = updatedSnap.data() || {};
@@ -310,7 +363,11 @@ export async function updateStudentProfile(
     const formDataUpdates: Record<string, any> = {};
     if (sanitizedUpdates.name) formDataUpdates["Full Name"] = sanitizedUpdates.name;
     if (sanitizedUpdates.studentId) formDataUpdates["Roll Number"] = sanitizedUpdates.studentId;
-    if (sanitizedUpdates.phone) formDataUpdates["Contact Number"] = sanitizedUpdates.phone;
+    if (sanitizedUpdates.phone) {
+      formDataUpdates["Contact Number"] = sanitizedUpdates.phone;
+      formDataUpdates["Phone"] = sanitizedUpdates.phone;
+      formDataUpdates["Phone Number"] = sanitizedUpdates.phone;
+    }
     if (sanitizedUpdates.gender) formDataUpdates["Gender"] = sanitizedUpdates.gender;
     if (sanitizedUpdates.state) formDataUpdates["State"] = sanitizedUpdates.state;
     if (sanitizedUpdates.cityDistrict) formDataUpdates["City / District"] = sanitizedUpdates.cityDistrict;

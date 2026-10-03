@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import {
   collection,
   addDoc,
@@ -12,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { v2 as cloudinary } from "cloudinary";
 import { db, isFirebaseEnabled } from "@/lib/firebase";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -57,15 +57,15 @@ export async function GET() {
 /* ─── POST → Upload image to Cloudinary then save to Firestore ─── */
 export async function POST(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
     const { name, imageData, link } = body;
-    // imageData = base64 data URI from the client
-    // img       = already-uploaded Cloudinary URL (fallback, not used in new flow)
 
     if (!name) {
       return NextResponse.json(
@@ -91,6 +91,10 @@ export async function POST(req) {
       createdAt: Date.now(),
     });
 
+    await recordAuditLog(admin, "CREATE_GALLERY_IMAGE", "gallery", ref.id, "success", {
+      name,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, id: ref.id, img: imgUrl });
   } catch (err) {
     console.error("[gallery POST]", err);
@@ -101,9 +105,11 @@ export async function POST(req) {
 /* ─── PUT → Update (re-upload image only if new imageData provided) ─── */
 export async function PUT(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -125,6 +131,10 @@ export async function PUT(req) {
       updatedAt: Date.now(),
     });
 
+    await recordAuditLog(admin, "UPDATE_GALLERY_IMAGE", "gallery", id, "success", {
+      name,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, img: finalImg });
   } catch (err) {
     console.error("[gallery PUT]", err);
@@ -135,9 +145,11 @@ export async function PUT(req) {
 /* ─── DELETE → Remove ─── */
 export async function DELETE(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -148,6 +160,9 @@ export async function DELETE(req) {
     }
 
     await deleteDoc(doc(db, "gallery", id));
+
+    await recordAuditLog(admin, "DELETE_GALLERY_IMAGE", "gallery", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });

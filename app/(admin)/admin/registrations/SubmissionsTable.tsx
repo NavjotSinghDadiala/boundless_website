@@ -106,7 +106,7 @@ export default function SubmissionsTable({ submissions }: Props) {
     new Set(submissions.flatMap((s) => Object.keys(s.formData || {})))
   ).filter((k) => !internalKeys.has(k));
 
-  const columns = ["#", "Email", "UID", "Submitted At", ...formDataKeys];
+  const columns = ["#", "Student Name", "Email", "UID", "Submitted At", ...formDataKeys];
 
   if (submissions.length === 0) {
     return (
@@ -144,6 +144,11 @@ export default function SubmissionsTable({ submissions }: Props) {
                 {/* Row number — sticky left */}
                 <td className="px-4 py-3 sticky left-0 bg-white hover:bg-stone-50 font-medium text-stone-500 z-10 whitespace-nowrap">
                   {idx + 1}
+                </td>
+
+                {/* Student Name */}
+                <td className="px-4 py-3 font-semibold text-xs text-stone-900 whitespace-nowrap">
+                  {row.name || row.studentName || "—"}
                 </td>
 
                 {/* Email */}

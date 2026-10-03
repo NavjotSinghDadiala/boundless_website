@@ -4,6 +4,7 @@ import {
   getAuthenticatedCoordinator,
   getCoordinatorTripScope,
   APPROVED_STATUSES,
+  isRegistrationAssignedToCoordinator,
 } from "@/lib/coordinatorAuth";
 import { getDeduplicatedRegistrationsForTrip } from "@/lib/tripRegistration";
 import { extractStudentFieldsFromFormData } from "@/lib/studentProfile";
@@ -110,23 +111,28 @@ export async function GET(request: Request) {
       return APPROVED_STATUSES.has(st);
     });
 
-    // If coordinator has an assignedOption (city / option scope), filter matching registrations
-    if (scope.assignedOption) {
-      const opt = scope.assignedOption.toLowerCase().trim();
-      approvedRegistrations = approvedRegistrations.filter((reg) => {
-        const fd = reg.formData || {};
-        return Object.values(fd).some(
-          (val) => typeof val === "string" && val.trim().toLowerCase() === opt
-        );
-      });
-    }
+    // Filter matching registrations according to coordinator trip and option scope
+    approvedRegistrations = approvedRegistrations.filter((reg) =>
+      isRegistrationAssignedToCoordinator(
+        coordinator.email,
+        tripData.coordinators || [],
+        scope.assignedOption,
+        reg.formData || {}
+      )
+    );
 
     // 6. Map approved registrations to NAME + PHONE ONLY
     // Absolutely NO email, student ID, DOB, gender, residence, documents, or formData
     const approvedStudents = approvedRegistrations.map((reg) => {
       const extracted = extractStudentFieldsFromFormData(reg.formData || {});
-      const name = extracted.name || "Student";
-      const phone = extracted.phone || "";
+      const name = reg.name || reg.studentName || extracted.name || "Student";
+      const phone =
+        reg.phone ||
+        extracted.phone ||
+        reg.formData?.["Contact Number"] ||
+        reg.formData?.["Phone Number"] ||
+        reg.formData?.["Phone"] ||
+        "";
       return {
         id: reg.id || `${tripId}_${reg.uid}`,
         name,
@@ -145,16 +151,22 @@ export async function GET(request: Request) {
     for (const reg of allRegistrations) {
       if (reg.email) {
         const extracted = extractStudentFieldsFromFormData(reg.formData || {});
-        let matchesScope = true;
-        if (scope.assignedOption) {
-          const opt = scope.assignedOption.toLowerCase().trim();
-          matchesScope = Object.values(reg.formData || {}).some(
-            (val) => typeof val === "string" && val.trim().toLowerCase() === opt
-          );
-        }
+        const matchesScope = isRegistrationAssignedToCoordinator(
+          coordinator.email,
+          tripData.coordinators || [],
+          scope.assignedOption,
+          reg.formData || {}
+        );
+        const phone =
+          reg.phone ||
+          extracted.phone ||
+          reg.formData?.["Contact Number"] ||
+          reg.formData?.["Phone Number"] ||
+          reg.formData?.["Phone"] ||
+          "";
         regEmailMap.set(reg.email.toLowerCase(), {
-          name: extracted.name || "Student",
-          phone: extracted.phone || "",
+          name: reg.name || reg.studentName || extracted.name || "Student",
+          phone,
           matchesScope,
         });
       }
@@ -165,8 +177,8 @@ export async function GET(request: Request) {
         const data = doc.data() || {};
         const studentInfo = regEmailMap.get(String(data.studentEmail || "").toLowerCase());
 
-        // If assignedOption scope applies and student doesn't match scope, exclude
-        if (scope.assignedOption && studentInfo && !studentInfo.matchesScope) {
+        // If student does not match coordinator scope, exclude
+        if (studentInfo && !studentInfo.matchesScope) {
           return null;
         }
 

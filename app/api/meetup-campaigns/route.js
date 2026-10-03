@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -14,6 +13,7 @@ import {
   deleteDoc,
   writeBatch,
 } from "firebase/firestore";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 // Cleaned hardcoded seed data with text descriptions instead of React elements
 const initialCampaigns = [
@@ -139,9 +139,11 @@ export async function GET(req) {
 /* POST: Save new campaign */
 export async function POST(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -163,6 +165,12 @@ export async function POST(req) {
     }
 
     const docRef = await addDoc(collection(db, "meetup_campaigns"), campaignData);
+
+    await recordAuditLog(admin, "CREATE_MEETUP_CAMPAIGN", "meetup_campaign", docRef.id, "success", {
+      city: body.city,
+      title: body.title,
+    }).catch(() => {});
+
     return NextResponse.json({ message: "Campaign added", id: docRef.id }, { status: 201 });
   } catch (error) {
     console.error("POST Campaign Error:", error);
@@ -173,9 +181,11 @@ export async function POST(req) {
 /* PUT: Update campaign */
 export async function PUT(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -199,6 +209,12 @@ export async function PUT(req) {
     }
 
     await updateDoc(doc(db, "meetup_campaigns", id), updateData);
+
+    await recordAuditLog(admin, "UPDATE_MEETUP_CAMPAIGN", "meetup_campaign", id, "success", {
+      city,
+      title,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, message: "Campaign updated" }, { status: 200 });
   } catch (error) {
     console.error("PUT Campaign Error:", error);
@@ -209,9 +225,11 @@ export async function PUT(req) {
 /* DELETE: Remove campaign */
 export async function DELETE(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -222,6 +240,9 @@ export async function DELETE(req) {
     }
 
     await deleteDoc(doc(db, "meetup_campaigns", id));
+
+    await recordAuditLog(admin, "DELETE_MEETUP_CAMPAIGN", "meetup_campaign", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true, message: "Campaign deleted" }, { status: 200 });
   } catch (error) {
     console.error("DELETE Campaign Error:", error);

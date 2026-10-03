@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -13,6 +12,7 @@ import {
   serverTimestamp,
   getDoc
 } from "firebase/firestore";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 /* GET → List All or Single (if ?id= is passed) */
 export async function GET(req) {
@@ -47,8 +47,12 @@ export async function GET(req) {
 /* POST → Create */
 export async function POST(req) {
   try {
-    const session = await getServerSession();
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
+    }
 
     const body = await req.json();
     const meetupData = {
@@ -63,6 +67,11 @@ export async function POST(req) {
     };
 
     const docRef = await addDoc(collection(db, "city_meetups"), meetupData);
+
+    await recordAuditLog(admin, "CREATE_CITY_MEETUP", "city_meetup", docRef.id, "success", {
+      cityName: body.cityName,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, id: docRef.id }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: "Failed to save city meetup" }, { status: 500 });
@@ -72,8 +81,12 @@ export async function POST(req) {
 /* PUT → Update */
 export async function PUT(req) {
   try {
-    const session = await getServerSession();
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
+    }
 
     const body = await req.json();
     const { id, mainSection, subSection, cityName, color, img, caption, galleryLink } = body;
@@ -84,6 +97,10 @@ export async function PUT(req) {
       mainSection, subSection, cityName, color, img, caption, galleryLink, updatedAt: serverTimestamp()
     });
 
+    await recordAuditLog(admin, "UPDATE_CITY_MEETUP", "city_meetup", id, "success", {
+      cityName,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     return NextResponse.json({ error: "Failed to update meetup" }, { status: 500 });
@@ -92,8 +109,12 @@ export async function PUT(req) {
 
 export async function DELETE(req) {
   try {
-    const session = await getServerSession();
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
+    }
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
@@ -101,6 +122,9 @@ export async function DELETE(req) {
     if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
     await deleteDoc(doc(db, "city_meetups", id));
+
+    await recordAuditLog(admin, "DELETE_CITY_MEETUP", "city_meetup", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     return NextResponse.json({ error: "Failed to delete meetup" }, { status: 500 });

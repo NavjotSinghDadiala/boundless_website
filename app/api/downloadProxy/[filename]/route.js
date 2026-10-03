@@ -7,31 +7,34 @@ export async function GET(request, { params }) {
 
     const { searchParams } = new URL(request.url);
     const url = searchParams.get("url");
+    const fileId = searchParams.get("id") || searchParams.get("fileId");
 
-    if (!url) {
-      return NextResponse.json({ error: "Missing URL parameter" }, { status: 400 });
+    if (!url && !fileId) {
+      return NextResponse.json({ error: "Missing URL or fileId parameter" }, { status: 400 });
     }
 
-    // Security: Only allow proxying Cloudinary and Google Drive URLs to prevent open proxy abuse
-    const isAllowedSource = 
-      url.startsWith("https://res.cloudinary.com/") || 
-      url.startsWith("http://res.cloudinary.com/") ||
-      url.startsWith("https://drive.google.com/") ||
-      url.startsWith("https://docs.google.com/") ||
-      url.startsWith("https://script.google.com/") ||
-      url.startsWith("https://script.googleusercontent.com/");
-
-    if (!isAllowedSource) {
-      return NextResponse.json({ error: "Forbidden: Only Cloudinary and Google Drive assets are allowed" }, { status: 403 });
-    }
-
-    // Convert standard Google Drive view link to direct download link
+    // Determine fetchUrl
     let fetchUrl = url;
-    if (url.includes("drive.google.com/file/d/")) {
+    if (fileId) {
+      fetchUrl = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(fileId)}`;
+    } else if (url && url.includes("drive.google.com/file/d/")) {
       const match = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
       if (match && match[1]) {
         fetchUrl = `https://drive.google.com/uc?export=download&id=${match[1]}`;
       }
+    }
+
+    // Security: Only allow proxying Cloudinary and Google Drive URLs to prevent open proxy abuse
+    const isAllowedSource = 
+      fetchUrl.startsWith("https://res.cloudinary.com/") || 
+      fetchUrl.startsWith("http://res.cloudinary.com/") ||
+      fetchUrl.startsWith("https://drive.google.com/") ||
+      fetchUrl.startsWith("https://docs.google.com/") ||
+      fetchUrl.startsWith("https://script.google.com/") ||
+      fetchUrl.startsWith("https://script.googleusercontent.com/");
+
+    if (!isAllowedSource) {
+      return NextResponse.json({ error: "Forbidden: Only Cloudinary and Google Drive assets are allowed" }, { status: 403 });
     }
 
     const response = await fetch(fetchUrl);

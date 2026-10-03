@@ -21,6 +21,7 @@ import {
   AlertCircleIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
+  GraduationCap,
 } from "lucide-react";
 
 import {
@@ -134,6 +135,13 @@ const adminModules = [
     tag: "Social Proof",
   },
   {
+    title: "Students",
+    description: "Central student directory, verification statuses, and permanent trip histories",
+    url: "/admin/students",
+    icon: GraduationCap,
+    tag: "Directory",
+  },
+  {
     title: "Homepage Settings",
     description: "Configure global site notifications and YouTube media",
     url: "/admin/settings",
@@ -141,11 +149,11 @@ const adminModules = [
     tag: "Settings",
   },
   {
-    title: "Registered Users",
-    description: "View authenticated society member roster",
+    title: "Admin Access",
+    description: "Manage administrative roles, permissions, and audit logs",
     url: "/admin/users",
     icon: UserCheckIcon,
-    tag: "Directory",
+    tag: "Security",
   },
 ];
 
@@ -156,15 +164,38 @@ export default function AdminDashboardPage() {
   const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
+  // Authoritative real-time aggregation metrics
+  const [dashboardStats, setDashboardStats] = useState({
+    totalStudents: 0,
+    verifiedStudents: 0,
+    unverifiedStudents: 0,
+    studentsWithTrips: 0,
+    completedTrips: 0,
+    upcomingTrips: 0,
+    totalTrips: 0,
+    totalApprovedParticipations: 0,
+  });
+
   useEffect(() => {
     async function loadDashboardData() {
       try {
         setLoading(true);
-        // 1. Fetch all trips
-        const tripRes = await fetch("/api/trip", {
-          headers: { "x-admin-dev": "true" },
-        });
-        if (!tripRes.ok) return;
+        // 1. Fetch all trips and dashboard stats in parallel
+        const [tripRes, statsRes] = await Promise.all([
+          fetch("/api/trip", {
+            headers: { "x-admin-dev": "true" },
+          }).catch(() => null),
+          fetch("/api/admin/dashboard-stats").catch(() => null),
+        ]);
+
+        if (statsRes && statsRes.ok) {
+          const statsJson = await statsRes.json();
+          if (statsJson?.stats) {
+            setDashboardStats(statsJson.stats);
+          }
+        }
+
+        if (!tripRes || !tripRes.ok) return;
         const tripData = await tripRes.json();
         const tripList: Trip[] = tripData.trips || [];
         setTrips(tripList);
@@ -244,44 +275,84 @@ export default function AdminDashboardPage() {
         }
       />
 
-      {/* STAT ROW */}
+      {/* STAT ROW: CANONICAL REGISTRY & REAL PARTICIPATION METRICS */}
       {loading ? (
         <AdminLoadingState type="cards" cards={4} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <AdminStatCard
-            title="Upcoming Trips"
-            value={upcomingTrips.length}
-            icon={CalendarIcon}
-            subtitle={`${openTrips.length} currently open for registration`}
-            variant="maroon"
-            href="/admin/trip/upcoming"
-          />
-          <AdminStatCard
-            title="Pending Registrations"
-            value={pendingCount}
-            icon={ClockIcon}
-            subtitle="Students awaiting document verification"
-            variant="amber"
-            badge={pendingCount > 0 ? "Requires Action" : undefined}
-            href="/admin/registrations"
-          />
-          <AdminStatCard
-            title="Approved Students"
-            value={approvedCount}
-            icon={CheckCircle2Icon}
-            subtitle="Verified attendees across active trips"
-            variant="emerald"
-            href="/admin/registrations"
-          />
-          <AdminStatCard
-            title="Active Expeditions"
-            value={openTrips.length}
-            icon={CompassIcon}
-            subtitle="Live public booking links"
-            variant="stone"
-            href="/admin/trip"
-          />
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <AdminStatCard
+              title="Total Students"
+              value={dashboardStats.totalStudents}
+              icon={GraduationCap}
+              subtitle="Canonical Boundless directory"
+              variant="maroon"
+              href="/admin/students"
+            />
+            <AdminStatCard
+              title="Verified Students"
+              value={dashboardStats.verifiedStudents}
+              icon={UserCheckIcon}
+              subtitle={`${dashboardStats.unverifiedStudents} awaiting verification`}
+              variant="emerald"
+              href="/admin/students?verification=verified"
+            />
+            <AdminStatCard
+              title="Completed Expeditions"
+              value={dashboardStats.completedTrips}
+              icon={Award}
+              subtitle="Indexed in permanent history"
+              variant="blue"
+              href="/admin/previous-trips"
+            />
+            <AdminStatCard
+              title="Approved Participations"
+              value={dashboardStats.totalApprovedParticipations || approvedCount}
+              icon={CheckCircle2Icon}
+              subtitle="Confirmed attendees across trips"
+              variant="amber"
+              href="/admin/registrations"
+            />
+          </div>
+
+          {/* Quick Operational Sub-Bar */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-stone-50 rounded-xl border border-stone-200/80 p-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <CalendarIcon className="size-4 text-stone-500" />
+                <span className="text-xs text-stone-600 font-medium">Upcoming Expeditions</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-stone-900 text-sm">{upcomingTrips.length}</span>
+                <span className="text-[11px] text-stone-400">({openTrips.length} open)</span>
+              </div>
+            </div>
+
+            <div className="bg-stone-50 rounded-xl border border-stone-200/80 p-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <ClockIcon className="size-4 text-amber-600" />
+                <span className="text-xs text-stone-600 font-medium">Pending Registrations</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-amber-700 text-sm">{pendingCount}</span>
+                {pendingCount > 0 && (
+                  <span className="text-[10px] uppercase font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
+                    Action
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-stone-50 rounded-xl border border-stone-200/80 p-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <CompassIcon className="size-4 text-stone-500" />
+                <span className="text-xs text-stone-600 font-medium">Students With Trips</span>
+              </div>
+              <div>
+                <span className="font-bold text-stone-900 text-sm">{dashboardStats.studentsWithTrips}</span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

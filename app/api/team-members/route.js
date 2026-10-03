@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -14,6 +13,7 @@ import {
   deleteDoc,
   writeBatch,
 } from "firebase/firestore";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 // Import local data for seeding
 import { founderDetails } from "@/data/founders";
@@ -155,9 +155,11 @@ export async function GET(req) {
 /* POST: Save a new team member */
 export async function POST(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -177,6 +179,13 @@ export async function POST(req) {
     };
 
     const docRef = await addDoc(collection(db, "team_members"), memberData);
+
+    await recordAuditLog(admin, "CREATE_TEAM_MEMBER", "team_member", docRef.id, "success", {
+      name: body.name,
+      role: body.role,
+      type: body.type,
+    }).catch(() => {});
+
     return NextResponse.json({ message: "Member added", id: docRef.id }, { status: 201 });
   } catch (error) {
     console.error("POST API Error:", error);
@@ -187,9 +196,11 @@ export async function POST(req) {
 /* PUT: Update team member */
 export async function PUT(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -210,6 +221,13 @@ export async function PUT(req) {
     };
 
     await updateDoc(doc(db, "team_members", id), updateData);
+
+    await recordAuditLog(admin, "UPDATE_TEAM_MEMBER", "team_member", id, "success", {
+      name,
+      role,
+      type,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, message: "Member updated" }, { status: 200 });
   } catch (error) {
     console.error("PUT API Error:", error);
@@ -220,9 +238,11 @@ export async function PUT(req) {
 /* DELETE: Remove team member */
 export async function DELETE(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -233,6 +253,9 @@ export async function DELETE(req) {
     }
 
     await deleteDoc(doc(db, "team_members", id));
+
+    await recordAuditLog(admin, "DELETE_TEAM_MEMBER", "team_member", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true, message: "Member deleted" }, { status: 200 });
   } catch (error) {
     console.error("DELETE API Error:", error);

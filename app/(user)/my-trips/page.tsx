@@ -49,6 +49,7 @@ interface TripEntry {
   source?: string;
   registrationLocation?: string | null;
   trip: TripMeta;
+  waitlistPosition?: number | null;
 }
 
 interface StudentProfile {
@@ -58,6 +59,7 @@ interface StudentProfile {
   studentId: string;
   gender: string;
   studentIdVerified: boolean;
+  phone?: string;
   state?: string;
   cityDistrict?: string;
 }
@@ -119,6 +121,25 @@ function getStatusConfig(status: string): {
         glow: "shadow-[0_0_18px_rgba(52,211,153,0.4)]",
         pulse: true,
       };
+    case "Waitlisted":
+      return {
+        bg: "bg-amber-600/20",
+        text: "text-amber-300",
+        border: "border-amber-500/50",
+        dot: "bg-amber-400",
+        glow: "shadow-[0_0_15px_rgba(245,158,11,0.35)]",
+        pulse: true,
+      };
+    case "Withdrawn":
+    case "Declined":
+      return {
+        bg: "bg-zinc-500/20",
+        text: "text-zinc-400",
+        border: "border-zinc-500/30",
+        dot: "bg-zinc-400",
+        glow: "shadow-none",
+      };
+    case "Registration Not Approved":
     case "Rejected":
       return {
         bg: "bg-rose-500/20",
@@ -147,8 +168,9 @@ function getStatusConfig(status: string): {
 }
 
 /* ─── Holographic Laser Status Seal ──────────────────────────── */
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, waitlistPosition }: { status: string; waitlistPosition?: number | null }) {
   const config = getStatusConfig(status);
+  const label = status === "Waitlisted" && waitlistPosition ? `WAITLISTED #${waitlistPosition}` : status;
   return (
     <span
       className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-[11px] font-mono font-bold tracking-wider uppercase backdrop-blur-xl border ${config.bg} ${config.text} ${config.border} ${config.glow}`}
@@ -161,7 +183,7 @@ function StatusBadge({ status }: { status: string }) {
         )}
         <span className={`relative inline-flex rounded-full h-2 w-2 ${config.dot}`} />
       </span>
-      {status}
+      {label}
     </span>
   );
 }
@@ -315,7 +337,7 @@ function UpcomingTripCard({
 
         {/* Laser Status Seal */}
         <div className="absolute top-3 right-4">
-          <StatusBadge status={humanStatus} />
+          <StatusBadge status={humanStatus} waitlistPosition={entry.waitlistPosition} />
         </div>
       </div>
 
@@ -395,7 +417,7 @@ function UpcomingTripCard({
 
         {/* Rejection Notice */}
         {humanStatus === "Rejected" && (
-          <div className="bg-rose-950/30 border border-rose-400/40 rounded-2xl p-4 flex flex-col gap-1.5 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
+          <div className="bg-rose-950/30 border border-rose-400/40 rounded-2xl p-4 flex flex-col gap-2 shadow-[0_0_20px_rgba(244,63,94,0.15)]">
             <div className="flex items-center gap-2 text-rose-300 font-mono font-bold text-xs uppercase tracking-wider">
               <svg className="w-4 h-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -405,9 +427,15 @@ function UpcomingTripCard({
             {rejectionReason && (
               <p className="text-rose-200 text-xs leading-relaxed mt-0.5">{rejectionReason}</p>
             )}
-            <p className="text-rose-300/70 text-[11px] mt-1">
-              You are invited to apply for any other upcoming open expedition below.
-            </p>
+            <div className="pt-1.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <Link
+                href={`/trip-registration?tripId=${tripId}&reapply=true`}
+                className="inline-flex items-center justify-center gap-2 bg-[#FCE16D] hover:bg-[#ebd057] active:scale-95 text-black font-oswald text-xs uppercase tracking-wider font-bold px-4 py-2.5 rounded-full shadow-[0_0_15px_rgba(252,225,109,0.3)] transition-all cursor-pointer"
+              >
+                <span>🔄 Reapply For This Expedition</span>
+                <span>→</span>
+              </Link>
+            </div>
           </div>
         )}
 
@@ -857,7 +885,7 @@ export default function MyTripsPage() {
       if (typeof window !== "undefined" && (window as any).__MOCK_DATA__) {
         const mockData = (window as any).__MOCK_DATA__;
         setData(mockData);
-        if (mockData?.student && (!mockData.student.state || !mockData.student.cityDistrict)) {
+        if (mockData?.student && (!mockData.student.state || !mockData.student.cityDistrict || !mockData.student.phone || !mockData.student.gender || mockData.student.gender === "unknown")) {
           setShowLocationModal(true);
         }
         setDataLoading(false);
@@ -873,7 +901,7 @@ export default function MyTripsPage() {
       }
       const json = await res.json();
       setData(json);
-      if (json?.student && (!json.student.state || !json.student.cityDistrict)) {
+      if (json?.student && (!json.student.state || !json.student.cityDistrict || !json.student.phone || !json.student.gender || json.student.gender === "unknown")) {
         setShowLocationModal(true);
       }
     } catch (e: any) {
@@ -1037,9 +1065,10 @@ export default function MyTripsPage() {
                   {student?.studentId && (
                     <span>Roll ID: {student.studentId}</span>
                   )}
-                  {student?.state && student?.cityDistrict ? (
-                    <span className="flex items-center gap-1.5 text-cyan-300/90 font-medium">
+                  {student?.state && student?.cityDistrict && student?.phone ? (
+                    <span className="flex items-center gap-2 text-cyan-300/90 font-medium">
                       <span>📍 {student.cityDistrict}, {student.state}</span>
+                      <span className="text-emerald-300 font-sans">📞 {student.phone}</span>
                       <button
                         type="button"
                         onClick={() => setShowLocationModal(true)}
@@ -1054,7 +1083,7 @@ export default function MyTripsPage() {
                       onClick={() => setShowLocationModal(true)}
                       className="inline-flex items-center gap-1 text-amber-300 hover:text-amber-200 underline font-semibold text-[11px] animate-pulse cursor-pointer"
                     >
-                      <span>📍 Complete Location Profile *</span>
+                      <span>⚠️ Complete Profile (Location & Phone) *</span>
                     </button>
                   )}
                 </div>
@@ -1222,7 +1251,7 @@ export default function MyTripsPage() {
         isOpen={showLocationModal}
         user={user}
         initialProfile={data?.student}
-        canDismiss={Boolean(data?.student?.state && data?.student?.cityDistrict)}
+        canDismiss={Boolean(data?.student?.state && data?.student?.cityDistrict && data?.student?.phone && data?.student?.gender && data?.student?.gender !== "unknown")}
         onClose={() => setShowLocationModal(false)}
         onSuccess={(updatedStudent) => {
           setData((prev) => {
@@ -1231,6 +1260,8 @@ export default function MyTripsPage() {
               ...prev,
               student: {
                 ...prev.student,
+                gender: updatedStudent.gender,
+                phone: updatedStudent.phone,
                 state: updatedStudent.state,
                 cityDistrict: updatedStudent.cityDistrict,
               },

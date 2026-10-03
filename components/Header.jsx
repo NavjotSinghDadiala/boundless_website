@@ -113,7 +113,10 @@ export default function Header() {
   const homeMenuItems = [
     { label: "Upcoming Trips", href: "#upcoming-trips" },
     { label: "Trip Registration", href: "/trip-registration" },
-    ...(studentUser ? [{ label: "My Trips", href: "/my-trips" }] : []),
+    ...(studentUser ? [
+      { label: "My Trips", href: "/my-trips" },
+      { label: "My Profile", href: "/profile" },
+    ] : []),
     ...(isCoordinator ? [{ label: "Coordinator Dashboard", href: "/coordinator" }] : []),
     { label: "Our Gallery", href: "#gallery" },
     { label: "Previous Trips", href: "#previous-trips" },
@@ -128,7 +131,10 @@ export default function Header() {
   const otherMenuItems = [
     { label: "Home", href: "/" },
     { label: "Trip Registration", href: "/trip-registration" },
-    ...(studentUser ? [{ label: "My Trips", href: "/my-trips" }] : []),
+    ...(studentUser ? [
+      { label: "My Trips", href: "/my-trips" },
+      { label: "My Profile", href: "/profile" },
+    ] : []),
     ...(isCoordinator ? [{ label: "Coordinator Dashboard", href: "/coordinator" }] : []),
     { label: "Our Team", href: "/team-members" },
     { label: "Whatsapp groups", href: "/whatsapp-groups" },

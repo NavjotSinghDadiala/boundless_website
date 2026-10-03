@@ -8,7 +8,7 @@ import {
     getDoc,
 } from "firebase/firestore";
 import { signOut } from "firebase/auth";
-import { ShieldAlertIcon, Mail, Compass, ArrowRight, ArrowLeft, CheckCircle2, FileText, Upload, MapPin } from "lucide-react";
+import { ShieldAlertIcon, Mail, Compass, ArrowRight, ArrowLeft, CheckCircle2, FileText, Upload, MapPin, Phone, User as UserIcon, AlertTriangle, X, Eye } from "lucide-react";
 import LocationSelect from "@/components/ui/LocationSelect";
 import {
     INDIAN_STATES_AND_UTS,
@@ -51,9 +51,10 @@ const CollapsibleDescription = ({ text }) => {
   );
 };
 
-export default function UserRegistrationForm({ user, setUser, tripId, autofillData, studentProfile, onSuccess }) {
+export default function UserRegistrationForm({ user, setUser, tripId, trip, autofillData, studentProfile, onSuccess }) {
     const dbRef = useRef(null);
     const [dbReady, setDbReady] = useState(false);
+    const isSubmittingRef = useRef(false);
     
     useEffect(() => {
         dbRef.current = getFirestore(app);
@@ -68,6 +69,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
 
     // Consent Form State
     const [showConsent, setShowConsent] = useState(false);
+    const [showReviewModal, setShowReviewModal] = useState(false);
     const [consentFormTemplateUrl, setConsentFormTemplateUrl] = useState("");
     const [consentTemplates, setConsentTemplates] = useState([]);
     const [consentStatements, setConsentStatements] = useState([]);
@@ -80,11 +82,40 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
     const isIdVerified = Boolean(studentProfile?.studentIdVerified);
     const [studentIdNum, setStudentIdNum] = useState("");
     const [studentIdFile, setStudentIdFile] = useState(null); // stores the uploaded Google Drive URL
+    const [studentIdFileId, setStudentIdFileId] = useState(null); // stores the Google Drive File ID
 
     // Background upload tracking states
     const [uploadingStudentId, setUploadingStudentId] = useState(false);
     const [uploadingConsent, setUploadingConsent] = useState({}); // mapping: templateId -> boolean
     const [uploadingDynamic, setUploadingDynamic] = useState({}); // mapping: fieldName -> boolean
+
+    // Gender Profile State
+    const getInitialGender = () => {
+        if (studentProfile?.gender && studentProfile.gender !== "unknown") {
+            return studentProfile.gender.charAt(0).toUpperCase() + studentProfile.gender.slice(1).toLowerCase();
+        }
+        if (autofillData?.["Gender"]) {
+            const g = String(autofillData["Gender"]).toLowerCase().trim();
+            if (g.startsWith("f")) return "Female";
+            if (g.startsWith("m")) return "Male";
+            if (g) return "Other";
+        }
+        return "";
+    };
+    const [genderContact, setGenderContact] = useState(getInitialGender());
+    const [isEditingGender, setIsEditingGender] = useState(false);
+    const [genderError, setGenderError] = useState(null);
+
+    // Gender Unknown 2-step confirmation modal states (Section 26 & 27)
+    const [unknownGenderStep, setUnknownGenderStep] = useState(0); // 0 = none, 1 = first confirmation, 2 = second confirmation, 3 = confirmed unknown
+    const [alsoUpdateProfileGender, setAlsoUpdateProfileGender] = useState(false);
+
+    // Contact Phone Profile State
+    const [phoneContact, setPhoneContact] = useState(
+        studentProfile?.phone || autofillData?.["Contact Number"] || autofillData?.["Phone Number"] || autofillData?.["Phone"] || ""
+    );
+    const [isEditingPhone, setIsEditingPhone] = useState(false);
+    const [phoneError, setPhoneError] = useState(null);
 
     // Location Profile State (State + City / District)
     const [stateLocation, setStateLocation] = useState(
@@ -97,6 +128,31 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
     const [locationErrors, setLocationErrors] = useState({ state: null, district: null });
 
     useEffect(() => {
+        if (studentProfile?.gender === "unknown") {
+            if (unknownGenderStep === 0) {
+                setUnknownGenderStep(1);
+            }
+        } else if (studentProfile?.gender) {
+            setGenderContact(studentProfile.gender.charAt(0).toUpperCase() + studentProfile.gender.slice(1).toLowerCase());
+        } else if (autofillData?.["Gender"]) {
+            const g = String(autofillData["Gender"]).toLowerCase().trim();
+            if (g.startsWith("f")) setGenderContact("Female");
+            else if (g.startsWith("m")) setGenderContact("Male");
+            else if (g === "unknown") {
+                if (unknownGenderStep === 0) setUnknownGenderStep(1);
+            } else if (g) setGenderContact("Other");
+        }
+
+        if (studentProfile?.phone) {
+            setPhoneContact(studentProfile.phone);
+        } else if (autofillData?.["Contact Number"]) {
+            setPhoneContact(autofillData["Contact Number"]);
+        } else if (autofillData?.["Phone Number"]) {
+            setPhoneContact(autofillData["Phone Number"]);
+        } else if (autofillData?.["Phone"]) {
+            setPhoneContact(autofillData["Phone"]);
+        }
+
         if (studentProfile?.state) {
             setStateLocation(studentProfile.state);
         } else if (autofillData?.["State"]) {
@@ -215,43 +271,56 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
     };
 
     useEffect(() => {
-        if (!dbRef.current || !tripId) return;
+        if (!tripId) return;
+
+        const populateTripFields = (data) => {
+            setTripName(data?.name || "Event");
+            setTripDescription(data?.description || "");
+            setConsentFormTemplateUrl(data?.consentFormTemplateUrl || "");
+            const templates = data?.consentTemplates && data.consentTemplates.length > 0
+                ? data.consentTemplates
+                : (data?.consentFormTemplateUrl ? [{ id: "legacy-consent", name: "Completed Consent Form", templateUrl: data.consentFormTemplateUrl }] : []);
+            setConsentTemplates(templates);
+            const statements = data?.consentStatements || [];
+            setConsentStatements(statements);
+            const initialAccepted = {};
+            statements.forEach((s) => {
+                initialAccepted[s.id] = false;
+            });
+            setConsentAccepted(initialAccepted);
+            const formFields = data?.form?.fields || [];
+            const sorted = [...formFields].sort((a, b) => a.sortOrder - b.sortOrder);
+            setFields(sorted);
+
+            // Initialize formValues with priority: studentProfile -> historical autofillData -> empty
+            const prefilled = {};
+            sorted.forEach((field) => {
+                const canonicalVal = getCanonicalValueForField(field.name);
+                if (canonicalVal !== undefined && canonicalVal !== "") {
+                    prefilled[field.name] = canonicalVal;
+                } else if (autofillData && autofillData[field.name] !== undefined) {
+                    prefilled[field.name] = autofillData[field.name];
+                }
+            });
+            setFormValues(prefilled);
+            setLoading(false);
+        };
+
+        // If trip prop was already passed down from parent, use it directly (0 client Firestore reads!)
+        if (trip && trip.id === tripId) {
+            populateTripFields(trip);
+            return;
+        }
+
+        // Fallback: fetch trip via client SDK only if trip prop not provided
+        if (!dbRef.current) return;
         const fetchForm = async () => {
             try {
                 const docRef = doc(dbRef.current, "trips", tripId);
                 const snapshot = await getDoc(docRef);
 
                 if (snapshot.exists()) {
-                    const data = snapshot.data();
-                    setTripName(data?.name || "Event");
-                    setTripDescription(data?.description || "");
-                    setConsentFormTemplateUrl(data?.consentFormTemplateUrl || "");
-                    const templates = data?.consentTemplates && data.consentTemplates.length > 0
-                        ? data.consentTemplates
-                        : (data?.consentFormTemplateUrl ? [{ id: "legacy-consent", name: "Completed Consent Form", templateUrl: data.consentFormTemplateUrl }] : []);
-                    setConsentTemplates(templates);
-                    const statements = data?.consentStatements || [];
-                    setConsentStatements(statements);
-                    const initialAccepted = {};
-                    statements.forEach((s) => {
-                        initialAccepted[s.id] = false;
-                    });
-                    setConsentAccepted(initialAccepted);
-                    const formFields = data?.form?.fields || [];
-                    const sorted = [...formFields].sort((a, b) => a.sortOrder - b.sortOrder);
-                    setFields(sorted);
-
-                    // Initialize formValues with priority: studentProfile -> historical autofillData -> empty
-                    const prefilled = {};
-                    sorted.forEach((field) => {
-                        const canonicalVal = getCanonicalValueForField(field.name);
-                        if (canonicalVal !== undefined && canonicalVal !== "") {
-                            prefilled[field.name] = canonicalVal;
-                        } else if (autofillData && autofillData[field.name] !== undefined) {
-                            prefilled[field.name] = autofillData[field.name];
-                        }
-                    });
-                    setFormValues(prefilled);
+                    populateTripFields(snapshot.data());
                 }
             } catch (err) {
                 console.error("Error loading trip form fields:", err);
@@ -260,7 +329,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
             }
         };
         fetchForm();
-    }, [dbReady, tripId, autofillData, studentProfile]);
+    }, [trip, dbReady, tripId, autofillData, studentProfile]);
 
     const handleChange = (fieldName, value) => {
         setFormValues((prev) => ({ ...prev, [fieldName]: value }));
@@ -409,7 +478,8 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                                     return;
                                 }
                                 setUploadingDynamic(prev => ({ ...prev, [field.name]: true }));
-                                const url = await uploadFileToDrive(file, "Form Files", field.name);
+                                const uploadResult = await uploadFileToDrive(file, "Form Files", field.name);
+                                const url = typeof uploadResult === "object" && uploadResult ? uploadResult.url : uploadResult;
                                 if (url) {
                                     handleChange(field.name, url);
                                 } else {
@@ -465,8 +535,10 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
             if (!uploadRes.ok) {
                 throw new Error(data.error || "File upload failed");
             }
-            const imageUrl = data.images[0].secure_url || data.images[0];
-            return imageUrl;
+            const imageUrl = data.images?.[0]?.secure_url || data.images?.[0] || data.fileUrl || data.driveUrl;
+            const fileId = data.images?.[0]?.driveFileId || data.images?.[0]?.fileId || data.fileId || data.driveFileId || null;
+            const fileName = data.images?.[0]?.fileName || data.fileName || null;
+            return { url: imageUrl, fileId, fileName };
         } catch (error) {
             console.error("Instant upload failed:", error);
             alert(`Upload failed for ${fieldName}: ${error.message}`);
@@ -599,6 +671,32 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
       if (e) e.preventDefault();
       
       if (step === 1) {
+        // Compulsory Gender validation
+        let hasGenderErr = false;
+        if (!genderContact || !genderContact.trim()) {
+          setGenderError("Please select your gender.");
+          hasGenderErr = true;
+        } else {
+          setGenderError(null);
+        }
+
+        // Compulsory phone number validation
+        let hasPhoneErr = false;
+        if (!phoneContact || !phoneContact.trim()) {
+          setPhoneError("Phone number is required.");
+          hasPhoneErr = true;
+        } else {
+          let digits = phoneContact.replace(/\D/g, "");
+          if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+          else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+          if (!/^[6-9]\d{9}$/.test(digits)) {
+            setPhoneError("Please enter a valid 10-digit mobile number (e.g. 9876543210).");
+            hasPhoneErr = true;
+          } else {
+            setPhoneError(null);
+          }
+        }
+
         let hasLocError = false;
         const errors = { state: null, district: null };
         if (!stateLocation || !stateLocation.trim()) {
@@ -617,20 +715,19 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
           hasLocError = true;
         }
 
-        if (hasLocError) {
-          setLocationErrors(errors);
+        if (hasGenderErr || hasPhoneErr || hasLocError) {
+          if (hasLocError) setLocationErrors(errors);
           return;
         }
         setLocationErrors({ state: null, district: null });
+        setPhoneError(null);
+        setGenderError(null);
         setStep(2);
-      } else if (step === 2) {
-        if (hasConditional) {
-          setStep(3);
-        } else if (hasConsents) {
-          setStep(4);
-        } else {
-          setStep(5);
+        if (fields.filter((field) => !field.dependsOnFieldId).length === 0) {
+          setShowReviewModal(true);
         }
+      } else if (step === 2) {
+        setShowReviewModal(true);
       } else if (step === 3) {
         if (hasConsents) {
           setStep(4);
@@ -642,9 +739,20 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
       }
     };
 
+    const handleConfirmReviewAndProceed = () => {
+      setShowReviewModal(false);
+      if (hasConditional) {
+        setStep(3);
+      } else if (hasConsents) {
+        setStep(4);
+      } else {
+        setStep(5);
+      }
+    };
+
     const handleBack = (e) => {
       if (e) e.preventDefault();
-      
+      setShowReviewModal(false);
       if (step === 5) {
         if (hasConsents) {
           setStep(4);
@@ -671,12 +779,16 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
 
         if (!user || !tripId) return;
 
+        // Synchronous lock against rapid multi-click/double-submit
+        if (isSubmittingRef.current || submitting) return;
+
         // Prevent submission if anything is still uploading
         if (uploadingStudentId || Object.values(uploadingConsent).some(Boolean) || Object.values(uploadingDynamic).some(Boolean)) {
             alert("Please wait for all file uploads to complete before submitting.");
             return;
         }
 
+        isSubmittingRef.current = true;
         setSubmitting(true);
 
         try {
@@ -694,6 +806,19 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 }
             });
 
+            // Snapshot gender into formData (single canonical entry)
+            if (genderContact) {
+                formDataObj["Gender"] = genderContact;
+            }
+
+            // Snapshot contact phone into formData (single canonical entry)
+            if (phoneContact) {
+                let digits = phoneContact.replace(/\D/g, "");
+                if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+                else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+                formDataObj["Contact Number"] = digits;
+            }
+
             // Snapshot location fields into formData
             if (stateLocation) {
                 formDataObj["State"] = stateLocation;
@@ -707,8 +832,10 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 // If student explicitly uploaded a replacement, submit it; otherwise preserve past ID copy from autofill
                 if (studentIdFile && typeof studentIdFile === "string") {
                     formDataObj["Student ID Card Copy"] = studentIdFile;
+                    if (studentIdFileId) formDataObj["studentIdFileId"] = studentIdFileId;
                 } else if (autofillData?.["Student ID Card Copy"]) {
                     formDataObj["Student ID Card Copy"] = autofillData["Student ID Card Copy"];
+                    if (autofillData?.["studentIdFileId"]) formDataObj["studentIdFileId"] = autofillData["studentIdFileId"];
                 }
                 const studentIdVal = studentProfile?.studentId || autofillData?.["Student ID Number"];
                 if (studentIdVal) {
@@ -720,9 +847,15 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 if (!availableIdCopy || typeof availableIdCopy !== "string") {
                     alert("Please upload your Student ID Card copy.");
                     setSubmitting(false);
+                    isSubmittingRef.current = false;
                     return;
                 }
                 formDataObj["Student ID Card Copy"] = availableIdCopy;
+                if (studentIdFileId) {
+                    formDataObj["studentIdFileId"] = studentIdFileId;
+                } else if (autofillData?.["studentIdFileId"]) {
+                    formDataObj["studentIdFileId"] = autofillData["studentIdFileId"];
+                }
                 const studentIdVal = studentProfile?.studentId || autofillData?.["Student ID Number"];
                 if (studentIdVal) {
                     formDataObj["Student ID Number"] = studentIdVal;
@@ -735,6 +868,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                     if (!fileUrl || typeof fileUrl !== "string") {
                         alert(`Please upload the signed copy of: ${t.name}`);
                         setSubmitting(false);
+                        isSubmittingRef.current = false;
                         return;
                     }
                     const fileKey = t.id === "legacy-consent" ? "Completed Consent Form" : `Completed Consent - ${t.name}`;
@@ -750,6 +884,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 if (missing.length > 0) {
                     alert("Please accept all required participation declarations before submitting.");
                     setSubmitting(false);
+                    isSubmittingRef.current = false;
                     return;
                 }
             }
@@ -767,11 +902,22 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${token}`
                 },
-                body: JSON.stringify({ tripId, formData: formDataObj, consentResponses }),
+                body: JSON.stringify({
+                    tripId,
+                    formData: formDataObj,
+                    consentResponses,
+                    alsoUpdateProfileGender,
+                    confirmUnknownGender: genderContact === "Unknown"
+                }),
             });
 
             const data = await res.json();
             if (!res.ok) {
+                // If user is already registered (e.g. from concurrent tab or retry), treat as success and refresh status
+                if (data.error && data.error.includes("already registered")) {
+                    if (onSuccess) onSuccess();
+                    return;
+                }
                 alert(data.error || "Submission failed");
                 return;
             }
@@ -780,9 +926,26 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
             }
         } catch (error) {
             console.error("Submission error:", error);
-            alert(error.message || "Something went wrong. Please try again.");
+            // Network failure recovery: check if registration actually succeeded on the server before alerting error
+            try {
+                const token = await user.getIdToken();
+                const checkRes = await fetch(`/api/user-registration?tripId=${tripId}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (checkRes.ok) {
+                    const checkData = await checkRes.json();
+                    if (checkData?.registration) {
+                        if (onSuccess) onSuccess();
+                        return;
+                    }
+                }
+            } catch (recoveryErr) {
+                console.error("Recovery check error:", recoveryErr);
+            }
+            alert("Something went wrong while submitting your registration. Your registration may already have been received. Check your registration status before trying again.");
         } finally {
             setSubmitting(false);
+            isSubmittingRef.current = false;
         }
     };
 
@@ -804,7 +967,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
 
     let stepLabel = "Personal Details";
     if (step === 2) {
-      stepLabel = "Trip Details";
+      stepLabel = fields.filter((field) => !field.dependsOnFieldId).length === 0 ? "Review Details" : "Trip Details";
     } else if (step === 3) {
       stepLabel = "Specific Details";
     } else if (step === 4) {
@@ -917,12 +1080,16 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                             return;
                           }
                           setUploadingStudentId(true);
-                          const url = await uploadFileToDrive(file, "Student IDs", "Student ID Card Copy");
+                          const uploadResult = await uploadFileToDrive(file, "Student IDs", "Student ID Card Copy");
+                          const url = typeof uploadResult === "object" && uploadResult ? uploadResult.url : uploadResult;
+                          const fileId = typeof uploadResult === "object" && uploadResult ? uploadResult.fileId : null;
                           if (url) {
                             setStudentIdFile(url);
+                            if (fileId) setStudentIdFileId(fileId);
                           } else {
                             e.target.value = "";
                             setStudentIdFile(null);
+                            setStudentIdFileId(null);
                           }
                           setUploadingStudentId(false);
                         }}
@@ -938,6 +1105,181 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                         <p className="text-xs text-zinc-500 font-medium">Previous ID on file. You can keep it or upload a new copy.</p>
                       )}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Gender Profile Section */}
+              {!isEditingGender && studentProfile?.gender && studentProfile.gender !== "unknown" ? (
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-xl p-5 space-y-3 text-left">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <UserIcon className="w-4 h-4 text-[#3E1126]" />
+                      <span className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                        Gender
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#3E1126]/10 text-[#3E1126] shrink-0">
+                        FROM YOUR PROFILE
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingGender(true)}
+                        className="text-xs font-bold text-[#3E1126] underline hover:text-[#3E1126]/80 focus:outline-none cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Gender</span>
+                    <span className="text-sm font-semibold text-[#3E1126] mt-0.5 block capitalize">
+                      {genderContact || studentProfile.gender}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-xl p-5 space-y-3.5 text-left">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <UserIcon className="w-4 h-4 text-[#3E1126]" />
+                      <span className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                        Gender <span className="text-red-500">*</span>
+                      </span>
+                    </div>
+                    {studentProfile?.gender && studentProfile.gender !== "unknown" && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingGender(false)}
+                        className="text-xs font-bold text-zinc-500 hover:text-zinc-800 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#3E1126]/75 font-medium leading-relaxed">
+                    Please select your gender for trip logistics, rooming allocations, and coordinator rosters.
+                  </p>
+
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-3 gap-2.5 pt-1">
+                      {["Male", "Female", "Other"].map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => {
+                            setGenderContact(opt);
+                            setGenderError(null);
+                          }}
+                          className={`py-2.5 px-3 rounded-xl border-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider transition-all cursor-pointer ${
+                            genderContact === opt
+                              ? "bg-[#3E1126] text-white border-[#3E1126] shadow-sm scale-[1.02]"
+                              : "bg-white text-[#3E1126] border-zinc-200 hover:border-[#3E1126]/30 hover:bg-zinc-50"
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                    {genderError && (
+                      <p className="text-[11px] text-red-600 font-semibold">{genderError}</p>
+                    )}
+
+                    {/* Also update profile checkbox (Section 27) */}
+                    <div className="pt-2 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="trip-reg-update-profile-gender"
+                        checked={alsoUpdateProfileGender}
+                        onChange={(e) => setAlsoUpdateProfileGender(e.target.checked)}
+                        className="rounded border-zinc-300 text-[#3E1126] focus:ring-[#3E1126] cursor-pointer"
+                      />
+                      <label htmlFor="trip-reg-update-profile-gender" className="text-xs text-[#3E1126]/85 font-medium select-none cursor-pointer">
+                        Also update my Boundless profile with this gender
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Contact Phone Profile Section */}
+              {!isEditingPhone && studentProfile?.phone ? (
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-xl p-5 space-y-3 text-left">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Phone className="w-4 h-4 text-[#3E1126]" />
+                      <span className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                        Contact Phone Number
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#3E1126]/10 text-[#3E1126] shrink-0">
+                        FROM YOUR PROFILE
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingPhone(true)}
+                        className="text-xs font-bold text-[#3E1126] underline hover:text-[#3E1126]/80 focus:outline-none cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Mobile Number</span>
+                    <span className="text-sm font-semibold text-[#3E1126] mt-0.5 block">{phoneContact || studentProfile.phone}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-xl p-5 space-y-4 text-left">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Phone className="w-4 h-4 text-[#3E1126]" />
+                      <span className="text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+                        Contact Phone Number <span className="text-red-500">*</span>
+                      </span>
+                    </div>
+                    {studentProfile?.phone && (
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingPhone(false)}
+                        className="text-xs font-bold text-zinc-500 hover:text-zinc-800 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#3E1126]/75 font-medium leading-relaxed">
+                    Please provide your 10-digit mobile number for event coordinators and emergency contact.
+                  </p>
+
+                  <div className="space-y-1.5">
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-400">
+                        <Phone className="h-4 w-4" />
+                      </div>
+                      <input
+                        type="tel"
+                        required
+                        value={phoneContact}
+                        onChange={(e) => {
+                          setPhoneContact(e.target.value);
+                          setPhoneError(null);
+                        }}
+                        placeholder="e.g. 9876543210"
+                        className={`w-full pl-10 pr-4 py-2.5 bg-white border-2 rounded-xl text-sm font-medium text-stone-800 placeholder:text-stone-400 focus:outline-none transition-all ${
+                          phoneError
+                            ? "border-red-500 focus:border-red-600 focus:ring-1 focus:ring-red-500"
+                            : "border-zinc-200 hover:border-zinc-300 focus:border-[#3E1126] focus:ring-1 focus:ring-[#3E1126]"
+                        }`}
+                      />
+                    </div>
+                    {phoneError && (
+                      <p className="text-[11px] text-red-600 font-semibold">{phoneError}</p>
+                    )}
                   </div>
                 </div>
               )}
@@ -1057,22 +1399,115 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
               <button 
                 type="button"
                 onClick={handleBack}
-                className="mb-2 -mt-2 inline-flex items-center text-xs font-bold font-oswald uppercase tracking-wider text-zinc-400 hover:text-[#3E1126] transition-colors"
+                className="mb-2 -mt-2 inline-flex items-center text-xs font-bold font-oswald uppercase tracking-wider text-zinc-400 hover:text-[#3E1126] transition-colors cursor-pointer"
               >
                 <ArrowLeft className="w-3 h-3 mr-1" /> Back
               </button>
 
-              <div className="space-y-5">
-                {fields.filter((field) => !field.dependsOnFieldId).map(renderField)}
-              </div>
+              {fields.filter((field) => !field.dependsOnFieldId).length === 0 ? (
+                <div className="space-y-4 text-left">
+                  {/* Notice Box */}
+                  <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4.5 space-y-1.5 shadow-sm">
+                    <div className="flex items-center gap-2 text-amber-900 font-oswald font-bold text-xs uppercase tracking-wider">
+                      <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>Make sure details filled are correct</span>
+                    </div>
+                    <p className="text-xs text-amber-900 leading-relaxed font-medium">
+                      <strong>Warning:</strong> The details you are sending will be reviewed and only based on that will your registration be considered.
+                    </p>
+                  </div>
+
+                  {/* Summary Card */}
+                  <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-2xl p-5 space-y-3 shadow-sm">
+                    <div className="flex items-center justify-between border-b border-zinc-200/80 pb-2.5">
+                      <h4 className="font-oswald font-bold text-xs uppercase tracking-wider text-[#3E1126] flex items-center gap-2">
+                        <FileText className="w-4 h-4" /> REVIEW YOUR DETAILS
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => setShowReviewModal(true)}
+                        className="text-[11px] font-bold text-[#3E1126] underline hover:text-[#3E1126]/80 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>View Review Popup</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 text-xs divide-y divide-zinc-100">
+                      <div className="flex justify-between py-1">
+                        <span className="text-zinc-500 font-medium">Student Name:</span>
+                        <strong className="text-[#3E1126] font-semibold text-right">
+                          {studentProfile?.name || formValues["Full Name"] || formValues["Name"] || user?.displayName || "Student"}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between py-1">
+                        <span className="text-zinc-500 font-medium">Roll No / Student ID:</span>
+                        <strong className="text-[#3E1126] font-mono font-semibold text-right">
+                          {studentProfile?.studentId || formValues["Student ID Number"] || formValues["Roll Number"] || formValues["Roll No"] || "—"}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between py-1">
+                        <span className="text-zinc-500 font-medium">Student Email:</span>
+                        <strong className="text-[#3E1126] font-semibold text-right truncate max-w-[55%]">
+                          {user?.email || studentProfile?.email || "—"}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between py-1">
+                        <span className="text-zinc-500 font-medium">Gender:</span>
+                        <strong className="text-[#3E1126] font-semibold capitalize text-right">
+                          {genderContact || "—"}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between py-1">
+                        <span className="text-zinc-500 font-medium">Mobile Phone:</span>
+                        <strong className="text-[#3E1126] font-semibold text-right">
+                          {phoneContact || "—"}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between py-1">
+                        <span className="text-zinc-500 font-medium">Location:</span>
+                        <strong className="text-[#3E1126] font-semibold text-right">
+                          {districtLocation && stateLocation ? `${districtLocation}, ${stateLocation}` : "—"}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between py-1">
+                        <span className="text-zinc-500 font-medium">Student ID Card:</span>
+                        <strong className="text-[#3E1126] font-semibold text-right">
+                          {isIdVerified
+                            ? "Verified on File ✅"
+                            : studentIdFile
+                            ? `Attached (${studentIdFile.name}) 📄`
+                            : autofillData?.["Student ID Card Copy"]
+                            ? "Attached from record 📄"
+                            : "Not provided ⚠️"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {fields.filter((field) => !field.dependsOnFieldId).map(renderField)}
+                </div>
+              )}
 
               <div className="pt-4">
                 <button
                   type="submit"
                   disabled={Object.values(uploadingDynamic).some(Boolean)}
-                  className="w-full flex justify-center items-center gap-2 text-sm font-bold text-black bg-[#FCE16D] px-6 py-3.5 rounded-full shadow-[0_4px_14px_0_rgba(252,225,109,0.4)] hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-55 disabled:cursor-not-allowed"
+                  className="w-full flex justify-center items-center gap-2 text-sm font-bold text-black bg-[#FCE16D] px-6 py-3.5 rounded-full shadow-[0_4px_14px_0_rgba(252,225,109,0.4)] hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {Object.values(uploadingDynamic).some(Boolean) ? "Uploading Files..." : "Continue"}
+                  {Object.values(uploadingDynamic).some(Boolean)
+                    ? "Uploading Files..."
+                    : fields.filter((field) => !field.dependsOnFieldId).length === 0
+                    ? "Review & Continue"
+                    : "Continue"}
                   {!Object.values(uploadingDynamic).some(Boolean) && <ArrowRight className="h-4 w-4" />}
                 </button>
               </div>
@@ -1159,7 +1594,8 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                               return;
                             }
                             setUploadingConsent((prev) => ({ ...prev, [t.id]: true }));
-                            const url = await uploadFileToDrive(file, "Consent Forms", t.name);
+                            const uploadResult = await uploadFileToDrive(file, "Consent Forms", t.name);
+                            const url = typeof uploadResult === "object" && uploadResult ? uploadResult.url : uploadResult;
                             if (url) {
                               setConsentFiles((prev) => ({ ...prev, [t.id]: url }));
                             } else {
@@ -1253,16 +1689,30 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                   </div>
 
                   <div className="flex justify-between py-1 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Gender:</span>
+                    <strong className="text-[#3E1126] font-semibold capitalize">
+                      {genderContact || "—"}
+                    </strong>
+                  </div>
+
+                  <div className="flex justify-between py-1 border-b border-zinc-100">
                     <span className="text-zinc-500 font-medium">Location:</span>
                     <strong className="text-[#3E1126] font-semibold">
                       {stateLocation && districtLocation ? `${districtLocation}, ${stateLocation}` : "—"}
                     </strong>
                   </div>
 
+                  <div className="flex justify-between py-1 border-b border-zinc-100">
+                    <span className="text-zinc-500 font-medium">Phone:</span>
+                    <strong className="text-[#3E1126] font-semibold">
+                      {phoneContact || "—"}
+                    </strong>
+                  </div>
+
                   {/* Dynamic Trip-Specific Fields */}
                   {fields
                     .filter((f) => f.type !== "description_text" && isFieldVisible(f))
-                    .filter((f) => !["name", "full name", "fullname", "roll number", "roll no", "rollno", "student id", "email"].includes(f.name.toLowerCase().trim()))
+                    .filter((f) => !["name", "full name", "fullname", "roll number", "roll no", "rollno", "student id", "email", "gender", "sex", "phone", "contact number", "phone number", "state", "city / district", "district"].includes(f.name.toLowerCase().trim()))
                     .slice(0, 6)
                     .map((f) => (
                       <div key={f.id} className="flex justify-between py-1 border-b border-zinc-100">
@@ -1407,6 +1857,254 @@ export default function UserRegistrationForm({ user, setUser, tripId, autofillDa
                 >
                   I Acknowledge
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal for Details Review Checkpoint */}
+        {showReviewModal && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4 flex items-center justify-center backdrop-blur-sm animate-in fade-in duration-200"
+            data-lenis-prevent
+          >
+            <div
+              className="bg-white rounded-[2rem] max-w-lg w-full overflow-hidden shadow-2xl relative border border-stone-200 my-auto animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="bg-[#E4D5FF] px-6 py-6 text-center relative border-b border-[#3E1126]/10">
+                <button
+                  type="button"
+                  onClick={() => setShowReviewModal(false)}
+                  className="absolute top-4 right-4 text-[#3E1126]/60 hover:text-[#3E1126] p-1.5 rounded-full hover:bg-black/5 transition-colors cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                <div className="w-12 h-12 bg-[#3E1126] text-white rounded-full flex items-center justify-center mx-auto mb-2.5 shadow-md">
+                  <AlertTriangle className="w-6 h-6 text-[#FCE16D]" />
+                </div>
+
+                <h3 className="font-oswald text-xl sm:text-2xl font-bold uppercase tracking-wider text-[#3E1126]">
+                  Make Sure Details Filled Are Correct
+                </h3>
+                <p className="text-xs text-[#3E1126]/75 font-medium mt-1 leading-relaxed max-w-sm mx-auto">
+                  Please review all information you have filled before proceeding.
+                </p>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar text-left" data-lenis-prevent>
+                {/* Warning Alert */}
+                <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h5 className="font-oswald font-bold text-xs uppercase tracking-wider text-amber-950">
+                      Review & Consideration Notice
+                    </h5>
+                    <p className="text-xs text-amber-900 leading-relaxed font-medium">
+                      <strong>Warning:</strong> The details you are sending will be reviewed and only based on that will your registration be considered.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Details Summary Card */}
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-2xl p-4.5 space-y-2.5 shadow-sm text-xs">
+                  <div className="flex justify-between items-center pb-2 border-b border-zinc-200">
+                    <span className="font-oswald font-bold uppercase text-[11px] tracking-wider text-zinc-400">
+                      Submitted Information
+                    </span>
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                      Checkpoint
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 divide-y divide-zinc-100">
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">Student Name:</span>
+                      <strong className="text-[#3E1126] font-semibold text-right">
+                        {studentProfile?.name || formValues["Full Name"] || formValues["Name"] || user?.displayName || "Student"}
+                      </strong>
+                    </div>
+
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">Roll No / Student ID:</span>
+                      <strong className="text-[#3E1126] font-mono font-semibold text-right">
+                        {studentProfile?.studentId || formValues["Student ID Number"] || formValues["Roll Number"] || formValues["Roll No"] || "—"}
+                      </strong>
+                    </div>
+
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">Student Email:</span>
+                      <strong className="text-[#3E1126] font-semibold text-right truncate max-w-[60%]">
+                        {user?.email || studentProfile?.email || "—"}
+                      </strong>
+                    </div>
+
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">Trip:</span>
+                      <strong className="text-[#3E1126] font-semibold text-right">
+                        {tripName}
+                      </strong>
+                    </div>
+
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">Gender:</span>
+                      <strong className="text-[#3E1126] font-semibold capitalize text-right">
+                        {genderContact || "—"}
+                      </strong>
+                    </div>
+
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">Mobile Phone:</span>
+                      <strong className="text-[#3E1126] font-semibold text-right">
+                        {phoneContact || "—"}
+                      </strong>
+                    </div>
+
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">State & City / District:</span>
+                      <strong className="text-[#3E1126] font-semibold text-right">
+                        {districtLocation && stateLocation ? `${districtLocation}, ${stateLocation}` : "—"}
+                      </strong>
+                    </div>
+
+                    <div className="flex justify-between py-1">
+                      <span className="text-zinc-500 font-medium">Student ID Card:</span>
+                      <strong className="text-[#3E1126] font-semibold text-right">
+                        {isIdVerified
+                          ? "Verified on File ✅"
+                          : studentIdFile
+                          ? `Attached (${studentIdFile.name}) 📄`
+                          : autofillData?.["Student ID Card Copy"]
+                          ? "Attached from record 📄"
+                          : "Not provided ⚠️"}
+                      </strong>
+                    </div>
+
+                    {/* Any non-empty dynamic trip fields */}
+                    {fields
+                      .filter((f) => f.type !== "description_text" && isFieldVisible(f))
+                      .filter((f) => !["name", "full name", "fullname", "roll number", "roll no", "rollno", "student id", "email", "gender", "sex", "phone", "contact number", "phone number", "state", "city / district", "district"].includes(f.name.toLowerCase().trim()))
+                      .filter((f) => formValues[f.name] !== undefined && formValues[f.name] !== "")
+                      .map((f) => (
+                        <div key={f.id} className="flex justify-between py-1">
+                          <span className="text-zinc-500 font-medium">{f.name}:</span>
+                          <strong className="text-[#3E1126] font-semibold text-right truncate max-w-[55%]">
+                            {String(formValues[f.name])}
+                          </strong>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-5 bg-zinc-50 border-t border-zinc-200/80 flex flex-col sm:flex-row items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReviewModal(false);
+                    setStep(1);
+                  }}
+                  className="w-full sm:w-1/2 py-3 px-4 rounded-full border-2 border-stone-300 hover:border-[#3E1126] text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126] hover:bg-white transition-all cursor-pointer"
+                >
+                  ← Edit Details
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmReviewAndProceed}
+                  className="w-full sm:w-1/2 py-3 px-4 rounded-full bg-[#FCE16D] hover:bg-[#ebd057] active:scale-95 text-xs font-oswald font-bold uppercase tracking-wider text-black transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <span>Confirm & Continue</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Gender = Unknown Special Two-Step Confirmation Modal (Section 26) */}
+        {unknownGenderStep > 0 && unknownGenderStep < 3 && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-stone-200 space-y-6 text-center animate-in zoom-in-95 duration-200">
+              <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto text-2xl font-bold shadow-inner">
+                ⚠️
+              </div>
+
+              {unknownGenderStep === 1 && (
+                <div className="space-y-3">
+                  <h3 className="text-xl font-bold font-oswald uppercase text-[#3E1126] tracking-tight">
+                    Gender Confirmation
+                  </h3>
+                  <p className="text-xs sm:text-sm text-stone-600 leading-relaxed font-medium">
+                    Your gender is currently set as <strong>Unknown</strong>. Would you like to keep Unknown for this trip?
+                  </p>
+                </div>
+              )}
+
+              {unknownGenderStep === 2 && (
+                <div className="space-y-3">
+                  <h3 className="text-xl font-bold font-oswald uppercase text-[#3E1126] tracking-tight">
+                    Please Confirm Again
+                  </h3>
+                  <p className="text-xs sm:text-sm text-stone-600 leading-relaxed font-medium">
+                    Please confirm again: your gender will be recorded as <strong>Unknown</strong> for this trip.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                {unknownGenderStep === 1 ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setUnknownGenderStep(2)}
+                      className="w-full sm:w-1/2 py-3 px-4 rounded-full border-2 border-stone-300 hover:border-[#3E1126] text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126] hover:bg-stone-50 transition cursor-pointer"
+                    >
+                      Keep Unknown
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUnknownGenderStep(0);
+                        setIsEditingGender(true);
+                        setGenderContact("");
+                      }}
+                      className="w-full sm:w-1/2 py-3 px-4 rounded-full bg-[#3E1126] text-white hover:bg-[#2A0013] text-xs font-oswald font-bold uppercase tracking-wider transition shadow-md cursor-pointer"
+                    >
+                      Change Gender
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUnknownGenderStep(3);
+                        setGenderContact("Unknown");
+                      }}
+                      className="w-full sm:w-1/2 py-3 px-4 rounded-full border-2 border-stone-300 hover:border-[#3E1126] text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126] hover:bg-stone-50 transition cursor-pointer"
+                    >
+                      Confirm Unknown
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUnknownGenderStep(0);
+                        setIsEditingGender(true);
+                        setGenderContact("");
+                      }}
+                      className="w-full sm:w-1/2 py-3 px-4 rounded-full bg-[#3E1126] text-white hover:bg-[#2A0013] text-xs font-oswald font-bold uppercase tracking-wider transition shadow-md cursor-pointer"
+                    >
+                      Change Gender
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>

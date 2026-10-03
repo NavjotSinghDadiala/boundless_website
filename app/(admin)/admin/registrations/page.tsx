@@ -60,8 +60,12 @@ export interface Registration {
   id: string;
   email: string;
   uid: string;
+  name?: string;
+  studentName?: string;
+  studentId?: string;
   status: string;
   gender: string;
+  phone?: string;
   submittedAt: string;
   formData: Record<string, string>;
   issueText?: string;
@@ -75,6 +79,7 @@ export interface Registration {
   approvalEmailError?: string;
   approvalEmailLastAttemptAt?: string;
   approvalEmailMessageId?: string;
+  waitlistPosition?: number | null;
   conversationHistory?: Array<{
     type: string;
     actor?: string;
@@ -146,7 +151,7 @@ export default function SubmissionsPage() {
   const [reuploadFields, setReuploadFields] = useState<string[]>([]);
 
   // Stage 4 Queue & Action states
-  const [queueTab, setQueueTab] = useState<"pending" | "approved" | "action_required" | "rejected" | "all">("pending");
+  const [queueTab, setQueueTab] = useState<"pending" | "approved" | "waitlisted" | "action_required" | "rejected" | "withdrawn" | "all">("pending");
   const [searchQuery, setSearchQuery] = useState("");
   const [approveConfirmReg, setApproveConfirmReg] = useState<Registration | null>(null);
   const [rejectConfirmReg, setRejectConfirmReg] = useState<Registration | null>(null);
@@ -451,6 +456,9 @@ export default function SubmissionsPage() {
 
   const getStudentId = (reg: Registration): string => {
     if (!reg) return "—";
+    if (reg.studentId && typeof reg.studentId === "string" && reg.studentId.trim()) {
+      return reg.studentId.trim().toUpperCase();
+    }
 
     if (reg.formData) {
       const textIdKey = Object.keys(reg.formData).find((k) => {
@@ -464,7 +472,7 @@ export default function SubmissionsPage() {
       if (textIdKey && reg.formData[textIdKey]) {
         const val = String(reg.formData[textIdKey]).trim();
         if (val && !isUrlOrDriveLink(val)) {
-          return val;
+          return val.toUpperCase();
         }
       }
     }
@@ -485,12 +493,49 @@ export default function SubmissionsPage() {
 
   const getStudentName = (reg: Registration): string => {
     if (!reg) return "Student";
+    if (reg.name && typeof reg.name === "string" && reg.name.trim()) {
+      return reg.name.trim();
+    }
+    if (reg.studentName && typeof reg.studentName === "string" && reg.studentName.trim()) {
+      return reg.studentName.trim();
+    }
     if (reg.formData) {
+      const exactKeys = [
+        "Full Name",
+        "full name",
+        "FullName",
+        "fullName",
+        "Name",
+        "name",
+        "Student Name",
+        "student name",
+      ];
+      for (const k of exactKeys) {
+        if (reg.formData[k] && !isUrlOrDriveLink(reg.formData[k])) {
+          const val = String(reg.formData[k]).trim();
+          if (val) return val;
+        }
+      }
+
       const nameKey = Object.keys(reg.formData).find((k) => {
         const lower = k.toLowerCase();
         const val = reg.formData[k];
         if (isUrlOrDriveLink(val)) return false;
-        return lower.includes("name") || lower.includes("fullname");
+        if (
+          lower.includes("emergency") ||
+          lower.includes("parent") ||
+          lower.includes("father") ||
+          lower.includes("mother") ||
+          lower.includes("guardian") ||
+          lower.includes("copy") ||
+          lower.includes("doc") ||
+          lower.includes("file") ||
+          lower.includes("upload") ||
+          lower.includes("link")
+        ) {
+          return false;
+        }
+        return lower.includes("name");
       });
       if (nameKey && reg.formData[nameKey] && !isUrlOrDriveLink(reg.formData[nameKey])) {
         const val = String(reg.formData[nameKey]).trim();
@@ -499,9 +544,105 @@ export default function SubmissionsPage() {
     }
     if (reg.email) {
       const prefix = reg.email.split("@")[0]?.trim();
-      if (prefix) return prefix;
+      const isRollNumber = /^[0-9]{2}[a-zA-Z][0-9]+/i.test(prefix);
+      if (prefix && !isRollNumber) {
+        return prefix
+          .replace(/[._-]+/g, " ")
+          .split(" ")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join(" ");
+      }
     }
     return "Student";
+  };
+
+  const getDeduplicatedFormResponses = (formData: Record<string, any> = {}) => {
+    const seenCanonical = new Set<string>();
+    const results: [string, any][] = [];
+
+    const getCanonicalGroup = (rawKey: string): string | null => {
+      const k = rawKey.toLowerCase().trim();
+
+      // Skip internal, system, checkpoint, or redundant fields already in the profile card
+      if (
+        k === "student id number" ||
+        k === "student id card copy" ||
+        k === "completed consent form" ||
+        k.startsWith("completed consent -") ||
+        k === "custom reply" ||
+        k === "user reply" ||
+        k === "email" ||
+        k === "email address" ||
+        k === "student email"
+      ) {
+        return null;
+      }
+
+      // Gender group
+      if (k === "gender" || k === "sex") return "gender";
+
+      // Phone group
+      if (
+        k === "phone" ||
+        k === "phone number" ||
+        k === "contact number" ||
+        k === "contact" ||
+        k === "mobile" ||
+        k === "mobile number"
+      ) {
+        return "phone";
+      }
+
+      // State group
+      if (k === "state") return "state";
+
+      // City / District group
+      if (k === "city / district" || k === "citydistrict" || k === "district" || k === "city") {
+        return "city_district";
+      }
+
+      // Student ID group
+      if (k === "roll number" || k === "roll no" || k === "rollno" || k === "student id" || k === "studentid") {
+        return "student_id";
+      }
+
+      // Full name group
+      if (k === "full name" || k === "name" || k === "fullname") {
+        return "name";
+      }
+
+      return k;
+    };
+
+    const getDisplayLabel = (group: string, originalKey: string): string => {
+      if (group === "gender") return "Gender";
+      if (group === "phone") return "Contact Number";
+      if (group === "state") return "State";
+      if (group === "city_district") return "City / District";
+      if (group === "student_id") return "Student ID";
+      if (group === "name") return "Full Name";
+      return originalKey;
+    };
+
+    const getDisplayValue = (group: string, val: any): any => {
+      if (group === "gender" && typeof val === "string") {
+        return val.charAt(0).toUpperCase() + val.slice(1).toLowerCase();
+      }
+      return val;
+    };
+
+    for (const [key, val] of Object.entries(formData)) {
+      if (val === undefined || val === null || val === "") continue;
+      const group = getCanonicalGroup(key);
+      if (!group) continue;
+
+      if (!seenCanonical.has(group)) {
+        seenCanonical.add(group);
+        results.push([getDisplayLabel(group, key), getDisplayValue(group, val)]);
+      }
+    }
+
+    return results;
   };
 
   const isApprovable = (reg: Registration) => {
@@ -605,7 +746,9 @@ export default function SubmissionsPage() {
 
       const data = await res.json();
       if (res.ok) {
-        if (data.email?.sent) {
+        if (data.waitlisted) {
+          toast.info(`ℹ Capacity full: Student placed on waiting list at position #${data.waitlistPosition || 1}.`);
+        } else if (data.email?.sent) {
           toast.success("✓ Student approved & confirmation email sent!");
         } else if (data.email?.status === "already_sent") {
           toast.success("✓ Student approved (confirmation email was already sent previously).");
@@ -1566,12 +1709,22 @@ export default function SubmissionsPage() {
                                 ? "bg-emerald-100 text-emerald-800 border-emerald-300"
                                 : isActionRequired
                                 ? "bg-amber-100 text-amber-800 border-amber-300"
+                                : reg.status === "waitlisted"
+                                ? "bg-amber-100 text-amber-900 border-amber-400 font-bold"
+                                : reg.status === "withdrawn" || reg.status === "declined"
+                                ? "bg-zinc-100 text-zinc-700 border-zinc-300"
                                 : isRejected
                                 ? "bg-red-100 text-red-800 border-red-300"
                                 : "bg-stone-100 text-stone-700 border-stone-200"
                             }`}
                           >
-                            {reg.status === "mail_sent"
+                            {reg.status === "waitlisted"
+                              ? `WAITLISTED ${reg.waitlistPosition ? `#${reg.waitlistPosition}` : ""}`
+                              : reg.status === "withdrawn"
+                              ? "Withdrawn"
+                              : reg.status === "declined"
+                              ? "Declined"
+                              : reg.status === "mail_sent"
                               ? "Approved (Mail Sent)"
                               : reg.status === "approved_to_pay"
                               ? "Approved"
@@ -1677,6 +1830,36 @@ export default function SubmissionsPage() {
                             }}
                           >
                             <RotateCcwIcon className="w-3.5 h-3.5 mr-1" /> Revoke
+                          </Button>
+                        </>
+                      )}
+
+                      {reg.status === "waitlisted" && !selectedTrip?.isCompleted && (
+                        <>
+                          <Button
+                            size="sm"
+                            title={
+                              !approvable
+                                ? "Student ID and all required consent forms must be verified before approving"
+                                : "Promote/Approve this student from waiting list"
+                            }
+                            disabled={!approvable || submitting}
+                            className="text-xs h-7 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white disabled:bg-stone-100 disabled:text-stone-400 disabled:border-stone-200 disabled:cursor-not-allowed font-semibold rounded-lg shadow-xs"
+                            onClick={() => setApproveConfirmReg(reg)}
+                          >
+                            <CheckCircle2Icon className="w-3.5 h-3.5 mr-1" /> Promote
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7 px-2 bg-red-50 border-red-200 text-red-700 hover:bg-red-100 font-semibold rounded-lg"
+                            onClick={() => {
+                              setRejectConfirmReg(reg);
+                              setRejectReason("");
+                            }}
+                          >
+                            <XCircleIcon className="w-3.5 h-3.5 mr-1" /> Reject
                           </Button>
                         </>
                       )}
@@ -1912,9 +2095,11 @@ export default function SubmissionsPage() {
             const otherRegs = registrations.filter(r => r.gender?.toLowerCase() !== "female" && r.gender?.toLowerCase() !== "male");
 
             const approvedRegs = registrations.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent");
-            const pendingRegs = registrations.filter(r => r.status === "registered");
+            const pendingRegs = registrations.filter(r => r.status === "registered" || r.status === "pending");
+            const waitlistRegs = registrations.filter(r => r.status === "waitlisted");
             const actionRequiredRegs = registrations.filter(r => r.status === "action_required");
             const rejectedRegs = registrations.filter(r => r.status === "rejected");
+            const withdrawnRegs = registrations.filter(r => r.status === "withdrawn" || r.status === "declined");
 
             const approvedFemales = femaleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
             const approvedMales = maleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
@@ -1923,8 +2108,10 @@ export default function SubmissionsPage() {
             let queueFiltered = registrations;
             if (queueTab === "pending") queueFiltered = pendingRegs;
             else if (queueTab === "approved") queueFiltered = approvedRegs;
+            else if (queueTab === "waitlisted") queueFiltered = waitlistRegs;
             else if (queueTab === "action_required") queueFiltered = actionRequiredRegs;
             else if (queueTab === "rejected") queueFiltered = rejectedRegs;
+            else if (queueTab === "withdrawn") queueFiltered = withdrawnRegs;
 
             // Filter by gender subTab
             if (subTab === "female") {
@@ -1949,7 +2136,7 @@ export default function SubmissionsPage() {
             return (
               <>
                 {/* Dynamic Counters Card Grid */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                   <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] uppercase font-bold tracking-wider text-amber-700">Pending</span>
@@ -1973,6 +2160,19 @@ export default function SubmissionsPage() {
                         {approvedRegs.length}
                       </div>
                       <span className="text-xs text-stone-500 font-medium">Confirmed / Mail sent</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-amber-900">Waitlisted</span>
+                      <span className="w-7 h-7 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center text-sm">🕒</span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                        {waitlistRegs.length}
+                      </div>
+                      <span className="text-xs text-stone-500 font-medium">In waitlist queue</span>
                     </div>
                   </div>
 
@@ -2044,6 +2244,22 @@ export default function SubmissionsPage() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => setQueueTab("waitlisted")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                          queueTab === "waitlisted"
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
+                        }`}
+                      >
+                        <span>Waitlisted</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          queueTab === "waitlisted" ? "bg-amber-100 text-amber-900" : "bg-stone-200/80 text-stone-600"
+                        }`}>
+                          {waitlistRegs.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setQueueTab("action_required")}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                           queueTab === "action_required"
@@ -2072,6 +2288,22 @@ export default function SubmissionsPage() {
                           queueTab === "rejected" ? "bg-rose-100 text-rose-800" : "bg-stone-200/80 text-stone-600"
                         }`}>
                           {rejectedRegs.length}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQueueTab("withdrawn")}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                          queueTab === "withdrawn"
+                            ? "bg-white text-stone-900 shadow-xs"
+                            : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/50"
+                        }`}
+                      >
+                        <span>Withdrawn</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          queueTab === "withdrawn" ? "bg-zinc-200 text-zinc-800" : "bg-stone-200/80 text-stone-600"
+                        }`}>
+                          {withdrawnRegs.length}
                         </span>
                       </button>
                       <button
@@ -3648,13 +3880,23 @@ export default function SubmissionsPage() {
                 <span className={`font-semibold px-2.5 py-0.5 rounded-full border text-[11px] tracking-wide ${
                   activeProfileReg.status === "mail_sent" || activeProfileReg.status === "approved_to_pay" || activeProfileReg.status === "paid"
                     ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                    : activeProfileReg.status === "waitlisted"
+                    ? "bg-amber-50 text-amber-900 border-amber-300 font-bold"
+                    : activeProfileReg.status === "withdrawn" || activeProfileReg.status === "declined"
+                    ? "bg-stone-100 text-stone-700 border-stone-300"
                     : activeProfileReg.status === "action_required"
                     ? "bg-amber-50 text-amber-800 border-amber-200"
                     : activeProfileReg.status === "rejected"
                     ? "bg-rose-50 text-rose-800 border-rose-200"
                     : "bg-blue-50 text-blue-800 border-blue-200"
                 }`}>
-                  {activeProfileReg.status === "mail_sent"
+                  {activeProfileReg.status === "waitlisted"
+                    ? `WAITLISTED ${activeProfileReg.waitlistPosition ? `#${activeProfileReg.waitlistPosition}` : ""}`
+                    : activeProfileReg.status === "withdrawn"
+                    ? "Withdrawn"
+                    : activeProfileReg.status === "declined"
+                    ? "Declined"
+                    : activeProfileReg.status === "mail_sent"
                     ? "Approved (Mail Sent)"
                     : activeProfileReg.status === "approved_to_pay"
                     ? "Approved to Pay"
@@ -3758,12 +4000,24 @@ export default function SubmissionsPage() {
                 </div>
               </div>
 
-              {/* Student Residential Location */}
+              {/* Student Contact & Residential Location */}
               {(() => {
+                const regPhone =
+                  activeProfileReg.formData?.["Contact Number"] ||
+                  activeProfileReg.formData?.["Phone Number"] ||
+                  activeProfileReg.formData?.["Phone"] ||
+                  activeProfileReg.formData?.["phone"] ||
+                  activeProfileReg.phone;
                 const regState = activeProfileReg.formData?.["State"] || activeProfileReg.formData?.["state"];
                 const regDistrict = activeProfileReg.formData?.["City / District"] || activeProfileReg.formData?.["cityDistrict"] || activeProfileReg.formData?.["district"];
                 return (
-                  <div className="grid grid-cols-2 gap-3 bg-stone-50/80 p-3.5 rounded-xl border border-stone-200/80">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-stone-50/80 p-3.5 rounded-xl border border-stone-200/80">
+                    <div className="min-w-0">
+                      <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">Contact Number</span>
+                      <span className="font-mono font-semibold text-xs text-stone-900 block mt-0.5 select-all">
+                        {regPhone || "—"}
+                      </span>
+                    </div>
                     <div className="min-w-0">
                       <span className="font-bold text-[10px] text-stone-500 uppercase tracking-wider block">State</span>
                       <span className="font-semibold text-xs text-stone-900 block mt-0.5">
@@ -3943,15 +4197,7 @@ export default function SubmissionsPage() {
 
               {/* Form Answers */}
               {(() => {
-                const filteredResponses = Object.entries(activeProfileReg.formData || {}).filter(
-                  ([k]) =>
-                    k !== "Student ID Number" &&
-                    k !== "Student ID Card Copy" &&
-                    k !== "Completed Consent Form" &&
-                    !k.startsWith("Completed Consent -") &&
-                    k !== "Custom Reply" &&
-                    k !== "User Reply"
-                );
+                const filteredResponses = getDeduplicatedFormResponses(activeProfileReg.formData || {});
 
                 return (
                   <div className="space-y-2">

@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -14,6 +13,7 @@ import {
   deleteDoc,
   writeBatch,
 } from "firebase/firestore";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 // Import local data for seeding
 import { officialGroups, girlsGroups, regionalGroups } from "@/data/whatsapp";
@@ -129,9 +129,11 @@ export async function GET(req) {
 /* POST: Save a new group */
 export async function POST(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -154,6 +156,12 @@ export async function POST(req) {
     }
 
     const docRef = await addDoc(collection(db, "whatsapp_groups"), groupData);
+
+    await recordAuditLog(admin, "CREATE_WHATSAPP_GROUP", "whatsapp_group", docRef.id, "success", {
+      city: body.city,
+      category: body.category,
+    }).catch(() => {});
+
     return NextResponse.json({ message: "Group added", id: docRef.id }, { status: 201 });
   } catch (error) {
     console.error("POST API Error:", error);
@@ -164,9 +172,11 @@ export async function POST(req) {
 /* PUT: Update group */
 export async function PUT(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -190,6 +200,12 @@ export async function PUT(req) {
     }
 
     await updateDoc(doc(db, "whatsapp_groups", id), updateData);
+
+    await recordAuditLog(admin, "UPDATE_WHATSAPP_GROUP", "whatsapp_group", id, "success", {
+      city,
+      category,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, message: "Group updated" }, { status: 200 });
   } catch (error) {
     console.error("PUT API Error:", error);
@@ -200,9 +216,11 @@ export async function PUT(req) {
 /* DELETE: Remove group */
 export async function DELETE(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -213,6 +231,9 @@ export async function DELETE(req) {
     }
 
     await deleteDoc(doc(db, "whatsapp_groups", id));
+
+    await recordAuditLog(admin, "DELETE_WHATSAPP_GROUP", "whatsapp_group", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true, message: "Group deleted" }, { status: 200 });
   } catch (error) {
     console.error("DELETE API Error:", error);

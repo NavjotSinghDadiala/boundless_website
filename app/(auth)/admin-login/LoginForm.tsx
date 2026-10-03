@@ -26,7 +26,7 @@ export default function LoginForm() {
       })
 
       if (!res?.error) {
-        router.push("/admin")
+        router.push("/admin-verify")
       } else {
         setError("Invalid credentials. Please verify your email and password.")
       }

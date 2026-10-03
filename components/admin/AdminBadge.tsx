@@ -52,6 +52,12 @@ export function AdminBadge({
     } else if (s === "registered" || s === "pending") {
       computedVariant = "amber";
       label = label || "Pending Approval";
+    } else if (s === "waitlisted") {
+      computedVariant = "warning";
+      label = label || "Waitlisted";
+    } else if (s === "withdrawn" || s === "declined") {
+      computedVariant = "neutral";
+      label = label || (s === "declined" ? "Declined" : "Withdrawn");
     }
   }
 

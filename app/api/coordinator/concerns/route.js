@@ -7,6 +7,7 @@ import {
   getAuthenticatedCoordinator,
   getCoordinatorTripScope,
   isApprovedRegistrationStatus,
+  isRegistrationAssignedToCoordinator,
 } from "@/lib/coordinatorAuth";
 import { extractStudentFieldsFromFormData } from "@/lib/studentProfile";
 
@@ -19,6 +20,7 @@ export async function GET(request) {
     const isAdmin = await isAuthorizedAdmin();
     let coordinatorEmail = null;
     let assignedOption = null;
+    let coordinatorScope = null;
 
     if (!isAdmin) {
       const coordinatorToken = await getAuthenticatedCoordinator(request);
@@ -29,14 +31,14 @@ export async function GET(request) {
       coordinatorEmail = coordinatorToken.email;
 
       if (tripId) {
-        const scope = await getCoordinatorTripScope(coordinatorEmail, tripId);
-        if (!scope.isAssigned) {
+        coordinatorScope = await getCoordinatorTripScope(coordinatorEmail, tripId);
+        if (!coordinatorScope.isAssigned) {
           return NextResponse.json(
             { error: "Forbidden: You are not assigned to coordinate this trip." },
             { status: 403 }
           );
         }
-        assignedOption = scope.assignedOption;
+        assignedOption = coordinatorScope.assignedOption;
       }
     }
 
@@ -61,19 +63,19 @@ export async function GET(request) {
     if (!isAdmin) {
       const allRegs = tripId ? await getDeduplicatedRegistrationsForTrip(tripId) : [];
       const regMap = new Map();
+      const coordinators = coordinatorScope?.tripData?.coordinators || [];
       for (const reg of allRegs) {
         if (reg.email) {
           const extracted = extractStudentFieldsFromFormData(reg.formData || {});
-          let matchesScope = true;
-          if (assignedOption) {
-            const opt = assignedOption.toLowerCase().trim();
-            matchesScope = Object.values(reg.formData || {}).some(
-              (val) => typeof val === "string" && val.trim().toLowerCase() === opt
-            );
-          }
+          const matchesScope = isRegistrationAssignedToCoordinator(
+            coordinatorEmail,
+            coordinators,
+            assignedOption,
+            reg.formData || {}
+          );
           regMap.set(reg.email.toLowerCase(), {
-            name: extracted.name || "Student",
-            phone: extracted.phone || "",
+            name: reg.name || reg.studentName || extracted.name || "Student",
+            phone: reg.phone || extracted.phone || "",
             matchesScope,
           });
         }
@@ -82,7 +84,6 @@ export async function GET(request) {
       // Filter out concerns for students outside assignedOption scope, and strip studentEmail
       concerns = concerns
         .filter((c) => {
-          if (!assignedOption) return true;
           const info = regMap.get(c.studentEmail?.toLowerCase());
           return info ? info.matchesScope : false;
         })
@@ -205,18 +206,18 @@ export async function POST(request) {
         );
       }
 
-      // If coordinator has assignedOption restriction, verify student registration matches
-      if (scope.assignedOption) {
-        const assignedOption = scope.assignedOption;
-        const matches = Object.values(studentReg.formData || {}).some(
-          (val) => typeof val === "string" && val.trim().toLowerCase() === assignedOption
+      // Verify student registration matches coordinator scope
+      const isAssigned = isRegistrationAssignedToCoordinator(
+        coordinatorEmail,
+        scope.tripData?.coordinators || [],
+        scope.assignedOption,
+        studentReg.formData || {}
+      );
+      if (!isAssigned) {
+        return NextResponse.json(
+          { error: "Unauthorized: Registration does not belong to your assigned option/city." },
+          { status: 403 }
         );
-        if (!matches) {
-          return NextResponse.json(
-            { error: "Unauthorized: Registration does not belong to your assigned option/city." },
-            { status: 403 }
-          );
-        }
       }
     }
 

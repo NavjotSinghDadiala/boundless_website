@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { auth } from "@/lib/firebase";
 import { User } from "firebase/auth";
-import { MapPin, X, Loader2, CheckCircle2 } from "lucide-react";
+import { MapPin, Phone, X, Loader2, CheckCircle2, User as UserIcon } from "lucide-react";
 import LocationSelect from "@/components/ui/LocationSelect";
 import {
   INDIAN_STATES_AND_UTS,
@@ -30,8 +30,12 @@ export default function LocationProfileModal({
   onClose,
   canDismiss = false,
 }: LocationProfileModalProps) {
+  const [gender, setGender] = useState<string>("");
+  const [phone, setPhone] = useState<string>("");
   const [selectedState, setSelectedState] = useState<string>("");
   const [selectedDistrict, setSelectedDistrict] = useState<string>("");
+  const [genderError, setGenderError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [stateError, setStateError] = useState<string | null>(null);
   const [districtError, setDistrictError] = useState<string | null>(null);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -41,10 +45,17 @@ export default function LocationProfileModal({
   // Sync initial state if available
   useEffect(() => {
     if (isOpen) {
+      const rawGender = initialProfile?.gender || "";
+      const genderVal = rawGender && rawGender !== "unknown" ? (rawGender.charAt(0).toUpperCase() + rawGender.slice(1).toLowerCase()) : "";
+      const phoneVal = initialProfile?.phone || "";
       const stateVal = initialProfile?.state || "";
       const districtVal = initialProfile?.cityDistrict || "";
+      setGender(genderVal);
+      setPhone(phoneVal);
       setSelectedState(stateVal);
       setSelectedDistrict(districtVal);
+      setGenderError(null);
+      setPhoneError(null);
       setStateError(null);
       setDistrictError(null);
       setServerError(null);
@@ -74,11 +85,39 @@ export default function LocationProfileModal({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setGenderError(null);
+    setPhoneError(null);
     setStateError(null);
     setDistrictError(null);
     setServerError(null);
 
     let hasError = false;
+    let cleanPhone = "";
+
+    // Compulsory Gender Validation
+    if (!gender || !gender.trim()) {
+      setGenderError("Please select your gender.");
+      hasError = true;
+    }
+
+    // Compulsory Phone Number Validation
+    if (!phone.trim()) {
+      setPhoneError("Phone number is required to complete your profile.");
+      hasError = true;
+    } else {
+      let digits = phone.replace(/\D/g, "");
+      if (digits.length === 12 && digits.startsWith("91")) {
+        digits = digits.slice(2);
+      } else if (digits.length === 11 && digits.startsWith("0")) {
+        digits = digits.slice(1);
+      }
+      if (!/^[6-9]\d{9}$/.test(digits)) {
+        setPhoneError("Please enter a valid 10-digit Indian mobile number (e.g. 9876543210).");
+        hasError = true;
+      } else {
+        cleanPhone = digits;
+      }
+    }
 
     if (!selectedState.trim()) {
       setStateError("Please select your state.");
@@ -108,6 +147,8 @@ export default function LocationProfileModal({
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
+          gender: gender.toLowerCase(),
+          phone: cleanPhone,
           state: selectedState,
           cityDistrict: selectedDistrict,
         }),
@@ -115,7 +156,7 @@ export default function LocationProfileModal({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Failed to update location.");
+        throw new Error(data.error || "Failed to update profile.");
       }
 
       setSaveSuccess(true);
@@ -123,7 +164,7 @@ export default function LocationProfileModal({
         onSuccess(data.student);
       }, 500);
     } catch (err: any) {
-      console.error("Location profile update error:", err);
+      console.error("Profile update error:", err);
       setServerError(err.message || "An unexpected error occurred. Please try again.");
     } finally {
       setSaving(false);
@@ -159,17 +200,17 @@ export default function LocationProfileModal({
           </div>
 
           <h3 className="font-oswald text-xl sm:text-2xl font-bold uppercase tracking-wider text-[#3E1126]">
-            {initialProfile?.state && initialProfile?.cityDistrict
-              ? "Update Residential Location"
-              : "Location Profile Completion"}
+            {initialProfile?.state && initialProfile?.cityDistrict && initialProfile?.phone && initialProfile?.gender && initialProfile.gender !== "unknown"
+              ? "Update Profile Details"
+              : "Complete Your Profile"}
           </h3>
           <p className="text-xs text-[#3E1126]/75 font-medium mt-1 leading-relaxed max-w-xs mx-auto">
-            Please select your general residential state and city / district for trip planning and student records.
+            Please provide your gender, contact phone number, state, and city / district to complete your student profile and coordinate trip activities.
           </p>
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSave} className="p-6 sm:p-7 space-y-5">
+        <form onSubmit={handleSave} className="p-6 sm:p-7 space-y-4">
           {serverError && (
             <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs font-semibold text-red-800 flex items-center gap-2">
               <span>⚠️</span>
@@ -180,9 +221,82 @@ export default function LocationProfileModal({
           {saveSuccess && (
             <div className="p-3.5 bg-green-50 border border-green-200 rounded-xl text-xs font-semibold text-green-800 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-green-600" />
-              <span>Location updated successfully!</span>
+              <span>Profile updated successfully!</span>
             </div>
           )}
+
+          {/* Gender Selection (Compulsory) */}
+          <div className="space-y-1.5 text-left">
+            <label className="block text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]">
+              Gender <span className="text-red-500">*</span>
+            </label>
+            <div className="grid grid-cols-3 gap-2.5 pt-0.5">
+              {["Male", "Female", "Other"].map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => {
+                    setGender(opt);
+                    setGenderError(null);
+                    setServerError(null);
+                  }}
+                  className={`py-2 px-3 rounded-xl border-2 text-xs font-bold font-oswald uppercase tracking-wider transition-all cursor-pointer ${
+                    gender === opt
+                      ? "bg-[#3E1126] text-white border-[#3E1126] shadow-sm scale-[1.02]"
+                      : "bg-white text-[#3E1126] border-stone-200 hover:border-[#3E1126]/30 hover:bg-stone-50"
+                  }`}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+            {genderError ? (
+              <p className="text-[11px] text-red-600 font-semibold mt-1">{genderError}</p>
+            ) : (
+              <p className="text-[10px] text-stone-400 mt-0.5">
+                Required for event logistics, rooming allocations, and coordinator rosters.
+              </p>
+            )}
+          </div>
+
+          {/* Mobile Phone Number (Compulsory) */}
+          <div className="space-y-1.5 text-left">
+            <label
+              htmlFor="student-profile-phone"
+              className="block text-xs font-oswald font-bold uppercase tracking-wider text-[#3E1126]"
+            >
+              Mobile Phone Number <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-400">
+                <Phone className="h-4 w-4" />
+              </div>
+              <input
+                id="student-profile-phone"
+                type="tel"
+                required
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setPhoneError(null);
+                  setServerError(null);
+                }}
+                placeholder="e.g. 9876543210"
+                className={`w-full pl-10 pr-4 py-2.5 bg-white border-2 rounded-xl text-sm font-medium text-stone-800 placeholder:text-stone-400 focus:outline-none transition-all ${
+                  phoneError
+                    ? "border-red-500 focus:border-red-600 focus:ring-1 focus:ring-red-500"
+                    : "border-stone-200 hover:border-stone-300 focus:border-[#3E1126] focus:ring-1 focus:ring-[#3E1126]"
+                }`}
+              />
+            </div>
+            {phoneError ? (
+              <p className="text-[11px] text-red-600 font-semibold mt-1">{phoneError}</p>
+            ) : (
+              <p className="text-[10px] text-stone-400 mt-0.5">
+                Compulsory for event coordination, emergency communications, and coordinator roster.
+              </p>
+            )}
+          </div>
 
           {/* State Dropdown */}
           <LocationSelect
@@ -221,7 +335,7 @@ export default function LocationProfileModal({
               {saving ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Saving Location...</span>
+                  <span>Saving Profile...</span>
                 </>
               ) : saveSuccess ? (
                 <>
@@ -229,7 +343,7 @@ export default function LocationProfileModal({
                   <span>Saved!</span>
                 </>
               ) : (
-                <span>Save Location Profile</span>
+                <span>Save Profile</span>
               )}
             </button>
           </div>

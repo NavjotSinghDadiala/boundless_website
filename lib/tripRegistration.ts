@@ -1,11 +1,16 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import { syncStudentFromRegistration } from "@/lib/studentProfile";
+import { syncStudentFromRegistration, extractStudentFieldsFromFormData } from "@/lib/studentProfile";
 import { generateExternalRegistrationToken, generatePersonalizedFormLaunchUrl } from "@/lib/googleForms";
 
 export interface CanonicalTripRegistration {
+  id?: string;
   uid: string;
   email: string;
+  name?: string;
+  studentName?: string;
+  studentId?: string;
+  phone?: string;
   tripId: string;
   status: string;
   gender: string;
@@ -30,6 +35,15 @@ export interface CanonicalTripRegistration {
   paymentVerifiedAt?: any;
   consentFormFileUrl?: string;
   aadhaarVerified?: boolean;
+  studentIdFileId?: string;
+  studentIdDocument?: {
+    documentType: string;
+    fieldName: string;
+    driveFileId: string | null;
+    driveUrl: string;
+    fileName: string;
+    uploadedAt: string;
+  };
   [key: string]: any;
 }
 
@@ -63,6 +77,10 @@ export function serializeTripRegistration(id: string, data: Record<string, any>)
     id,
     uid: data.uid || "",
     email: data.email || "",
+    ...(data.name ? { name: data.name } : {}),
+    ...(data.studentName ? { studentName: data.studentName } : {}),
+    ...(data.studentId ? { studentId: data.studentId } : {}),
+    ...(data.phone ? { phone: data.phone } : {}),
     tripId: data.tripId || "",
     status: data.status || "registered",
     gender: data.gender || "unknown",
@@ -107,6 +125,8 @@ export function serializeTripRegistration(id: string, data: Record<string, any>)
     ...(data.consentFormFileUrl !== undefined ? { consentFormFileUrl: data.consentFormFileUrl } : {}),
     ...(data.aadhaarVerified !== undefined ? { aadhaarVerified: data.aadhaarVerified } : {}),
     ...(Array.isArray(data.consentResponses) ? { consentResponses: data.consentResponses } : {}),
+    ...(data.studentIdFileId ? { studentIdFileId: data.studentIdFileId } : {}),
+    ...(data.studentIdDocument ? { studentIdDocument: data.studentIdDocument } : {}),
   };
 }
 
@@ -202,6 +222,12 @@ export function mergeLegacyIntoCanonical(
   if (canonicalData.aadhaarVerified === undefined && legacyData.aadhaarVerified !== undefined) {
     merged.aadhaarVerified = legacyData.aadhaarVerified;
   }
+  if (!merged.studentIdDocument && (canonicalData.studentIdDocument || legacyData.studentIdDocument)) {
+    merged.studentIdDocument = canonicalData.studentIdDocument || legacyData.studentIdDocument;
+  }
+  if (!merged.studentIdFileId && (canonicalData.studentIdFileId || legacyData.studentIdFileId)) {
+    merged.studentIdFileId = canonicalData.studentIdFileId || legacyData.studentIdFileId;
+  }
   if (!Array.isArray(canonicalData.consentResponses) || canonicalData.consentResponses.length === 0) {
     if (Array.isArray(legacyData.consentResponses) && legacyData.consentResponses.length > 0) {
       merged.consentResponses = legacyData.consentResponses;
@@ -232,7 +258,10 @@ export async function checkIsDuplicateTripRegistration(
   const canonicalDocId = getCanonicalTripRegDocId(tripId, uid);
   const canonicalSnap = await adminDb.collection("tripRegistrations").doc(canonicalDocId).get();
   if (canonicalSnap.exists) {
-    return true;
+    const data = canonicalSnap.data() || {};
+    if (data.status !== "rejected") {
+      return true;
+    }
   }
 
   // 2. Check legacy user-registrations by UID
@@ -243,14 +272,20 @@ export async function checkIsDuplicateTripRegistration(
     .limit(1)
     .get();
   if (!legacyUidSnap.empty) {
-    return true;
+    const data = legacyUidSnap.docs[0].data() || {};
+    if (data.status !== "rejected") {
+      return true;
+    }
   }
 
   // 3. Check legacy user-registrations by deterministic legacy doc ID or email
   if (email) {
     const legacyDocSnap = await adminDb.collection("user-registrations").doc(`${tripId}_${email}`).get();
     if (legacyDocSnap.exists) {
-      return true;
+      const data = legacyDocSnap.data() || {};
+      if (data.status !== "rejected") {
+        return true;
+      }
     }
     const legacyEmailSnap = await adminDb
       .collection("user-registrations")
@@ -259,7 +294,10 @@ export async function checkIsDuplicateTripRegistration(
       .limit(1)
       .get();
     if (!legacyEmailSnap.empty) {
-      return true;
+      const data = legacyEmailSnap.docs[0].data() || {};
+      if (data.status !== "rejected") {
+        return true;
+      }
     }
   }
 
@@ -271,6 +309,25 @@ export async function checkIsDuplicateTripRegistration(
  * Combines student's matched responses with any registered Google Forms for the trip.
  * Generates personalized launch URLs using externalRegistrationToken and student identity.
  */
+// In-memory 30s cache for trip-level Google Forms definitions to eliminate repeated queries under rush
+const tripGoogleFormsCache = new Map<string, { expiresAt: number; docs: Array<{ id: string; data: Record<string, any> }> }>();
+
+async function getCachedTripGoogleForms(tripId: string): Promise<Array<{ id: string; data: Record<string, any> }>> {
+  const now = Date.now();
+  const cached = tripGoogleFormsCache.get(tripId);
+  if (cached && now < cached.expiresAt) {
+    return cached.docs;
+  }
+  try {
+    const snap = await adminDb.collection("googleForms").where("tripId", "==", tripId).get();
+    const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() || {} }));
+    tripGoogleFormsCache.set(tripId, { expiresAt: now + 30_000, docs });
+    return docs;
+  } catch (e) {
+    return [];
+  }
+}
+
 async function resolveExternalFormsForRegistration(
   canonicalRef: FirebaseFirestore.DocumentReference,
   tripId: string,
@@ -286,15 +343,7 @@ async function resolveExternalFormsForRegistration(
     matchedMap.set(doc.id, doc.data() || {});
   });
 
-  let tripFormsSnap: FirebaseFirestore.QuerySnapshot | null = null;
-  try {
-    tripFormsSnap = await adminDb
-      .collection("googleForms")
-      .where("tripId", "==", tripId)
-      .get();
-  } catch (e) {
-    tripFormsSnap = null;
-  }
+  const tripFormsDocs = await getCachedTripGoogleForms(tripId);
 
   let regToken = studentContext?.token;
   let regEmail = studentContext?.email;
@@ -320,9 +369,9 @@ async function resolveExternalFormsForRegistration(
   const externalFormsMap = new Map<string, any>();
 
   // 1. Add all registered forms for this trip
-  if (tripFormsSnap && tripFormsSnap.docs) {
-    tripFormsSnap.docs.forEach((doc) => {
-      const def = doc.data() || {};
+  if (tripFormsDocs && tripFormsDocs.length > 0) {
+    tripFormsDocs.forEach((doc) => {
+      const def = doc.data || {};
       const matched = matchedMap.get(doc.id);
       const rawFormUrl = def.formUrl || def.url || "";
       const openUrl = generatePersonalizedFormLaunchUrl({
@@ -506,6 +555,8 @@ export async function saveDualTripRegistration({
   gender,
   studentIdVerified = false,
   consentResponses = [],
+  studentName,
+  studentRoll,
 }: {
   tripId: string;
   uid: string;
@@ -514,12 +565,63 @@ export async function saveDualTripRegistration({
   gender: string;
   studentIdVerified?: boolean;
   consentResponses?: any[];
-}): Promise<{ canonicalId: string; legacyId: string }> {
+  studentName?: string;
+  studentRoll?: string;
+}): Promise<{ canonicalId: string; legacyId: string; alreadyExists?: boolean }> {
   const canonicalId = getCanonicalTripRegDocId(tripId, uid);
   const legacyId = `${tripId}_${email}`;
 
   const now = FieldValue.serverTimestamp();
   const externalRegistrationToken = generateExternalRegistrationToken();
+
+  // Extract student identity details
+  const extractedStudent = extractStudentFieldsFromFormData(formData || {});
+  let resolvedStudentName = studentName || extractedStudent.name || "";
+  let resolvedStudentRoll = studentRoll || extractedStudent.studentId || "";
+  let resolvedStudentPhone =
+    extractedStudent.phone ||
+    formData?.["Contact Number"] ||
+    formData?.["Phone Number"] ||
+    formData?.["Phone"] ||
+    formData?.["phone"] ||
+    "";
+
+  if (!resolvedStudentName || !resolvedStudentPhone) {
+    try {
+      const studentSnap = await adminDb.collection("students").doc(uid).get();
+      if (studentSnap.exists) {
+        const sData = studentSnap.data() || {};
+        if (!resolvedStudentName) resolvedStudentName = sData.name || sData.fullName || "";
+        if (!resolvedStudentRoll) resolvedStudentRoll = sData.studentId || "";
+        if (!resolvedStudentPhone) resolvedStudentPhone = sData.phone || sData.whatsapp || "";
+      }
+    } catch (_) {}
+  }
+
+  // Extract Drive file ID and build structured studentIdDocument
+  const studentIdUrl = formData?.["Student ID Card Copy"] || "";
+  let studentIdFileId = formData?.["studentIdFileId"] || "";
+  if (!studentIdFileId && studentIdUrl && typeof studentIdUrl === "string") {
+    const match = studentIdUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (match && match[1]) {
+      studentIdFileId = match[1];
+    }
+  }
+
+  let studentIdDocument: any = null;
+  if (studentIdUrl && typeof studentIdUrl === "string" && studentIdUrl.startsWith("http")) {
+    let ext = "pdf";
+    if (studentIdUrl.includes(".png")) ext = "png";
+    else if (studentIdUrl.includes(".jpg") || studentIdUrl.includes(".jpeg")) ext = "jpg";
+    studentIdDocument = {
+      documentType: "student_id",
+      fieldName: "Student ID Card Copy",
+      driveFileId: studentIdFileId || null,
+      driveUrl: studentIdUrl,
+      fileName: `Student-ID.${ext}`,
+      uploadedAt: new Date().toISOString(),
+    };
+  }
 
   const canonicalPayload: Record<string, any> = {
     uid,
@@ -527,6 +629,10 @@ export async function saveDualTripRegistration({
     tripId,
     status: "registered",
     gender: gender || "unknown",
+    name: resolvedStudentName,
+    studentName: resolvedStudentName,
+    studentId: resolvedStudentRoll,
+    phone: resolvedStudentPhone,
     formData: formData || {},
     consentResponses: consentResponses || [],
     studentIdVerified: Boolean(studentIdVerified),
@@ -538,6 +644,8 @@ export async function saveDualTripRegistration({
     externalRegistrationToken,
     submittedAt: now,
     updatedAt: now,
+    ...(studentIdFileId ? { studentIdFileId } : {}),
+    ...(studentIdDocument ? { studentIdDocument } : {}),
   };
 
   const legacyPayload: Record<string, any> = {
@@ -546,33 +654,75 @@ export async function saveDualTripRegistration({
     tripId,
     status: "registered",
     gender: gender || "unknown",
+    name: resolvedStudentName,
+    studentName: resolvedStudentName,
+    studentId: resolvedStudentRoll,
+    phone: resolvedStudentPhone,
     formData: formData || {},
     consentResponses: consentResponses || [],
     studentIdVerified: Boolean(studentIdVerified),
     submittedAt: now,
+    ...(studentIdFileId ? { studentIdFileId } : {}),
+    ...(studentIdDocument ? { studentIdDocument } : {}),
   };
 
-  // 1. Write Canonical registration
-  await adminDb.collection("tripRegistrations").doc(canonicalId).set(canonicalPayload);
+  const canonicalRef = adminDb.collection("tripRegistrations").doc(canonicalId);
 
-  // 2. Write Legacy registration
-  await adminDb.collection("user-registrations").doc(legacyId).set(legacyPayload);
+  // 1. Atomic registration creation via transaction (prevents race condition & double-submits)
+  const txResult = await adminDb.runTransaction(async (transaction) => {
+    const canonicalSnap = await transaction.get(canonicalRef);
+    if (canonicalSnap.exists) {
+      const existingData = canonicalSnap.data() || {};
+      const status = (existingData.status || "").toLowerCase().trim();
+      // Only block if registration is in an active non-rejected state
+      if (status !== "rejected") {
+        return { alreadyExists: true };
+      }
 
-  // 3. Write Legacy master user profile
-  await adminDb.collection("user_profiles").doc(email).set(
-    {
-      email,
-      uid,
-      formData: formData || {},
-      updatedAt: now,
-    },
-    { merge: true }
-  );
+      // Reapplying after rejection:
+      // Preserve previous audit trail and record reapplication event
+      const previousHistory = Array.isArray(existingData.conversationHistory)
+        ? [...existingData.conversationHistory]
+        : [];
+      previousHistory.push({
+        type: "reapplied",
+        actor: email,
+        message: "Student reapplied with fresh registration details.",
+        timestamp: new Date().toISOString(),
+      });
+      canonicalPayload.conversationHistory = previousHistory;
+      if (existingData.studentIdVerified === true) {
+        canonicalPayload.studentIdVerified = true;
+      }
+      transaction.set(canonicalRef, canonicalPayload);
+      return { alreadyExists: false };
+    }
+    transaction.set(canonicalRef, canonicalPayload);
+    return { alreadyExists: false };
+  });
 
-  // 4. Sync Canonical student profile in students/{uid}
-  await syncStudentFromRegistration(uid, email, formData, studentIdVerified);
+  if (txResult.alreadyExists) {
+    return { canonicalId, legacyId, alreadyExists: true };
+  }
 
-  return { canonicalId, legacyId };
+  // 2. Parallel non-blocking legacy dual-writes (preserves backward compatibility without blocking)
+  await Promise.all([
+    adminDb.collection("user-registrations").doc(legacyId).set(legacyPayload),
+    adminDb.collection("user_profiles").doc(email).set(
+      {
+        email,
+        uid,
+        formData: formData || {},
+        updatedAt: now,
+      },
+      { merge: true }
+    ),
+    syncStudentFromRegistration(uid, email, formData, studentIdVerified),
+  ]).catch((err) => {
+    console.error("Non-critical error writing legacy registration records:", err);
+  });
+
+  return { canonicalId, legacyId, alreadyExists: false };
 }
 
 /**
@@ -593,6 +743,32 @@ export async function updateDualTripRegistration({
   const legacyId = `${tripId}_${email}`;
 
   // 1. Update Canonical registration
+  if (updatePayload.formData) {
+    const updatedIdUrl = updatePayload.formData["Student ID Card Copy"];
+    if (updatedIdUrl && typeof updatedIdUrl === "string") {
+      let updatedFileId = updatePayload.formData["studentIdFileId"] || "";
+      if (!updatedFileId) {
+        const match = updatedIdUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+        if (match && match[1]) updatedFileId = match[1];
+      }
+      let ext = "pdf";
+      if (updatedIdUrl.includes(".png")) ext = "png";
+      else if (updatedIdUrl.includes(".jpg") || updatedIdUrl.includes(".jpeg")) ext = "jpg";
+
+      updatePayload.studentIdDocument = {
+        documentType: "student_id",
+        fieldName: "Student ID Card Copy",
+        driveFileId: updatedFileId || null,
+        driveUrl: updatedIdUrl,
+        fileName: `Student-ID.${ext}`,
+        uploadedAt: new Date().toISOString(),
+      };
+      if (updatedFileId) {
+        updatePayload.studentIdFileId = updatedFileId;
+      }
+    }
+  }
+
   const canonicalRef = adminDb.collection("tripRegistrations").doc(canonicalId);
   const canonicalSnap = await canonicalRef.get();
   if (canonicalSnap.exists) {
@@ -704,7 +880,140 @@ export async function getDeduplicatedRegistrationsForTrip(
     }
   }
 
-  return Array.from(registrationsMap.values());
+  const allRegistrations = Array.from(registrationsMap.values());
+
+  // 3. Batch-enrich registrations with student profile data (name, studentId)
+  const uids = Array.from(new Set(allRegistrations.map((r) => r.uid).filter(Boolean)));
+  if (uids.length > 0) {
+    const studentMap = new Map<string, any>();
+    const userMap = new Map<string, any>();
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < uids.length; i += 100) {
+      chunks.push(uids.slice(i, i + 100));
+    }
+
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        try {
+          const studentRefs = chunk.map((uid) => adminDb.collection("students").doc(uid));
+          const snaps = await adminDb.getAll(...studentRefs);
+          snaps.forEach((snap) => {
+            if (snap.exists) {
+              studentMap.set(snap.id, snap.data());
+            }
+          });
+        } catch (err) {
+          console.warn("Failed to batch-fetch student docs:", err);
+        }
+      })
+    );
+
+    const missingUids = uids.filter((uid) => !studentMap.get(uid)?.name);
+    if (missingUids.length > 0) {
+      const userChunks: string[][] = [];
+      for (let i = 0; i < missingUids.length; i += 100) {
+        userChunks.push(missingUids.slice(i, i + 100));
+      }
+      await Promise.all(
+        userChunks.map(async (chunk) => {
+          try {
+            const userRefs = chunk.map((uid) => adminDb.collection("users").doc(uid));
+            const snaps = await adminDb.getAll(...userRefs);
+            snaps.forEach((snap) => {
+              if (snap.exists) {
+                userMap.set(snap.id, snap.data());
+              }
+            });
+          } catch (err) {
+            console.warn("Failed to batch-fetch user docs:", err);
+          }
+        })
+      );
+    }
+
+    for (const reg of allRegistrations) {
+      const studentData = studentMap.get(reg.uid);
+      const userData = userMap.get(reg.uid);
+
+      const resolvedName =
+        reg.name ||
+        reg.studentName ||
+        studentData?.name ||
+        studentData?.fullName ||
+        userData?.name ||
+        userData?.displayName ||
+        reg.formData?.["Full Name"] ||
+        reg.formData?.["full name"] ||
+        reg.formData?.["Name"] ||
+        reg.formData?.["name"] ||
+        reg.formData?.["Student Name"] ||
+        "";
+
+      const resolvedStudentId =
+        reg.studentId ||
+        studentData?.studentId ||
+        reg.formData?.["Student ID Number"] ||
+        reg.formData?.["Roll Number"] ||
+        reg.formData?.["Student ID"] ||
+        "";
+
+      if (resolvedName) {
+        reg.name = resolvedName;
+        reg.studentName = resolvedName;
+      }
+      if (resolvedStudentId) {
+        reg.studentId = resolvedStudentId;
+      }
+      const resolvedPhone =
+        reg.phone ||
+        studentData?.phone ||
+        studentData?.whatsapp ||
+        userData?.phone ||
+        reg.formData?.["Contact Number"] ||
+        reg.formData?.["Phone Number"] ||
+        reg.formData?.["Phone"] ||
+        reg.formData?.["phone"] ||
+        reg.formData?.["contact"] ||
+        reg.formData?.["mobile"] ||
+        "";
+      if (resolvedPhone) {
+        reg.phone = resolvedPhone;
+      }
+    }
+  }
+
+  // Also check if any registration still lacks a name or phone and has an email
+  const missingEnrichmentRegs = allRegistrations.filter((r) => (!r.name || !r.phone) && r.email);
+  if (missingEnrichmentRegs.length > 0) {
+    await Promise.all(
+      missingEnrichmentRegs.map(async (reg) => {
+        try {
+          const profSnap = await adminDb.collection("user_profiles").doc(reg.email).get();
+          if (profSnap.exists) {
+            const pData = profSnap.data() || {};
+            const pForm = pData.formData || {};
+            const pName = pData.name || pForm["Full Name"] || pForm["Name"] || pForm["name"];
+            if (!reg.name && pName) {
+              reg.name = pName;
+              reg.studentName = pName;
+            }
+            const pPhone =
+              pData.phone ||
+              pForm["Contact Number"] ||
+              pForm["Phone Number"] ||
+              pForm["Phone"] ||
+              pForm["phone"];
+            if (!reg.phone && pPhone) {
+              reg.phone = pPhone;
+            }
+          }
+        } catch (_) {}
+      })
+    );
+  }
+
+  return allRegistrations;
 }
 
 /**

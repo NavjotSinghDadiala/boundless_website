@@ -16,6 +16,7 @@ import {
 import { doc, getDoc } from "firebase/firestore";
 import UserRegistrationForm from "@/components/UserRegistrationForm";
 import CoordinatorRoleModal from "@/components/CoordinatorRoleModal";
+import { RotateCcw } from "lucide-react";
 
 interface Trip {
   id: string;
@@ -61,8 +62,20 @@ export default function SecureForm() {
   const [correctionError, setCorrectionError] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isReapplying, setIsReapplying] = useState(false);
+
+  // Sync reapply query parameter on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("reapply") === "true") {
+        setIsReapplying(true);
+      }
+    }
+  }, []);
 
   // Fetch all trips
+  // Fetch all trips once and sync selected trip without duplicate requests
   useEffect(() => {
     async function fetchTrips() {
       try {
@@ -73,14 +86,11 @@ export default function SecureForm() {
           const activeTrips = allTrips.filter((t: any) => !t.isCompleted && !t.finalRosterSaved);
           setTrips(activeTrips);
           if (activeTrips.length > 0) {
-            // Default to first active trip or url param
             const params = new URLSearchParams(window.location.search);
             const urlTripId = params.get("tripId");
-            if (urlTripId && activeTrips.some((t: any) => t.id === urlTripId)) {
-              setSelectedTripId(urlTripId);
-            } else {
-              setSelectedTripId(activeTrips[0].id);
-            }
+            const matchedTrip = (urlTripId && activeTrips.find((t: any) => t.id === urlTripId)) || activeTrips[0];
+            setSelectedTripId(matchedTrip.id);
+            setSelectedTrip(matchedTrip);
           }
         }
       } catch (err) {
@@ -90,27 +100,12 @@ export default function SecureForm() {
     fetchTrips();
   }, []);
 
-  // Sync selected trip metadata
+  // Sync selected trip metadata when selectedTripId changes
   useEffect(() => {
-    if (selectedTripId) {
+    if (selectedTripId && trips.length > 0) {
       const match = trips.find((t) => t.id === selectedTripId);
       if (match) {
         setSelectedTrip(match);
-      } else {
-        // Fetch trip directly if not in list
-        const fetchSingleTrip = async () => {
-          try {
-            const res = await fetch(`/api/trip`);
-            if (res.ok) {
-              const data = await res.json();
-              const tripMatch = data.trips?.find((t: any) => t.id === selectedTripId);
-              if (tripMatch) setSelectedTrip(tripMatch);
-            }
-          } catch (e) {
-            console.error(e);
-          }
-        };
-        fetchSingleTrip();
       }
     }
   }, [selectedTripId, trips]);
@@ -164,6 +159,9 @@ export default function SecureForm() {
         setRegistration(data.registration);
         setAutofillData(data.autofillData);
         setStudentProfile(data.studentProfile || null);
+        if (data.registration && data.registration.status !== "rejected") {
+          setIsReapplying(false);
+        }
       }
     } catch (err) {
       console.error("Error fetching registration status:", err);
@@ -399,7 +397,12 @@ export default function SecureForm() {
             });
             if (!fileRes.ok) throw new Error(`${key} upload failed`);
             const fileJson = await fileRes.json();
-            formDataUpdates[key] = fileJson.images[0].secure_url || fileJson.images[0];
+            const secureUrl = fileJson.images?.[0]?.secure_url || fileJson.fileUrl || fileJson.images?.[0];
+            const fileId = fileJson.images?.[0]?.driveFileId || fileJson.fileId || fileJson.driveFileId || null;
+            formDataUpdates[key] = secureUrl;
+            if (key.includes("ID") && fileId) {
+              formDataUpdates["studentIdFileId"] = fileId;
+            }
           }
         });
         await Promise.all(filePromises);
@@ -779,23 +782,58 @@ export default function SecureForm() {
           <div className="w-full bg-white rounded-[2rem] shadow-xl p-8 text-center border border-black/5">
             <div className="text-[#3E1126] font-oswald font-bold text-xl uppercase tracking-wide animate-pulse">Verifying status...</div>
           </div>
-        ) : !registration ? (
-          // Form Registration view
+        ) : (!registration || (registration?.status === "rejected" && isReapplying)) ? (
+          // Form Registration view (Initial or Reapplication after rejection)
           selectedTrip?.registrationOpen === false ? (
             <div className="w-full bg-white rounded-[2rem] shadow-xl p-8 text-center border border-black/5">
               <div className="text-red-700 font-bold text-xl p-4 border-2 border-red-500/20 rounded-xl bg-red-50">
                 Registration for this trip is currently closed.
               </div>
+              {registration?.status === "rejected" && (
+                <button
+                  type="button"
+                  onClick={() => setIsReapplying(false)}
+                  className="mt-4 text-xs font-bold font-oswald uppercase tracking-wider text-[#3E1126] underline hover:text-black cursor-pointer"
+                >
+                  ← Return to rejection details
+                </button>
+              )}
             </div>
           ) : (
-            <UserRegistrationForm
-              user={user}
-              setUser={setUser}
-              tripId={selectedTripId}
-              autofillData={autofillData}
-              studentProfile={studentProfile}
-              onSuccess={fetchStatus}
-            />
+            <div className="w-full">
+              {registration?.status === "rejected" && (
+                <div className="mb-4 bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-left flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm animate-in fade-in duration-300">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-amber-900 font-oswald font-bold text-sm uppercase tracking-wider">
+                      <RotateCcw className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>Reapplying for Expedition</span>
+                    </div>
+                    <p className="text-xs text-amber-800/90 font-medium">
+                      Your previous submission was not approved. You can now update all information and re-submit your registration.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsReapplying(false)}
+                    className="text-xs font-bold font-oswald uppercase tracking-wider px-3.5 py-1.5 rounded-full bg-amber-200/80 hover:bg-amber-300 text-amber-950 transition-colors shrink-0 cursor-pointer"
+                  >
+                    Cancel & View Status
+                  </button>
+                </div>
+              )}
+              <UserRegistrationForm
+                user={user}
+                setUser={setUser}
+                tripId={selectedTripId}
+                trip={selectedTrip}
+                autofillData={autofillData}
+                studentProfile={studentProfile}
+                onSuccess={() => {
+                  setIsReapplying(false);
+                  fetchStatus();
+                }}
+              />
+            </div>
           )
         ) : (
           // Status steps
@@ -980,6 +1018,85 @@ export default function SecureForm() {
               </div>
             )}
 
+            {registration.status === "waitlisted" && (
+              <div className="w-full bg-white rounded-[2rem] shadow-xl overflow-hidden border border-black/5 p-8 text-center" data-lenis-prevent>
+                <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center shadow-inner mb-6 mx-auto">
+                  <span className="text-3xl">⏳</span>
+                </div>
+                <h2 className="text-2xl font-oswald font-bold text-[#3E1126] uppercase mb-1">You&apos;re on the Waiting List</h2>
+                <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300 mb-4">
+                  <span>POSITION #{registration.waitlistPosition || "1"}</span>
+                </div>
+                <p className="text-[#3E1126]/80 text-sm font-medium leading-relaxed mb-6 max-w-md mx-auto">
+                  This trip has currently reached full seat capacity. Your submitted registration and verified credentials are fully preserved.
+                </p>
+
+                {/* Trip Stats Card */}
+                <div className="bg-zinc-50 border-2 border-[#3E1126]/10 rounded-2xl p-5 text-left w-full space-y-3 mb-6">
+                  <div className="flex justify-between items-start gap-2 border-b border-zinc-200/80 pb-3">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block mb-0.5">Trip</span>
+                      <h4 className="font-oswald font-bold text-lg text-[#3E1126]">
+                        {selectedTrip?.name || registration.tripName || "Boundless Expedition"}
+                      </h4>
+                    </div>
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300 shrink-0">
+                      WAITLISTED
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                      <span className="text-[10px] font-bold uppercase text-zinc-400 block">Total Seats</span>
+                      <span className="text-base font-bold text-stone-800">{selectedTrip?.totalSeats || 50}</span>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                      <span className="text-[10px] font-bold uppercase text-zinc-400 block">Current Approved</span>
+                      <span className="text-base font-bold text-emerald-700">{selectedTrip?.totalJoined || selectedTrip?.totalSeats || 50}</span>
+                    </div>
+                    <div className="bg-white p-3 rounded-xl border border-zinc-200">
+                      <span className="text-[10px] font-bold uppercase text-zinc-400 block">Your Position</span>
+                      <span className="text-base font-bold text-amber-700">#{registration.waitlistPosition || 1}</span>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200/70 text-xs text-amber-950 font-medium leading-relaxed">
+                    💡 <strong>How it works:</strong> If a confirmed participant withdraws or another seat becomes available, students are promoted from the waiting list in order.
+                  </div>
+                </div>
+
+                {renderStudentIdStatus()}
+                {renderExternalForms()}
+
+                <Link
+                  href="/my-trips"
+                  className="w-full mt-4 flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-white bg-[#3E1126] hover:bg-[#2A0013] px-6 py-3.5 rounded-full transition-all shadow-md hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  <span>🎒 MY TRIPS</span>
+                  <span>→</span>
+                </Link>
+              </div>
+            )}
+
+            {registration.status === "withdrawn" && (
+              <div className="w-full bg-white rounded-[2rem] shadow-xl overflow-hidden border border-black/5 p-8 text-center" data-lenis-prevent>
+                <div className="w-16 h-16 bg-zinc-100 rounded-full flex items-center justify-center shadow-inner mb-6 mx-auto">
+                  <span className="text-3xl text-zinc-400">↩</span>
+                </div>
+                <h2 className="text-2xl font-oswald font-bold text-[#3E1126] uppercase mb-2">Registration Withdrawn</h2>
+                <p className="text-[#3E1126]/80 text-sm font-medium leading-relaxed mb-6">
+                  Your registration for {selectedTrip?.name || "this trip"} has been marked as withdrawn.
+                </p>
+                <Link
+                  href="/my-trips"
+                  className="w-full mt-4 flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-white bg-[#3E1126] hover:bg-[#2A0013] px-6 py-3.5 rounded-full transition-all shadow-md"
+                >
+                  <span>🎒 MY TRIPS</span>
+                  <span>→</span>
+                </Link>
+              </div>
+            )}
+
             {(registration.status === "approved_to_pay" || registration.status === "mail_sent") && (
               <div className="w-full bg-white rounded-[2rem] shadow-xl overflow-hidden border border-black/5 p-8 text-center" data-lenis-prevent>
                 <div className="w-16 h-16 bg-[#E8F8F5] rounded-full flex items-center justify-center shadow-inner mb-6 mx-auto">
@@ -1059,9 +1176,31 @@ export default function SecureForm() {
                 )}
 
                 {renderStudentIdStatus()}
+
+                {/* Reapply Action Button */}
+                {selectedTrip?.registrationOpen === false ? (
+                  <div className="p-4 bg-zinc-100 rounded-2xl text-xs font-semibold text-zinc-600 mt-6">
+                    Registration for this expedition is currently closed. Reapplications are not available.
+                  </div>
+                ) : (
+                  <div className="mt-6 space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsReapplying(true)}
+                      className="w-full flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-black bg-[#FCE16D] hover:bg-[#ebd057] px-6 py-3.5 rounded-full transition-all shadow-md hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span>Reapply With Updated Details</span>
+                    </button>
+                    <p className="text-[11px] text-zinc-500 font-medium">
+                      You are allowed to reapply with all updated details and documents.
+                    </p>
+                  </div>
+                )}
+
                 <Link
                   href="/my-trips"
-                  className="w-full mt-6 flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-white bg-[#3E1126] hover:bg-[#2A0013] px-6 py-3.5 rounded-full transition-all shadow-md hover:scale-[1.02] active:scale-[0.98]"
+                  className="w-full mt-4 flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-white bg-[#3E1126] hover:bg-[#2A0013] px-6 py-3.5 rounded-full transition-all shadow-md hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <span>🎒 MY TRIPS</span>
                   <span>→</span>

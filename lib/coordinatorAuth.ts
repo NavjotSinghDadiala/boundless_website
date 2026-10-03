@@ -345,3 +345,85 @@ export function isApprovedRegistrationStatus(status: string): boolean {
   if (!status) return false;
   return APPROVED_STATUSES.has(status.toLowerCase().trim());
 }
+
+/**
+ * Determines whether a student registration is within the scope of a coordinator for a trip.
+ * 
+ * Rules:
+ * 1. If the trip has 0 or 1 coordinator, that coordinator is responsible for all students on the trip.
+ * 2. If the coordinator has no assignedOption (or it's empty), they oversee all students on the trip.
+ * 3. If no other coordinators on the trip have distinct assigned options, there is no sub-group partitioning;
+ *    all coordinators oversee all students.
+ * 4. If coordinators partition the trip by distinct assignedOption values:
+ *    - Check if any value in the student's formData matches this coordinator's assignedOption (case-insensitive fuzzy match: equality or substring).
+ *    - If no coordinator's assignedOption matches the student's choices, fallback to the primary (first) coordinator on the trip.
+ */
+export function isRegistrationAssignedToCoordinator(
+  coordinatorEmail: string,
+  coordinators: any[],
+  assignedOption: string | null | undefined,
+  formData: Record<string, any> = {}
+): boolean {
+  if (!Array.isArray(coordinators) || coordinators.length <= 1) {
+    return true;
+  }
+
+  const cleanCoordEmail = normalizeEmail(coordinatorEmail || "");
+
+  // If coordinator has no assignedOption, they are a general coordinator for the whole trip
+  const cleanAssignedOption = assignedOption ? String(assignedOption).trim().toLowerCase() : "";
+  if (!cleanAssignedOption) {
+    return true;
+  }
+
+  // Collect all coordinators that have a non-empty assignedOption
+  const coordinatorsWithOptions = coordinators.filter((c) => {
+    if (typeof c !== "object" || c === null) return false;
+    const opt = String(c.assignedOption || "").trim().toLowerCase();
+    return Boolean(opt);
+  });
+
+  const distinctOptions = new Set(
+    coordinatorsWithOptions.map((c) => String(c.assignedOption).trim().toLowerCase())
+  );
+
+  // If there are no multiple distinct partitioning options among coordinators, everyone oversees all students
+  if (distinctOptions.size <= 1) {
+    return true;
+  }
+
+  // Extract all string answers from student's formData
+  const studentAnswers = Object.values(formData || {})
+    .filter((val) => typeof val === "string")
+    .map((val) => (val as string).trim().toLowerCase());
+
+  // Check if student form data matches this coordinator's assignedOption (fuzzy match)
+  const matchesThis = studentAnswers.some(
+    (ans) => ans === cleanAssignedOption || ans.includes(cleanAssignedOption) || cleanAssignedOption.includes(ans)
+  );
+  if (matchesThis) {
+    return true;
+  }
+
+  // Check if student matches ANY other coordinator's assignedOption
+  const matchesOther = coordinatorsWithOptions.some((c) => {
+    const cEmail = normalizeEmail(typeof c === "object" && c !== null ? c.email || "" : String(c));
+    if (cEmail === cleanCoordEmail) return false;
+    const otherOpt = String(c.assignedOption).trim().toLowerCase();
+    return studentAnswers.some(
+      (ans) => ans === otherOpt || ans.includes(otherOpt) || otherOpt.includes(ans)
+    );
+  });
+
+  // If student did not match any coordinator's option, fallback to the primary (first) coordinator
+  if (!matchesOther) {
+    const first = coordinators[0];
+    const firstEmail = normalizeEmail(typeof first === "object" && first !== null ? first.email || "" : String(first));
+    if (firstEmail === cleanCoordEmail) {
+      return true;
+    }
+  }
+
+  return false;
+}
+

@@ -133,6 +133,46 @@ export default function TripViewPage() {
   const formattedDates = formatTripDates(trip.startDate, trip.endDate);
   const formattedDeadline = formatRegistrationDeadline(trip.registrationDeadline);
 
+  const totalCapacity = Number(trip.totalSeats || 0);
+  const approvedList = registrations.filter(
+    (r) => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent"
+  );
+  const pendingList = registrations.filter(
+    (r) => r.status === "registered" || r.status === "pending"
+  );
+  const waitlistedList = registrations
+    .filter((r) => r.status === "waitlisted")
+    .sort((a, b) => (Number(a.waitlistPosition) || 999999) - (Number(b.waitlistPosition) || 999999));
+  const withdrawnList = registrations.filter(
+    (r) => r.status === "withdrawn" || r.status === "declined"
+  );
+  const approvedCount = approvedList.length;
+  const availableSeats = Math.max(0, totalCapacity - approvedCount);
+  const totalRegistrations = registrations.length;
+
+  const getStudentId = (reg) => {
+    return (
+      reg.studentId ||
+      reg.formData?.["Roll Number"] ||
+      reg.formData?.["Student ID Number"] ||
+      reg.formData?.["Roll No"] ||
+      reg.formData?.["roll_number"] ||
+      "—"
+    );
+  };
+
+  const getStudentName = (reg) => {
+    return (
+      reg.studentName ||
+      reg.name ||
+      reg.formData?.["Full Name"] ||
+      reg.formData?.["Name"] ||
+      reg.formData?.["Student Name"] ||
+      reg.email?.split("@")[0] ||
+      "Student"
+    );
+  };
+
   return (
     <div className="space-y-8 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
       {/* Page Header */}
@@ -186,6 +226,69 @@ export default function TripViewPage() {
           </div>
         }
       />
+
+      {/* CAPACITY & REGISTRATION LIFECYCLE SUMMARY */}
+      <div className="bg-white rounded-2xl border border-stone-200/90 p-5 shadow-2xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 pb-3">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-sm text-stone-900 uppercase tracking-wide flex items-center gap-2">
+              <UsersIcon className="w-4 h-4 text-[#8B263E]" /> Capacity & Registration Breakdown
+            </h3>
+            {totalRegistrations > totalCapacity && totalCapacity > 0 && (
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                High Demand ({totalRegistrations} applied for {totalCapacity} seats)
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-stone-500 font-mono">
+            {availableSeats === 0 ? "⚠️ Full Capacity (0 seats left)" : `🔓 ${availableSeats} Available Seats`}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 pt-1">
+          <div className="bg-stone-50/70 p-3 rounded-xl border border-stone-200/80">
+            <span className="text-[10px] uppercase font-bold text-stone-500 block">Capacity</span>
+            <span className="text-xl font-bold text-stone-900 block mt-0.5">{totalCapacity || "Unlimited"}</span>
+            <span className="text-[10px] text-stone-400">Total Seats</span>
+          </div>
+
+          <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-200/70">
+            <span className="text-[10px] uppercase font-bold text-emerald-700 block">Approved</span>
+            <span className="text-xl font-bold text-emerald-900 block mt-0.5">{approvedCount}</span>
+            <span className="text-[10px] text-emerald-600">Allocated seats</span>
+          </div>
+
+          <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-200/70">
+            <span className="text-[10px] uppercase font-bold text-amber-700 block">Pending</span>
+            <span className="text-xl font-bold text-amber-900 block mt-0.5">{pendingList.length}</span>
+            <span className="text-[10px] text-amber-600">Awaiting review</span>
+          </div>
+
+          <div className="bg-amber-100/40 p-3 rounded-xl border border-amber-300/80">
+            <span className="text-[10px] uppercase font-bold text-amber-900 block">Waitlisted</span>
+            <span className="text-xl font-bold text-amber-950 block mt-0.5">{waitlistedList.length}</span>
+            <span className="text-[10px] text-amber-800">In waitlist queue</span>
+          </div>
+
+          <div className="bg-sky-50/50 p-3 rounded-xl border border-sky-200/70">
+            <span className="text-[10px] uppercase font-bold text-sky-700 block">Available</span>
+            <span className="text-xl font-bold text-sky-900 block mt-0.5">{availableSeats}</span>
+            <span className="text-[10px] text-sky-600">Open seats</span>
+          </div>
+
+          <div className="bg-zinc-50/70 p-3 rounded-xl border border-zinc-200/80">
+            <span className="text-[10px] uppercase font-bold text-zinc-600 block">Withdrawn</span>
+            <span className="text-xl font-bold text-zinc-800 block mt-0.5">{withdrawnList.length}</span>
+            <span className="text-[10px] text-zinc-500">Released seats</span>
+          </div>
+
+          <div className="bg-[#3B001B]/5 p-3 rounded-xl border border-[#3B001B]/20">
+            <span className="text-[10px] uppercase font-bold text-[#3B001B] block">Total Registered</span>
+            <span className="text-xl font-bold text-[#3B001B] block mt-0.5">{totalRegistrations}</span>
+            <span className="text-[10px] text-[#3B001B]/70">Preserved records</span>
+          </div>
+        </div>
+      </div>
 
       {/* METRIC CARDS */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -509,6 +612,98 @@ export default function TripViewPage() {
                       {reg.submittedAt
                         ? new Date(reg.submittedAt).toLocaleDateString()
                         : "—"}
+                    </AdminTableCell>
+                  </AdminTableRow>
+                );
+              })}
+            </AdminTableBody>
+          </AdminTable>
+        )}
+      </AdminCard>
+
+      {/* WAITING LIST SECTION */}
+      <AdminCard
+        title="Waiting List"
+        subtitle={`Deterministic FIFO waiting queue for unfilled seats (${waitlistedList.length} students waitlisted)`}
+        icon={ClockIcon}
+        headerActions={
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+            FIFO Promotion Queue
+          </span>
+        }
+        noPadding
+      >
+        {waitlistedList.length === 0 ? (
+          <div className="p-8">
+            <AdminEmptyState
+              title="No Students on Waitlist"
+              description="There are currently no students placed on the waiting list for this trip."
+              compact
+            />
+          </div>
+        ) : (
+          <AdminTable>
+            <AdminTableHead>
+              <tr>
+                <AdminTableHeaderCell>Position</AdminTableHeaderCell>
+                <AdminTableHeaderCell>Student</AdminTableHeaderCell>
+                <AdminTableHeaderCell>Student ID</AdminTableHeaderCell>
+                <AdminTableHeaderCell>Registration Time</AdminTableHeaderCell>
+                <AdminTableHeaderCell>Status</AdminTableHeaderCell>
+                <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
+              </tr>
+            </AdminTableHead>
+            <AdminTableBody>
+              {waitlistedList.map((reg, index) => {
+                const sName = getStudentName(reg);
+                const sId = getStudentId(reg);
+                const pos = reg.waitlistPosition || index + 1;
+                const uid = reg.uid || (reg.id ? reg.id.split("_")[1] : "");
+
+                return (
+                  <AdminTableRow key={reg.id || index}>
+                    <AdminTableCell>
+                      <span className="font-mono font-bold text-xs px-2.5 py-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 inline-block">
+                        #{pos}
+                      </span>
+                    </AdminTableCell>
+                    <AdminTableCell className="font-semibold text-stone-900">
+                      <div>
+                        <div>{sName}</div>
+                        <div className="text-[11px] text-stone-400 font-mono">{reg.email}</div>
+                      </div>
+                    </AdminTableCell>
+                    <AdminTableCell>
+                      <span className="font-mono text-xs font-semibold text-stone-800 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                        {sId}
+                      </span>
+                    </AdminTableCell>
+                    <AdminTableCell className="text-xs text-stone-500 whitespace-nowrap">
+                      {reg.submittedAt ? new Date(reg.submittedAt).toLocaleString("en-IN") : "—"}
+                    </AdminTableCell>
+                    <AdminTableCell>
+                      <AdminBadge status="waitlisted" size="sm">
+                        WAITLISTED #{pos}
+                      </AdminBadge>
+                    </AdminTableCell>
+                    <AdminTableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {uid && (
+                          <Link
+                            href={`/admin/students/${uid}`}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[#3B001B] hover:underline"
+                          >
+                            <span>Inspect</span>
+                            <ExternalLinkIcon className="size-3" />
+                          </Link>
+                        )}
+                        <Link
+                          href={`/admin/registrations?tripId=${trip.id}`}
+                          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-stone-100 text-stone-700 hover:bg-stone-200 font-medium"
+                        >
+                          Review
+                        </Link>
+                      </div>
                     </AdminTableCell>
                   </AdminTableRow>
                 );

@@ -7,3 +7,4 @@ export * from "./AdminLoadingState";
 export * from "./AdminConfirmDialog";
 export * from "./AdminFilterBar";
 export * from "./AdminTable";
+export * from "./AdminAccessRestricted";

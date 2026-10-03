@@ -1,26 +1,17 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import {
-  isAuthorizedAdmin,
-  normalizeEmail,
-  normalizeStudentId,
-} from "@/lib/coordinatorAuth";
+import { normalizeEmail, normalizeStudentId } from "@/lib/coordinatorAuth";
+import { requireFullAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 /**
  * GET /api/admin/coordinators
  * List all registered trip coordinators with optional search and filter.
- * Strictly protected by admin session or secret token.
+ * Strictly requires Level 2 Full Admin.
  */
 export async function GET(request: Request) {
   try {
-    const isAdmin = await isAuthorizedAdmin(request);
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Unauthorized: Administrator access required." },
-        { status: 401 }
-      );
-    }
+    await requireFullAdmin(request, { resourceType: "coordinator" });
 
     const { searchParams } = new URL(request.url);
     const searchQuery = (searchParams.get("q") || "").toLowerCase().trim();
@@ -58,16 +49,13 @@ export async function GET(request: Request) {
       const email = normalizeEmail(data.email || (doc.id.includes("@") ? doc.id : ""));
       const name = data.name || "Coordinator";
       const phone = data.phone || "";
-      const active = data.active !== false; // default true if undefined
+      const active = data.active !== undefined ? Boolean(data.active) : true;
       const notes = data.notes || "";
-      const createdAt = data.createdAt?.toDate?.()?.toISOString() || data.createdAt || null;
-      const updatedAt = data.updatedAt?.toDate?.()?.toISOString() || data.updatedAt || null;
 
       if (active) activeCount++;
       else inactiveCount++;
 
-      // Compute assigned trips count (by email or studentId)
-      const assignedTripsCount = Math.max(
+      const assignedCount = Math.max(
         tripAssignmentCounts.get(email) || 0,
         tripAssignmentCounts.get(studentId) || 0
       );
@@ -75,21 +63,18 @@ export async function GET(request: Request) {
       coordinators.push({
         id: doc.id,
         studentId,
-        email,
         name,
+        email,
         phone,
         active,
         notes,
-        assignedTripsCount,
-        createdAt,
-        updatedAt,
+        assignedTripsCount: assignedCount,
+        createdAt: data.createdAt?.toDate?.()?.toISOString() || null,
+        updatedAt: data.updatedAt?.toDate?.()?.toISOString() || null,
       });
     });
 
-    // Sort by name or creation
-    coordinators.sort((a, b) => a.name.localeCompare(b.name));
-
-    // Filter by search query if provided
+    // In-memory search filter
     if (searchQuery) {
       coordinators = coordinators.filter(
         (c) =>
@@ -118,6 +103,9 @@ export async function GET(request: Request) {
       },
     });
   } catch (error: any) {
+    if (error.status === 401 || error.status === 403) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("Admin Coordinators GET Error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to load coordinators." },
@@ -129,16 +117,11 @@ export async function GET(request: Request) {
 /**
  * POST /api/admin/coordinators
  * Create a new coordinator with Student ID, Name, Email, Phone, Status.
+ * Strictly requires Level 2 Full Admin.
  */
 export async function POST(request: Request) {
   try {
-    const isAdmin = await isAuthorizedAdmin(request);
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Unauthorized: Administrator access required." },
-        { status: 401 }
-      );
-    }
+    const admin = await requireFullAdmin(request, { resourceType: "coordinator" });
 
     const body = await request.json();
     const studentId = normalizeStudentId(body.studentId || "");
@@ -219,6 +202,22 @@ export async function POST(request: Request) {
 
     await docRef.set(coordinatorData);
 
+    // Audit Log
+    await recordAuditLog(
+      admin,
+      "ADD_COORDINATOR",
+      "coordinator",
+      docRef.id,
+      "success",
+      {
+        studentId,
+        name,
+        email,
+        phone,
+        active,
+      }
+    );
+
     return NextResponse.json(
       {
         success: true,
@@ -232,6 +231,9 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error: any) {
+    if (error.status === 401 || error.status === 403) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("Admin Coordinators POST Error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to create coordinator." },
@@ -241,35 +243,30 @@ export async function POST(request: Request) {
 }
 
 /**
- * PUT / PATCH /api/admin/coordinators
- * Update coordinator details or toggle active status.
+ * PUT /api/admin/coordinators
+ * Update coordinator details by ID.
+ * Strictly requires Level 2 Full Admin.
  */
 export async function PUT(request: Request) {
   try {
-    const isAdmin = await isAuthorizedAdmin(request);
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Unauthorized: Administrator access required." },
-        { status: 401 }
-      );
-    }
+    const admin = await requireFullAdmin(request, { resourceType: "coordinator" });
 
     const body = await request.json();
-    const id = (body.id || "").trim();
+    const id = body.id?.trim();
 
     if (!id) {
       return NextResponse.json(
-        { error: "Coordinator document ID is required for update." },
+        { error: "Coordinator ID is required." },
         { status: 400 }
       );
     }
 
     const docRef = adminDb.collection("coordinators").doc(id);
-    const existingSnap = await docRef.get();
+    const snap = await docRef.get();
 
-    if (!existingSnap.exists) {
+    if (!snap.exists) {
       return NextResponse.json(
-        { error: "Coordinator record not found." },
+        { error: "Coordinator not found." },
         { status: 404 }
       );
     }
@@ -286,10 +283,12 @@ export async function PUT(request: Request) {
           { status: 400 }
         );
       }
-      // Check duplicate studentId
+
+      // Check unique studentId
       const studentIdSnap = await adminDb
         .collection("coordinators")
         .where("studentId", "==", studentId)
+        .limit(2)
         .get();
 
       const isDuplicate = studentIdSnap.docs.some((d) => d.id !== id);
@@ -305,7 +304,10 @@ export async function PUT(request: Request) {
     if (body.name !== undefined) {
       const name = body.name.trim();
       if (!name) {
-        return NextResponse.json({ error: "Name cannot be empty." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Coordinator name cannot be empty." },
+          { status: 400 }
+        );
       }
       updates.name = name;
     }
@@ -316,6 +318,7 @@ export async function PUT(request: Request) {
         const emailSnap = await adminDb
           .collection("coordinators")
           .where("email", "==", email)
+          .limit(2)
           .get();
 
         const isDuplicate = emailSnap.docs.some((d) => d.id !== id);
@@ -343,12 +346,28 @@ export async function PUT(request: Request) {
 
     await docRef.update(updates);
 
+    // Audit Log
+    await recordAuditLog(
+      admin,
+      "UPDATE_COORDINATOR",
+      "coordinator",
+      id,
+      "success",
+      {
+        changedFields: Object.keys(updates).filter((k) => k !== "updatedAt"),
+        updates,
+      }
+    );
+
     return NextResponse.json({
       success: true,
       message: "Coordinator updated successfully.",
       updates,
     });
   } catch (error: any) {
+    if (error.status === 401 || error.status === 403) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("Admin Coordinators PUT Error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to update coordinator." },
@@ -360,16 +379,11 @@ export async function PUT(request: Request) {
 /**
  * DELETE /api/admin/coordinators
  * Remove a coordinator by id.
+ * Strictly requires Level 2 Full Admin.
  */
 export async function DELETE(request: Request) {
   try {
-    const isAdmin = await isAuthorizedAdmin(request);
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: "Unauthorized: Administrator access required." },
-        { status: 401 }
-      );
-    }
+    const admin = await requireFullAdmin(request, { resourceType: "coordinator" });
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
@@ -391,13 +405,31 @@ export async function DELETE(request: Request) {
       );
     }
 
+    const existingData = snap.data() || {};
     await docRef.delete();
+
+    // Audit Log
+    await recordAuditLog(
+      admin,
+      "DELETE_COORDINATOR",
+      "coordinator",
+      id,
+      "success",
+      {
+        name: existingData.name,
+        studentId: existingData.studentId,
+        email: existingData.email,
+      }
+    );
 
     return NextResponse.json({
       success: true,
       message: "Coordinator deleted successfully.",
     });
   } catch (error: any) {
+    if (error.status === 401 || error.status === 403) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("Admin Coordinators DELETE Error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to delete coordinator." },
@@ -407,4 +439,3 @@ export async function DELETE(request: Request) {
 }
 
 export { PUT as PATCH };
-

@@ -4,6 +4,11 @@ import * as yup from "yup";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAuthenticatedCoordinator } from "@/lib/coordinatorAuth";
+import { requireFullAdmin, recordAuditLog } from "@/lib/adminAuth";
+import { getTripCache, setTripCache, invalidateTripCache } from "@/lib/tripCache";
+import { invalidateStaffEmailsCache } from "@/lib/rateLimit";
+import { completeTripAndRecordHistory } from "@/lib/tripHistory";
+import { adjustTripCapacity } from "@/lib/tripCapacity";
 
 const formFieldSchema = yup.object().shape({
   id: yup.string().required(),
@@ -218,10 +223,11 @@ const tripSchema = yup.object().shape({
 
 export async function POST(request) {
   try {
-    const session = await getServerSession();
-    const isAdmin = !!session || (process.env.NODE_ENV === "development" && request.headers.get("x-admin-dev") === "true");
-    if (!isAdmin) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireFullAdmin(request, { resourceType: "trip" });
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await request.json();
@@ -323,6 +329,18 @@ export async function POST(request) {
     };
 
     const docRef = await adminDb.collection("trips").add(tripData);
+
+    // Record audit log
+    await recordAuditLog(admin, "CREATE_TRIP", "trip", docRef.id, "success", {
+      name: tripData.name,
+      destination: tripData.destination,
+      startDate: tripData.startDate,
+      endDate: tripData.endDate,
+    }).catch(() => {});
+
+    // Invalidate public trip cache
+    invalidateTripCache(docRef.id);
+    invalidateStaffEmailsCache();
 
     return NextResponse.json(
       {
@@ -462,7 +480,26 @@ export async function GET(request) {
       coordinator = await getAuthenticatedCoordinator(request);
     }
 
+    const isPublic = !isAdmin && !coordinator;
+
     if (singleId) {
+      const cacheKey = `trip:public:${singleId}`;
+      if (isPublic) {
+        const cachedTrip = getTripCache(cacheKey);
+        if (cachedTrip) {
+          return NextResponse.json(
+            { trip: cachedTrip, trips: [cachedTrip] },
+            {
+              status: 200,
+              headers: {
+                "X-Cache": "HIT",
+                "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+              },
+            }
+          );
+        }
+      }
+
       const doc = await adminDb.collection("trips").doc(singleId).get();
       if (!doc.exists) {
         return NextResponse.json(
@@ -482,10 +519,39 @@ export async function GET(request) {
         );
       }
 
+      if (isPublic) {
+        setTripCache(cacheKey, formattedTrip);
+      }
+
       return NextResponse.json(
         { trip: formattedTrip, trips: [formattedTrip] },
-        { status: 200 }
+        {
+          status: 200,
+          headers: isPublic
+            ? {
+                "X-Cache": "MISS",
+                "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+              }
+            : { "Cache-Control": "private, no-store, max-age=0" },
+        }
       );
+    }
+
+    const allCacheKey = "trips:public:all";
+    if (isPublic) {
+      const cachedTrips = getTripCache(allCacheKey);
+      if (cachedTrips) {
+        return NextResponse.json(
+          { trips: cachedTrips },
+          {
+            status: 200,
+            headers: {
+              "X-Cache": "HIT",
+              "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+            },
+          }
+        );
+      }
     }
 
     const querySnapshot = await adminDb
@@ -505,7 +571,22 @@ export async function GET(request) {
     // Clean up internal flag
     trips.forEach((t) => delete t._isUserAssigned);
 
-    return NextResponse.json({ trips }, { status: 200 });
+    if (isPublic) {
+      setTripCache(allCacheKey, trips);
+    }
+
+    return NextResponse.json(
+      { trips },
+      {
+        status: 200,
+        headers: isPublic
+          ? {
+              "X-Cache": "MISS",
+              "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+            }
+          : { "Cache-Control": "private, no-store, max-age=0" },
+      }
+    );
   } catch (error) {
     console.error("Error fetching trips:", error);
     return NextResponse.json(
@@ -517,12 +598,6 @@ export async function GET(request) {
 
 export async function DELETE(request) {
   try {
-    const session = await getServerSession();
-    const isAdmin = !!session || (process.env.NODE_ENV === "development" && request.headers.get("x-admin-dev") === "true");
-    if (!isAdmin) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
@@ -530,7 +605,22 @@ export async function DELETE(request) {
       return NextResponse.json({ error: "Trip ID is required" }, { status: 400 });
     }
 
+    let admin = null;
+    try {
+      admin = await requireFullAdmin(request, { resourceType: "trip", resourceId: id });
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
+    }
+
     await adminDb.collection("trips").doc(id).delete();
+
+    // Invalidate public trip cache
+    invalidateTripCache(id);
+    invalidateStaffEmailsCache();
+
+    // Record audit log
+    await recordAuditLog(admin, "DELETE_TRIP", "trip", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true, message: "Trip deleted successfully" }, { status: 200 });
   } catch (error) {
     console.error("DELETE Trip Error:", error);
@@ -540,10 +630,11 @@ export async function DELETE(request) {
 
 export async function PUT(request) {
   try {
-    const session = await getServerSession();
-    const isAdmin = !!session || (process.env.NODE_ENV === "development" && request.headers.get("x-admin-dev") === "true");
-    if (!isAdmin) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireFullAdmin(request, { resourceType: "trip" });
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await request.json();
@@ -652,7 +743,13 @@ export async function PUT(request) {
       });
     }
 
-    if (totalSeats !== undefined) updateData.totalSeats = Number(totalSeats);
+    if (totalSeats !== undefined) {
+      await adjustTripCapacity({
+        tripId,
+        newCapacity: Number(totalSeats),
+        adminContext: admin,
+      });
+    }
     if (fee !== undefined) updateData.fee = Number(fee);
     if (femaleReservedSeats !== undefined) updateData.femaleReservedSeats = Number(femaleReservedSeats);
     if (maleReservedSeats !== undefined) updateData.maleReservedSeats = Number(maleReservedSeats);
@@ -695,6 +792,24 @@ export async function PUT(request) {
     }
 
     await tripRef.update(updateData);
+
+    // If marked completed, index historical record into previousTripRecords
+    if (isCompleted === true) {
+      await completeTripAndRecordHistory(tripId, admin).catch((err) => {
+        console.error("Error creating historical trip record in PUT /api/trip:", err);
+      });
+    }
+
+    // Invalidate public trip cache
+    invalidateTripCache(tripId);
+    invalidateStaffEmailsCache();
+
+    // Record audit log
+    await recordAuditLog(admin, "UPDATE_TRIP", "trip", tripId, "success", {
+      name: name || undefined,
+      registrationOpen: registrationOpen !== undefined ? registrationOpen : undefined,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, message: "Trip details updated successfully" }, { status: 200 });
   } catch (error) {
     console.error("PUT Trip Error:", error);

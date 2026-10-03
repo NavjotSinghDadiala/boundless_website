@@ -16,6 +16,15 @@ import {
   getCoordinatorTripScope,
   isApprovedRegistrationStatus,
 } from "@/lib/coordinatorAuth";
+import { requireFullAdmin, recordAuditLog } from "@/lib/adminAuth";
+import { invalidateTripCache } from "@/lib/tripCache";
+import { completeTripAndRecordHistory } from "@/lib/tripHistory";
+import {
+  allocateSeatOrWaitlistTransaction,
+  releaseSeatAndPromoteWaitlist,
+  adjustTripCapacity,
+  enqueueWaitlistNotificationEmail,
+} from "@/lib/tripCapacity";
 
 // Helper to resolve the coordinator assigned to a student's chosen option
 function resolveAssignedCoordinator(coordinators, formData) {
@@ -158,9 +167,15 @@ export async function GET(req) {
       return NextResponse.json({ error: "Trip ID is required" }, { status: 400 });
     }
 
-    const isAdmin = await isAuthorizedAdmin(req);
-
-    if (!isAdmin) {
+    try {
+      await requireFullAdmin(req, { resourceType: "registration" });
+    } catch (authErr) {
+      if (authErr.status === 403) {
+        return NextResponse.json(
+          { error: "Forbidden: Full Administrator privileges required to access registrations." },
+          { status: 403 }
+        );
+      }
       const coordinatorToken = await getAuthenticatedCoordinator(req);
       if (coordinatorToken) {
         return NextResponse.json(
@@ -191,10 +206,16 @@ export async function GET(req) {
 /* POST → Update individual registration status (Admin Only - Coordinators Blocked with 403) */
 export async function POST(req) {
   try {
-    const isAdmin = await isAuthorizedAdmin(req);
-
-    // STRICT SECURITY BOUNDARY: Coordinators are strictly read-only and blocked from mutations
-    if (!isAdmin) {
+    let admin = null;
+    try {
+      admin = await requireFullAdmin(req, { resourceType: "registration" });
+    } catch (authErr) {
+      if (authErr.status === 403) {
+        return NextResponse.json(
+          { error: "Forbidden: Full Administrator privileges required to modify registrations." },
+          { status: 403 }
+        );
+      }
       const coordinatorToken = await getAuthenticatedCoordinator(req);
       if (coordinatorToken) {
         return NextResponse.json(
@@ -205,15 +226,7 @@ export async function POST(req) {
       return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
     }
 
-    let adminEmail = "Admin";
-    try {
-      const session = await getServerSession(authOptions);
-      if (session?.user?.email) {
-        adminEmail = session.user.email;
-      }
-    } catch {
-      // fallback
-    }
+    let adminEmail = admin?.email || "Admin";
 
     const clone = req.clone();
     const body = await clone.json();
@@ -282,10 +295,12 @@ export async function POST(req) {
     const tripSnap = await tripDocRef.get();
     const tripData = tripSnap.exists ? tripSnap.data() || {} : {};
 
+    const userEmail = email || regData.email || "";
+
     const nameKey = Object.keys(regData.formData || {}).find(
       (k) => k.toLowerCase().includes("name") || k.toLowerCase().includes("fullname")
     );
-    const userName = nameKey ? regData.formData[nameKey] : "Student";
+    const userName = (nameKey && regData.formData[nameKey]) || regData.name || regData.userName || "Student";
 
     const updatePayload = {
       updatedAt: FieldValue.serverTimestamp(),
@@ -382,95 +397,130 @@ export async function POST(req) {
         }
       }
 
-      // EMAIL IDEMPOTENCY:
-      const alreadySent = Boolean(
-        regData.approvalEmailSentAt ||
-        regData.approvalEmailStatus === "sent" ||
-        regData.status === "mail_sent"
-      );
-      let emailDispatched = false;
+      // SEAT ALLOCATION / WAITLIST TRANSACTION
+      let allocationResult;
+      await adminDb.runTransaction(async (transaction) => {
+        allocationResult = await allocateSeatOrWaitlistTransaction({
+          transaction,
+          tripId,
+          uid: uid || regData.uid,
+          regDocId: canonicalDocId || registrationId,
+          gender,
+          studentName: userName,
+          studentId: regData.formData?.["Student ID Number"] || regData.formData?.["Roll Number"] || "",
+          studentEmail: userEmail,
+          adminEmail,
+        });
+      });
 
-      if (!alreadySent && !tripData.emailsDisabled) {
-        const userEmail = regData.email;
-        const tripName = tripData.name || "Trip";
+      invalidateTripCache(tripId);
 
-        // Resolve city/option specific WhatsApp Link & QR Code strictly from Firestore
-        const { whatsappLink, qrCodeUrl } = resolveWhatsappDetails(tripData, regData.formData);
-        const assignedCoordinator = resolveAssignedCoordinator(tripData.coordinators, regData.formData);
+      if (allocationResult.allocated) {
+        // Allocated a seat: proceed to approval email flow
+        updatePayload.status = "approved_to_pay";
 
-        try {
-          const emailResult = await sendTripApprovalEmail({
-            student: {
-              name: userName,
-              email: userEmail,
-              studentId: regData.formData?.["Student ID Number"] || regData.formData?.["Roll Number"] || "",
-            },
-            trip: tripData,
-            coordinator: assignedCoordinator,
-            whatsappLink,
-            qrCodeUrl,
-          });
+        const alreadySent = Boolean(
+          regData.approvalEmailSentAt ||
+          regData.approvalEmailStatus === "sent" ||
+          regData.status === "mail_sent"
+        );
+        let emailDispatched = false;
 
-          updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
+        if (!alreadySent && !tripData.emailsDisabled) {
+          const tripName = tripData.name || "Trip";
+          const { whatsappLink, qrCodeUrl } = resolveWhatsappDetails(tripData, regData.formData);
+          const assignedCoordinator = resolveAssignedCoordinator(tripData.coordinators, regData.formData);
 
-          if (emailResult.success) {
-            updatePayload.approvalEmailSentAt = FieldValue.serverTimestamp();
-            updatePayload.approvalEmailStatus = "sent";
-            updatePayload.approvalEmailMessageId = emailResult.messageId || "sent";
-            updatePayload.approvalEmailError = null;
-            updatePayload.status = "mail_sent";
-            emailDispatched = true;
-            emailResultDetails = { sent: true, status: "sent", messageId: emailResult.messageId };
-          } else {
+          try {
+            const emailResult = await sendTripApprovalEmail({
+              student: {
+                name: userName,
+                email: userEmail,
+                studentId: regData.formData?.["Student ID Number"] || regData.formData?.["Roll Number"] || "",
+              },
+              trip: tripData,
+              coordinator: assignedCoordinator,
+              whatsappLink,
+              qrCodeUrl,
+            });
+
+            updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
+
+            if (emailResult.success) {
+              updatePayload.approvalEmailSentAt = FieldValue.serverTimestamp();
+              updatePayload.approvalEmailStatus = "sent";
+              updatePayload.approvalEmailMessageId = emailResult.messageId || "sent";
+              updatePayload.approvalEmailError = null;
+              updatePayload.status = "mail_sent";
+              emailDispatched = true;
+              emailResultDetails = { sent: true, status: "sent", messageId: emailResult.messageId };
+            } else {
+              updatePayload.approvalEmailStatus = "failed";
+              updatePayload.approvalEmailError = emailResult.error || "Failed to dispatch email";
+              updatePayload.status = "approved_to_pay";
+              emailResultDetails = { sent: false, status: "failed", error: emailResult.error };
+            }
+          } catch (emailErr) {
+            console.error("Failed to send Brevo approval email:", emailErr);
+            const safeError = emailErr?.message || "Failed to send approval email";
             updatePayload.approvalEmailStatus = "failed";
-            updatePayload.approvalEmailError = emailResult.error || "Failed to dispatch email";
+            updatePayload.approvalEmailError = safeError;
+            updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
             updatePayload.status = "approved_to_pay";
-            emailResultDetails = { sent: false, status: "failed", error: emailResult.error };
+            emailResultDetails = { sent: false, status: "failed", error: safeError };
           }
-        } catch (emailErr) {
-          console.error("Failed to send Brevo approval email:", emailErr);
-          const safeError = emailErr?.message || "Failed to send approval email";
-          updatePayload.approvalEmailStatus = "failed";
-          updatePayload.approvalEmailError = safeError;
-          updatePayload.approvalEmailLastAttemptAt = FieldValue.serverTimestamp();
-          updatePayload.status = "approved_to_pay";
-          emailResultDetails = { sent: false, status: "failed", error: safeError };
+        } else {
+          updatePayload.status = regData.status === "mail_sent" ? "mail_sent" : "approved_to_pay";
+          if (alreadySent) {
+            emailResultDetails = { sent: false, status: "already_sent", skipped: true };
+          } else if (tripData.emailsDisabled) {
+            updatePayload.approvalEmailStatus = "disabled";
+            emailResultDetails = { sent: false, status: "disabled", skipped: true };
+          }
         }
+
+        auditEntry = {
+          type: "approved",
+          actor: adminEmail,
+          message: emailDispatched
+            ? "Registration approved and confirmation email sent."
+            : alreadySent
+            ? "Registration approved (confirmation email was already sent)."
+            : tripData.emailsDisabled
+            ? "Registration approved (trip emails disabled)."
+            : `Registration approved (email delivery failed: ${updatePayload.approvalEmailError || "unknown error"}).`,
+          timestamp: new Date().toISOString(),
+        };
       } else {
-        updatePayload.status = regData.status === "mail_sent" ? "mail_sent" : "approved_to_pay";
-        if (alreadySent) {
-          emailResultDetails = { sent: false, status: "already_sent", skipped: true };
-        } else if (tripData.emailsDisabled) {
-          updatePayload.approvalEmailStatus = "disabled";
-          emailResultDetails = { sent: false, status: "disabled", skipped: true };
-        }
-      }
+        // No seats available: automatically assigned to waiting list
+        updatePayload.status = "waitlisted";
+        updatePayload.waitlistPosition = allocationResult.waitlistPosition;
+        emailResultDetails = { waitlisted: true, position: allocationResult.waitlistPosition };
 
-      // SEAT COUNTER MANAGEMENT:
-      if (!isConfirmedState(oldStatus)) {
-        let totalJoined = Number(tripData.totalJoined || 0) + 1;
-        let femaleJoined = Number(tripData.femaleJoined || 0) + (gender === "female" ? 1 : 0);
-        let maleJoined = Number(tripData.maleJoined || 0) + (gender === "male" ? 1 : 0);
-        const totalSeats = Number(tripData.totalSeats || 30);
-        const tripUpdate = { totalJoined, femaleJoined, maleJoined };
-        if (totalJoined >= totalSeats) {
-          tripUpdate.registrationOpen = false;
+        if (!tripData.emailsDisabled) {
+          try {
+            await enqueueWaitlistNotificationEmail({
+              tripId,
+              uid: uid || regData.uid,
+              email: userEmail,
+              studentName: userName,
+              tripName: tripData.name || "Expedition",
+              waitlistPosition: allocationResult.waitlistPosition,
+              startDate: tripData.startDate,
+              endDate: tripData.endDate,
+            });
+          } catch (wErr) {
+            console.warn("Failed to enqueue waitlist email:", wErr);
+          }
         }
-        await tripDocRef.update(tripUpdate);
-      }
 
-      auditEntry = {
-        type: "approved",
-        actor: adminEmail,
-        message: emailDispatched
-          ? "Registration approved and confirmation email sent."
-          : alreadySent
-          ? "Registration approved (confirmation email was already sent)."
-          : tripData.emailsDisabled
-          ? "Registration approved (trip emails disabled)."
-          : `Registration approved (email delivery failed: ${updatePayload.approvalEmailError || "unknown error"}).`,
-        timestamp: new Date().toISOString(),
-      };
+        auditEntry = {
+          type: "waitlisted",
+          actor: adminEmail,
+          message: `Trip capacity reached. Registration placed on waiting list at position #${allocationResult.waitlistPosition}.`,
+          timestamp: new Date().toISOString(),
+        };
+      }
     } else if (action === "resend_approval_email") {
       if (!isConfirmedState(regData.status)) {
         return NextResponse.json(
@@ -479,7 +529,6 @@ export async function POST(req) {
         );
       }
 
-      const userEmail = regData.email;
       const tripName = tripData.name || "Trip";
       const { whatsappLink, qrCodeUrl } = resolveWhatsappDetails(tripData, regData.formData);
       const assignedCoordinator = resolveAssignedCoordinator(tripData.coordinators, regData.formData);
@@ -543,16 +592,16 @@ export async function POST(req) {
         );
       }
 
+      await releaseSeatAndPromoteWaitlist({
+        tripId,
+        regDocId: canonicalDocId || registrationId,
+        newStatus: "rejected",
+        reason: rejectReason,
+        adminEmail,
+      });
+
       updatePayload.status = "rejected";
       updatePayload.issueText = rejectReason;
-
-      // Decrement seats if previously confirmed
-      if (isConfirmedState(oldStatus)) {
-        let totalJoined = Math.max(0, Number(tripData.totalJoined || 0) - 1);
-        let femaleJoined = gender === "female" ? Math.max(0, Number(tripData.femaleJoined || 0) - 1) : Number(tripData.femaleJoined || 0);
-        let maleJoined = gender === "male" ? Math.max(0, Number(tripData.maleJoined || 0) - 1) : Number(tripData.maleJoined || 0);
-        await tripDocRef.update({ totalJoined, femaleJoined, maleJoined });
-      }
 
       auditEntry = {
         type: "rejected",
@@ -578,17 +627,17 @@ export async function POST(req) {
         );
       }
 
+      await releaseSeatAndPromoteWaitlist({
+        tripId,
+        regDocId: canonicalDocId || registrationId,
+        newStatus: "action_required",
+        reason: correctionReason,
+        adminEmail,
+      });
+
       updatePayload.status = "action_required";
       updatePayload.issueText = correctionReason;
       updatePayload.actionRequiredFields = fields;
-
-      // Decrement seats if previously confirmed
-      if (isConfirmedState(oldStatus)) {
-        let totalJoined = Math.max(0, Number(tripData.totalJoined || 0) - 1);
-        let femaleJoined = gender === "female" ? Math.max(0, Number(tripData.femaleJoined || 0) - 1) : Number(tripData.femaleJoined || 0);
-        let maleJoined = gender === "male" ? Math.max(0, Number(tripData.maleJoined || 0) - 1) : Number(tripData.maleJoined || 0);
-        await tripDocRef.update({ totalJoined, femaleJoined, maleJoined });
-      }
 
       if (!tripData.emailsDisabled) {
         try {
@@ -622,22 +671,56 @@ export async function POST(req) {
         );
       }
 
+      await releaseSeatAndPromoteWaitlist({
+        tripId,
+        regDocId: canonicalDocId || registrationId,
+        newStatus: "registered",
+        reason: revokeReason,
+        adminEmail,
+      });
+
       updatePayload.status = "registered";
       updatePayload.issueText = revokeReason;
-
-      // Decrement seats if previously confirmed
-      if (isConfirmedState(oldStatus)) {
-        let totalJoined = Math.max(0, Number(tripData.totalJoined || 0) - 1);
-        let femaleJoined = gender === "female" ? Math.max(0, Number(tripData.femaleJoined || 0) - 1) : Number(tripData.femaleJoined || 0);
-        let maleJoined = gender === "male" ? Math.max(0, Number(tripData.maleJoined || 0) - 1) : Number(tripData.maleJoined || 0);
-        await tripDocRef.update({ totalJoined, femaleJoined, maleJoined });
-      }
 
       auditEntry = {
         type: "approval_revoked",
         actor: adminEmail,
         reason: revokeReason,
         message: revokeReason,
+        timestamp: new Date().toISOString(),
+      };
+    } else if (action === "withdrawn" || directStatus === "withdrawn") {
+      await releaseSeatAndPromoteWaitlist({
+        tripId,
+        regDocId: canonicalDocId || registrationId,
+        newStatus: "withdrawn",
+        reason: reason || "Student withdrawn",
+        adminEmail,
+      });
+
+      updatePayload.status = "withdrawn";
+
+      auditEntry = {
+        type: "withdrawn",
+        actor: adminEmail,
+        message: "Registration marked as withdrawn",
+        timestamp: new Date().toISOString(),
+      };
+    } else if (action === "declined" || directStatus === "declined") {
+      await releaseSeatAndPromoteWaitlist({
+        tripId,
+        regDocId: canonicalDocId || registrationId,
+        newStatus: "declined",
+        reason: reason || "Student declined",
+        adminEmail,
+      });
+
+      updatePayload.status = "declined";
+
+      auditEntry = {
+        type: "declined",
+        actor: adminEmail,
+        message: "Registration marked as declined",
         timestamp: new Date().toISOString(),
       };
     } else if (directStatus !== undefined) {
@@ -695,6 +778,22 @@ export async function POST(req) {
       }
     }
 
+    // Record audit log for registration mutation
+    await recordAuditLog(
+      admin,
+      action ? action.toUpperCase() : (directStatus ? `SET_STATUS_${directStatus.toUpperCase()}` : "UPDATE_REGISTRATION"),
+      "registration",
+      registrationId,
+      "success",
+      {
+        action: action || directStatus,
+        tripId,
+        studentName: userName,
+        studentEmail: userEmail,
+        status: updatePayload.status || regData.status,
+      }
+    ).catch(() => {});
+
     return NextResponse.json({
       success: true,
       message: "Registration updated successfully",
@@ -708,11 +807,19 @@ export async function POST(req) {
   }
 }
 
-/* PUT → Update event-level configuration (switches, seats, quota) - Admin Only */
+/* PUT → Update event-level configuration (switches, seats, quota) - Full Admin Only */
 export async function PUT(req) {
   try {
-    const isAdmin = await isAuthorizedAdmin(req);
-    if (!isAdmin) {
+    let admin = null;
+    try {
+      admin = await requireFullAdmin(req, { resourceType: "trip_settings" });
+    } catch (authErr) {
+      if (authErr.status === 403) {
+        return NextResponse.json(
+          { error: "Forbidden: Full Administrator privileges required to modify event settings." },
+          { status: 403 }
+        );
+      }
       const coordinatorToken = await getAuthenticatedCoordinator(req);
       if (coordinatorToken) {
         return NextResponse.json(
@@ -742,7 +849,13 @@ export async function PUT(req) {
 
     const updateData = {};
     if (registrationOpen !== undefined) updateData.registrationOpen = registrationOpen;
-    if (totalSeats !== undefined) updateData.totalSeats = Number(totalSeats);
+    if (totalSeats !== undefined) {
+      await adjustTripCapacity({
+        tripId,
+        newCapacity: Number(totalSeats),
+        adminContext: admin,
+      });
+    }
     if (femaleReservedSeats !== undefined) updateData.femaleReservedSeats = Number(femaleReservedSeats);
     if (maleReservedSeats !== undefined) updateData.maleReservedSeats = Number(maleReservedSeats);
     if (isCompleted !== undefined) {
@@ -754,9 +867,28 @@ export async function PUT(req) {
 
     await tripRef.update(updateData);
 
-    // If registrations were toggled to CLOSED, or marked completed, trigger roster archive
+    // Record audit log for trip settings update
+    await recordAuditLog(
+      admin,
+      "UPDATE_EVENT_SETTINGS",
+      "trip",
+      tripId,
+      "success",
+      {
+        changedFields: Object.keys(updateData),
+        updateData,
+      }
+    ).catch(() => {});
+
+    // If registrations were toggled to CLOSED, or marked completed, trigger roster archive and history indexing
     if (registrationOpen === false || isCompleted === true) {
       await archiveEventRoster(tripId);
+    }
+
+    if (isCompleted === true) {
+      await completeTripAndRecordHistory(tripId, admin).catch((err) => {
+        console.error("Error creating historical trip record in PUT /api/admin/registrations:", err);
+      });
     }
 
     return NextResponse.json({ success: true, message: "Trip settings updated successfully" });

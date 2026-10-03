@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { adminDb } from "@/lib/firebase-admin";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 const DEFAULT_VIDEO_ID = "6tDnTV1wHKI";
 
@@ -24,9 +24,11 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(request);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await request.json();
@@ -52,6 +54,10 @@ export async function POST(request) {
       youtubeVideoId: cleanVideoId,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
+
+    await recordAuditLog(admin, "UPDATE_SETTINGS", "settings", "homepage", "success", {
+      youtubeVideoId: cleanVideoId,
+    }).catch(() => {});
 
     return NextResponse.json({ success: true, youtubeVideoId: cleanVideoId }, { status: 200 });
   } catch (error) {

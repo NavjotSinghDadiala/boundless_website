@@ -18,6 +18,7 @@ import {
   CompassIcon,
   UserCheckIcon,
   ShieldCheck,
+  GraduationCap,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -30,88 +31,114 @@ import {
   SidebarMenu,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { AdminContext } from "@/lib/adminAuth";
 
-const data = {
-  user: {
-    name: "Admin",
-    email: "admin@boundless.com",
-    avatar: "/placeholder-user.jpg",
-  },
-  navMain: [
+interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
+  admin?: AdminContext;
+}
+
+export default function AppSidebar({ admin, ...props }: AppSidebarProps) {
+  const navMain = [
     {
       title: "Dashboard",
       url: "/admin",
       icon: LayoutDashboardIcon,
+      requiredLevel: "standard" as const,
     },
     {
       title: "Upcoming Trips",
       url: "/admin/trip/upcoming",
       icon: CalendarIcon,
+      requiredLevel: "standard" as const,
     },
     {
       title: "All Trips & Expeditions",
       url: "/admin/trip",
       icon: CompassIcon,
+      requiredLevel: "full" as const, // RESTRICTED SECTION 1
     },
     {
       title: "Previous Trips",
       url: "/admin/previous-trips",
       icon: Plane,
+      requiredLevel: "standard" as const,
     },
     {
       title: "Registrations",
       url: "/admin/registrations",
       icon: ClipboardListIcon,
+      requiredLevel: "full" as const, // RESTRICTED SECTION 2
+    },
+    {
+      title: "Students",
+      url: "/admin/students",
+      icon: GraduationCap,
+      requiredLevel: "standard" as const,
     },
     {
       title: "Trip Coordinators",
       url: "/admin/coordinators",
       icon: ShieldCheck,
+      requiredLevel: "full" as const, // RESTRICTED SECTION 3
     },
     {
       title: "Gallery",
       url: "/admin/gallery",
       icon: CameraIcon,
+      requiredLevel: "standard" as const,
     },
     {
       title: "City Meetups",
       url: "/admin/city-meetups",
       icon: MapPinIcon,
+      requiredLevel: "standard" as const,
     },
     {
       title: "HOD Election",
       url: "/admin/election",
       icon: Vote,
+      requiredLevel: "standard" as const,
     },
     {
       title: "Team",
       url: "/admin/team",
       icon: UsersIcon,
+      requiredLevel: "standard" as const,
     },
     {
       title: "WhatsApp Groups",
       url: "/admin/whatsapp",
       icon: MessageSquare,
+      requiredLevel: "standard" as const,
     },
     {
       title: "Proud Section",
       url: "/admin/proud",
       icon: Award,
+      requiredLevel: "standard" as const,
     },
     {
       title: "Homepage Settings",
       url: "/admin/settings",
       icon: SettingsIcon,
+      requiredLevel: "standard" as const,
     },
     {
-      title: "Registered Users",
+      title: "Admin Access",
       url: "/admin/users",
       icon: UserCheckIcon,
+      requiredLevel: "full" as const, // RESTRICTED SECTION 4
     },
-  ],
-};
+  ];
 
-export default function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const currentUser = {
+    name: admin?.name || "Administrator",
+    email: admin?.email || "admin@boundlesssociety.in",
+    avatar: "/placeholder-user.jpg",
+    studentId: admin?.studentId,
+    permissionLevel: admin?.permissionLevel || "standard",
+  };
+
   return (
     <Sidebar collapsible="offcanvas" className="border-r border-stone-200/80 bg-white" {...props}>
       <SidebarHeader className="border-b border-stone-100 p-4">
@@ -144,11 +171,11 @@ export default function AppSidebar({ ...props }: React.ComponentProps<typeof Sid
       </SidebarHeader>
 
       <SidebarContent className="py-2">
-        <NavMain items={data.navMain} />
+        <NavMain items={navMain} adminPermissionLevel={admin?.permissionLevel} />
       </SidebarContent>
 
       <SidebarFooter className="border-t border-stone-100 p-3 bg-stone-50/50">
-        <NavUser user={data.user} />
+        <NavUser user={currentUser} />
       </SidebarFooter>
     </Sidebar>
   );

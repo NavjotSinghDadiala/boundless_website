@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -14,6 +13,7 @@ import {
   deleteDoc,
   writeBatch,
 } from "firebase/firestore";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 // Import local data for seeding
 import { stats } from "@/data/stats";
@@ -86,9 +86,11 @@ export async function GET(req) {
 /* POST: Save new stat */
 export async function POST(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -106,6 +108,12 @@ export async function POST(req) {
     }
 
     const docRef = await addDoc(collection(db, "proud_stats"), statData);
+
+    await recordAuditLog(admin, "CREATE_PROUD_STAT", "proud_stat", docRef.id, "success", {
+      label: body.label,
+      number: statData.number,
+    }).catch(() => {});
+
     return NextResponse.json({ message: "Stat added", id: docRef.id }, { status: 201 });
   } catch (error) {
     console.error("POST Stats Error:", error);
@@ -116,9 +124,11 @@ export async function POST(req) {
 /* PUT: Update stat */
 export async function PUT(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -138,6 +148,12 @@ export async function PUT(req) {
     }
 
     await updateDoc(doc(db, "proud_stats", id), updateData);
+
+    await recordAuditLog(admin, "UPDATE_PROUD_STAT", "proud_stat", id, "success", {
+      label,
+      number: updateData.number,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, message: "Stat updated" }, { status: 200 });
   } catch (error) {
     console.error("PUT Stats Error:", error);
@@ -148,9 +164,11 @@ export async function PUT(req) {
 /* DELETE: Remove stat */
 export async function DELETE(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -161,6 +179,9 @@ export async function DELETE(req) {
     }
 
     await deleteDoc(doc(db, "proud_stats", id));
+
+    await recordAuditLog(admin, "DELETE_PROUD_STAT", "proud_stat", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true, message: "Stat deleted" }, { status: 200 });
   } catch (error) {
     console.error("DELETE Stat Error:", error);

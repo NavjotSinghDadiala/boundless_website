@@ -41,40 +41,38 @@ export async function GET(request) {
       return Response.json({ error: "Unauthorized domain. Only IITM emails are allowed." }, { status: 403 });
     }
 
-    // 1. Fetch current registration status for this specific trip (canonical first, lazy backfill fallback)
-    let registration = null;
-    if (tripId) {
-      const regResult = await getOrBackfillTripRegistration(tripId, uid, email);
-      registration = regResult.registration;
-    }
+    // 1 & 2 & 3: Run registration fetch, student profile, and profile read concurrently
+    const [regResult, studentProfile, profileSnap] = await Promise.all([
+      tripId
+        ? getOrBackfillTripRegistration(tripId, uid, email)
+        : Promise.resolve({ registration: null }),
+      getOrCreateStudentProfile(uid, email, decodedToken.name).catch((profErr) => {
+        console.error("Error obtaining canonical student profile in GET:", profErr);
+        return null;
+      }),
+      adminDb.collection("user_profiles").doc(email).get().catch(() => null),
+    ]);
 
-    // 2. Obtain or seed canonical student document in students/{uid}
-    let studentProfile = null;
-    try {
-      studentProfile = await getOrCreateStudentProfile(uid, email, decodedToken.name);
-    } catch (profErr) {
-      console.error("Error obtaining canonical student profile in GET:", profErr);
-    }
+    const registration = regResult?.registration || null;
 
     // 3. Fetch past registration data to auto-fill (try master profile first, fallback to past registrations)
-    let autofillData = null;
-    const profileSnap = await adminDb.collection("user_profiles").doc(email).get();
-    if (profileSnap.exists) {
-      autofillData = profileSnap.data().formData || null;
-    } else {
-      // Check canonical tripRegistrations first
+    let autofillData = profileSnap?.exists ? profileSnap.data().formData || null : null;
+    if (!autofillData) {
+      // Check canonical tripRegistrations first with tight limit
       const pastCanonicalSnap = await adminDb
         .collection("tripRegistrations")
         .where("uid", "==", uid)
+        .limit(3)
         .get();
 
       let pastDocs = [...pastCanonicalSnap.docs];
 
-      // Fallback to legacy user-registrations
+      // Fallback to legacy user-registrations if none found
       if (pastDocs.length === 0) {
         const pastLegacySnap = await adminDb
           .collection("user-registrations")
           .where("email", "==", email)
+          .limit(3)
           .get();
         pastDocs = [...pastLegacySnap.docs];
       }
@@ -112,7 +110,13 @@ export async function GET(request) {
       sanitizedRegistration = rest;
     }
 
-    return Response.json({ registration: sanitizedRegistration, autofillData, studentProfile }, { status: 200 });
+    return Response.json(
+      { registration: sanitizedRegistration, autofillData, studentProfile },
+      {
+        status: 200,
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      }
+    );
   } catch (error) {
     console.error("GET user-registration error:", error);
     return Response.json({ error: "Internal server error" }, { status: 500 });
@@ -159,7 +163,8 @@ export async function POST(request) {
     const isStaff = await isStaffRequest(null, token);
     if (!isStaff) {
       const ip = getClientIp(request);
-      const ipRl = checkRateLimit(`register:ip:${ip}`, { limit: 60, windowMs: 60_000 });
+      // Campus NAT accommodates up to 2000 requests/min per public proxy IP, while protecting per-user abuse with 15/min limit
+      const ipRl = checkRateLimit(`register:ip:${ip}`, { limit: 2000, windowMs: 60_000 });
       const userRl = checkRateLimit(`register:uid:${uid}`, { limit: 15, windowMs: 60_000 });
       if (!ipRl.allowed || !userRl.allowed) {
         return Response.json(
@@ -173,54 +178,38 @@ export async function POST(request) {
       return Response.json({ error: "Missing required fields (tripId, formData)" }, { status: 400 });
     }
 
-    // Ensure canonical student profile document exists in students/{uid}
-    await getOrCreateStudentProfile(uid, email, decodedToken.name);
+    // Parallel pre-read: Trip metadata, Canonical student doc, and Legacy master profile in 1 roundtrip
+    const [tripSnap, studentDocSnap, profileSnap] = await Promise.all([
+      adminDb.collection("trips").doc(tripId).get(),
+      adminDb.collection("students").doc(uid).get(),
+      adminDb.collection("user_profiles").doc(email).get(),
+    ]);
 
-    // Check if trip registration is open
-    const tripSnap = await adminDb.collection("trips").doc(tripId).get();
     if (!tripSnap.exists) {
       return Response.json({ error: "Trip not found" }, { status: 404 });
     }
-    const tripData = tripSnap.data();
+    const tripData = tripSnap.data() || {};
     if (tripData.registrationOpen === false) {
       return Response.json({ error: "Registration for this trip is closed" }, { status: 400 });
     }
 
-    // Prevent duplicate registrations using canonical UID-first check (alias-proof)
-    const isDuplicate = await checkIsDuplicateTripRegistration(tripId, uid, email);
-    if (isDuplicate) {
-      return Response.json({ error: "You are already registered for this trip." }, { status: 400 });
-    }
-
-    // Fetch user's past registrations to enforce read-only prefilled data
-    let pastFormData = null;
-    const pastCanonicalSnap = await adminDb
-      .collection("tripRegistrations")
-      .where("uid", "==", uid)
-      .get();
-    let pastDocs = [...pastCanonicalSnap.docs];
-
-    if (pastDocs.length === 0) {
-      const pastLegacySnap = await adminDb
-        .collection("user-registrations")
-        .where("email", "==", email)
+    // Fast past form data lookup (prefer user_profiles, fallback to past registration if needed)
+    let pastFormData = profileSnap.exists ? profileSnap.data().formData || null : null;
+    if (!pastFormData) {
+      const pastCanonicalSnap = await adminDb
+        .collection("tripRegistrations")
+        .where("uid", "==", uid)
+        .limit(1)
         .get();
-      pastDocs = [...pastLegacySnap.docs];
-    }
-
-    if (pastDocs.length > 0) {
-      const sortedDocs = pastDocs.sort((a, b) => {
-        const timeA = a.data().submittedAt?.toDate?.()?.getTime() || 0;
-        const timeB = b.data().submittedAt?.toDate?.()?.getTime() || 0;
-        return timeB - timeA;
-      });
-      pastFormData = sortedDocs[0].data().formData || null;
+      if (!pastCanonicalSnap.empty) {
+        pastFormData = pastCanonicalSnap.docs[0].data().formData || null;
+      }
     }
 
     if (pastFormData) {
-      // Force reuse of past Student ID copy if it exists
+      // Reuse past Student ID copy if student did not explicitly upload a replacement
       const pastIdCopy = pastFormData["Student ID Card Copy"];
-      if (pastIdCopy) {
+      if (!formData["Student ID Card Copy"] && pastIdCopy) {
         formData["Student ID Card Copy"] = pastIdCopy;
       }
 
@@ -234,22 +223,57 @@ export async function POST(request) {
       }
     }
 
+    const studentDocData = studentDocSnap.exists ? studentDocSnap.data() || {} : {};
+
     // Automatically detect gender from formData keys (e.g. key containing "gender" or "sex")
     const genderKey = Object.keys(formData).find(
       (k) => k.toLowerCase().includes("gender") || k.toLowerCase() === "sex"
     );
     let gender = "unknown";
-    if (genderKey) {
-      const val = String(formData[genderKey]).toLowerCase();
-      if (val.startsWith("f")) gender = "female";
-      else if (val.startsWith("m")) gender = "male";
-      else gender = "other";
+    let rawGenderVal = "";
+    if (genderKey && formData[genderKey]) {
+      rawGenderVal = String(formData[genderKey]).toLowerCase().trim();
+      if (rawGenderVal.startsWith("f")) gender = "female";
+      else if (rawGenderVal.startsWith("m")) gender = "male";
+      else if (rawGenderVal === "unknown") gender = "unknown";
+      else if (rawGenderVal) gender = "other";
+    }
+    if (gender === "unknown" && rawGenderVal !== "unknown" && studentDocData.gender && studentDocData.gender !== "unknown") {
+      gender = studentDocData.gender;
     }
 
-    // Check if user has a verified Student ID in canonical students/{uid} or past registrations
-    const studentDocSnap = await adminDb.collection("students").doc(uid).get();
-    let isIdVerified = studentDocSnap.exists && studentDocSnap.data()?.studentIdVerified === true;
+    const isConfirmedUnknown = Boolean(
+      body.confirmUnknownGender ||
+      formData.confirmUnknownGender ||
+      rawGenderVal === "unknown" ||
+      body.confirmedUnknown
+    );
 
+    if (gender === "unknown") {
+      if (isConfirmedUnknown) {
+        formData["Gender"] = "Unknown";
+      } else {
+        return Response.json(
+          { error: "Gender is required. Please select your gender to complete registration." },
+          { status: 400 }
+        );
+      }
+    } else {
+      formData["Gender"] = gender.charAt(0).toUpperCase() + gender.slice(1);
+      // Optional: sync to student profile ONLY if student explicitly opted in
+      if (body.alsoUpdateProfileGender) {
+        await studentDocRef.set(
+          { gender, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true }
+        ).catch((err) => console.warn("Failed to sync gender to student profile:", err));
+      }
+    }
+    delete formData["gender"];
+    delete formData["sex"];
+    delete formData["confirmUnknownGender"];
+
+    // Check if user has a verified Student ID
+    let isIdVerified = studentDocSnap.exists && studentDocSnap.data()?.studentIdVerified === true;
     if (!isIdVerified) {
       const pastRegsSnap = await adminDb
         .collection("user-registrations")
@@ -260,41 +284,72 @@ export async function POST(request) {
       isIdVerified = !pastRegsSnap.empty;
     }
 
-    // Location snapshot & validation (State + City / District)
+    // Contact phone snapshot & compulsory validation
+    const submittedPhone =
+      formData["Contact Number"] || formData["Phone"] || formData["Phone Number"] || formData["phone"];
+    const finalPhone = submittedPhone || studentDocData.phone;
+    if (!finalPhone || !String(finalPhone).trim()) {
+      return Response.json(
+        { error: "Phone number is required. Please enter a valid 10-digit mobile number." },
+        { status: 400 }
+      );
+    }
+    let digits = String(finalPhone).replace(/\D/g, "");
+    if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+    else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+    if (!/^[6-9]\d{9}$/.test(digits)) {
+      return Response.json(
+        { error: "Invalid mobile phone number. Please enter a valid 10-digit Indian mobile number." },
+        { status: 400 }
+      );
+    }
+    formData["Contact Number"] = digits;
+    delete formData["Phone"];
+    delete formData["Phone Number"];
+    delete formData["phone"];
+
+    // Location snapshot & compulsory validation (State + City / District)
     const submittedState = formData["State"] || formData["state"];
     const submittedDistrict =
       formData["City / District"] || formData["cityDistrict"] || formData["district"];
 
-    const studentDocData = studentDocSnap.exists ? studentDocSnap.data() || {} : {};
     const finalState = submittedState || studentDocData.state;
     const finalDistrict = submittedDistrict || studentDocData.cityDistrict;
 
-    if (finalState) {
-      if (!isValidState(finalState)) {
-        return Response.json(
-          { error: "Invalid state. Please select a valid Indian State or Union Territory." },
-          { status: 400 }
-        );
-      }
-      formData["State"] = canonicalizeState(finalState);
+    if (!finalState || !String(finalState).trim()) {
+      return Response.json(
+        { error: "State is required. Please select your residential state." },
+        { status: 400 }
+      );
     }
-
-    if (finalDistrict) {
-      if (!finalState || !isValidDistrict(finalState, finalDistrict)) {
-        return Response.json(
-          { error: `Invalid city/district "${finalDistrict}" for state "${finalState}".` },
-          { status: 400 }
-        );
-      }
-      formData["City / District"] = canonicalizeDistrict(finalState, finalDistrict);
+    if (!isValidState(finalState)) {
+      return Response.json(
+        { error: "Invalid state. Please select a valid Indian State or Union Territory." },
+        { status: 400 }
+      );
     }
+    const canonicalState = canonicalizeState(finalState);
+    formData["State"] = canonicalState;
+    delete formData["state"];
 
-    // Dual-write:
-    // 1. tripRegistrations/{tripId}_{uid} (Canonical)
-    // 2. user-registrations/{tripId}_{email} (Legacy)
-    // 3. user_profiles/{email} (Legacy User Profile)
-    // 4. students/{uid} (Canonical Student Profile)
-    const { canonicalId } = await saveDualTripRegistration({
+    if (!finalDistrict || !String(finalDistrict).trim()) {
+      return Response.json(
+        { error: "City / District is required. Please select your district." },
+        { status: 400 }
+      );
+    }
+    if (!isValidDistrict(canonicalState, finalDistrict)) {
+      return Response.json(
+        { error: `Invalid city/district "${finalDistrict}" for state "${canonicalState}".` },
+        { status: 400 }
+      );
+    }
+    formData["City / District"] = canonicalizeDistrict(canonicalState, finalDistrict);
+    delete formData["cityDistrict"];
+    delete formData["district"];
+
+    // Save with atomic transaction on canonical ID tripRegistrations/{tripId}_{uid}
+    const { canonicalId, alreadyExists } = await saveDualTripRegistration({
       tripId,
       uid,
       email,
@@ -302,7 +357,16 @@ export async function POST(request) {
       gender,
       studentIdVerified: isIdVerified,
       consentResponses: consentResponses || [],
+      studentName: studentDocData.name || decodedToken.name || "",
+      studentRoll: studentDocData.studentId || "",
     });
+
+    if (alreadyExists) {
+      return Response.json(
+        { error: "You are already registered for this trip.", id: canonicalId },
+        { status: 400 }
+      );
+    }
 
     return Response.json(
       { success: true, message: "Trip Registration successful!", id: canonicalId },
@@ -354,7 +418,7 @@ export async function PATCH(request) {
     const isStaff = await isStaffRequest(null, token);
     if (!isStaff) {
       const ip = getClientIp(request);
-      const ipRl = checkRateLimit(`patch-reg:ip:${ip}`, { limit: 60, windowMs: 60_000 });
+      const ipRl = checkRateLimit(`patch-reg:ip:${ip}`, { limit: 2000, windowMs: 60_000 });
       const userRl = checkRateLimit(`patch-reg:uid:${uid}`, { limit: 20, windowMs: 60_000 });
       if (!ipRl.allowed || !userRl.allowed) {
         return Response.json(

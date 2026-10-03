@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -14,6 +13,7 @@ import {
   deleteDoc,
   writeBatch,
 } from "firebase/firestore";
+import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 // Import local data for seeding
 import { curvedMarque } from "@/data/curvedMarquee";
@@ -86,9 +86,11 @@ export async function GET(req) {
 /* POST: Save new marquee item */
 export async function POST(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -106,6 +108,11 @@ export async function POST(req) {
     }
 
     const docRef = await addDoc(collection(db, "proud_marquee"), marqueeData);
+
+    await recordAuditLog(admin, "CREATE_PROUD_MARQUEE", "proud_marquee", docRef.id, "success", {
+      title: body.title,
+    }).catch(() => {});
+
     return NextResponse.json({ message: "Marquee item added", id: docRef.id }, { status: 201 });
   } catch (error) {
     console.error("POST Marquee Error:", error);
@@ -116,9 +123,11 @@ export async function POST(req) {
 /* PUT: Update marquee item */
 export async function PUT(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const body = await req.json();
@@ -138,6 +147,11 @@ export async function PUT(req) {
     }
 
     await updateDoc(doc(db, "proud_marquee", id), updateData);
+
+    await recordAuditLog(admin, "UPDATE_PROUD_MARQUEE", "proud_marquee", id, "success", {
+      title,
+    }).catch(() => {});
+
     return NextResponse.json({ success: true, message: "Marquee item updated" }, { status: 200 });
   } catch (error) {
     console.error("PUT Marquee Error:", error);
@@ -148,9 +162,11 @@ export async function PUT(req) {
 /* DELETE: Remove marquee item */
 export async function DELETE(req) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    let admin = null;
+    try {
+      admin = await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
     }
 
     const { searchParams } = new URL(req.url);
@@ -161,6 +177,9 @@ export async function DELETE(req) {
     }
 
     await deleteDoc(doc(db, "proud_marquee", id));
+
+    await recordAuditLog(admin, "DELETE_PROUD_MARQUEE", "proud_marquee", id, "success").catch(() => {});
+
     return NextResponse.json({ success: true, message: "Marquee item deleted" }, { status: 200 });
   } catch (error) {
     console.error("DELETE Marquee Error:", error);

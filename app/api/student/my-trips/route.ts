@@ -40,6 +40,7 @@ async function authenticateStudent(request: Request) {
 function mapStatus(status: string): string {
   switch (status) {
     case "registered":
+    case "pending":
       return "Pending Approval";
     case "action_required":
       return "Action Required";
@@ -47,8 +48,14 @@ function mapStatus(status: string): string {
     case "mail_sent":
     case "paid":
       return "Approved";
+    case "waitlisted":
+      return "Waitlisted";
+    case "withdrawn":
+      return "Withdrawn";
+    case "declined":
+      return "Declined";
     case "rejected":
-      return "Rejected";
+      return "Registration Not Approved";
     default:
       return "Pending Approval";
   }
@@ -129,6 +136,7 @@ export async function GET(request: Request) {
       studentId: studentData.studentId || "",
       gender: studentData.gender || "unknown",
       studentIdVerified: Boolean(studentData.studentIdVerified),
+      phone: studentData.phone || "",
       state: studentData.state || "",
       cityDistrict: studentData.cityDistrict || "",
     };
@@ -264,6 +272,7 @@ export async function GET(request: Request) {
           reg.formData?.state ||
           null,
         trip: sanitizeTripForStudent(tripData, approved),
+        waitlistPosition: reg.waitlistPosition ? Number(reg.waitlistPosition) : null,
       });
     }
 
