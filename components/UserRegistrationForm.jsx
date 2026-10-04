@@ -51,6 +51,141 @@ const CollapsibleDescription = ({ text }) => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// Registration submit error reporting (shown in-page, no alert()/DevTools needed)
+// ---------------------------------------------------------------------------
+const SUBMIT_TIMEOUT_MS = 45_000;
+
+// Plain random reference ID (NOT a hash), e.g. REG-8F29A1C70B
+const generateRequestId = () => {
+    try {
+        const bytes = new Uint8Array(5);
+        window.crypto.getRandomValues(bytes);
+        return `REG-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+    } catch (_) {
+        return `REG-${Math.random().toString(36).slice(2, 12).toUpperCase()}`;
+    }
+};
+
+const GENERIC_FAILURE_MESSAGE =
+    "We couldn't complete your registration right now. Please try again. If the problem continues, contact the Boundless team and provide the reference number.";
+
+// Student-facing messages. Raw backend exception text is never shown; for 4xx
+// responses the server's curated message (e.g. "Phone number is required") is used.
+const getFriendlySubmitMessage = (code, status, serverMessage) => {
+    switch (code) {
+        case "QUOTA_EXHAUSTED":
+        case "RATE_LIMITED":
+            return "Registration service is temporarily busy. Please try again in a few moments.";
+        case "REGISTRATION_CLOSED":
+            return "Registration for this trip is currently closed.";
+        case "ALREADY_REGISTERED":
+            return "You already have a registration for this trip.";
+        case "CAPACITY_FULL":
+            return "All available seats are currently filled. Your registration can be placed on the waiting list.";
+        case "TRIP_NOT_FOUND":
+            return "This trip could not be found. Please refresh the page and try again.";
+        case "AUTH_FAILED":
+            if (status === 403 && serverMessage) return serverMessage;
+            return "Your Google sign-in session has expired. Please sign in again.";
+        case "VALIDATION_FAILED":
+            return serverMessage || "Some registration information is missing or invalid. Please review your details.";
+        case "NETWORK_ERROR":
+            return "We couldn't reach the registration service. Please check your internet connection and try again.";
+        case "TIMEOUT":
+            return "The registration service took too long to respond. Please check your registration status before trying again.";
+        default:
+            if (status && status >= 400 && status < 500 && serverMessage) return serverMessage;
+            return GENERIC_FAILURE_MESSAGE;
+    }
+};
+
+const SubmitErrorPanel = ({ error, onRetry, onDismiss, retryDisabled }) => {
+    const [copied, setCopied] = useState(false);
+    if (!error) return null;
+    const copyReference = async () => {
+        try {
+            await navigator.clipboard.writeText(error.requestId);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch (_) {
+            // Clipboard unavailable: the reference text is user-select:all so it can be long-pressed.
+        }
+    };
+    return (
+        <div
+            id="registration-submit-error"
+            role="alert"
+            aria-live="assertive"
+            className="w-full max-w-full overflow-hidden rounded-2xl border-2 border-red-200 bg-red-50 p-4 sm:p-5 text-left space-y-3 animate-in fade-in duration-200"
+        >
+            <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                    <h3 className="font-oswald font-bold uppercase tracking-wide text-sm sm:text-base text-red-800 leading-tight">
+                        Registration couldn't be completed
+                    </h3>
+                    <p className="text-xs text-red-700/90 font-medium mt-0.5">We couldn't submit your registration.</p>
+                </div>
+                {onDismiss && (
+                    <button
+                        type="button"
+                        id="registration-submit-error-dismiss"
+                        onClick={onDismiss}
+                        aria-label="Dismiss error"
+                        className="p-1 -m-1 text-red-500 hover:text-red-800 shrink-0 cursor-pointer"
+                    >
+                        <X className="w-4 h-4" />
+                    </button>
+                )}
+            </div>
+
+            <div className="rounded-xl bg-white/80 border border-red-100 p-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-red-500 block">Error</span>
+                <p className="text-sm text-red-900 font-semibold leading-snug break-words mt-0.5">{error.message}</p>
+            </div>
+
+            {error.requestId && (
+                <div className="rounded-xl bg-white/80 border border-red-100 p-3 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-red-500 block">Reference</span>
+                        <code
+                            id="registration-submit-error-reference"
+                            className="text-sm font-mono font-bold text-red-900 break-all select-all"
+                        >
+                            {error.requestId}
+                        </code>
+                    </div>
+                    <button
+                        type="button"
+                        id="registration-submit-error-copy"
+                        onClick={copyReference}
+                        className="shrink-0 text-[11px] font-bold uppercase tracking-wider px-3 py-2 rounded-full border border-red-200 text-red-700 bg-white hover:bg-red-100 cursor-pointer"
+                    >
+                        {copied ? "Copied" : "Copy"}
+                    </button>
+                </div>
+            )}
+
+            <p className="text-xs text-red-700/90 font-medium">
+                Please try again. If it keeps failing, send the reference above to the Boundless team.
+            </p>
+
+            {onRetry && (
+                <button
+                    type="button"
+                    id="registration-submit-error-retry"
+                    onClick={onRetry}
+                    disabled={retryDisabled}
+                    className="w-full min-h-[44px] py-3 px-4 rounded-full bg-red-700 hover:bg-red-800 active:scale-[0.98] text-white text-xs sm:text-sm font-oswald font-bold uppercase tracking-wider transition disabled:opacity-60 cursor-pointer"
+                >
+                    Try Again
+                </button>
+            )}
+        </div>
+    );
+};
+
 export default function UserRegistrationForm({ user, setUser, tripId, trip, autofillData, studentProfile, onSuccess }) {
     const dbRef = useRef(null);
     const [dbReady, setDbReady] = useState(false);
@@ -65,6 +200,8 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
     const [formValues, setFormValues] = useState({});
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
+    // In-page submit error: { message, code, requestId }
+    const [submitError, setSubmitError] = useState(null);
     const [step, setStep] = useState(1);
 
     // Consent Form State
@@ -775,21 +912,34 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
     };
 
     const handleSubmit = async (e) => {
-        e.preventDefault();
+        e?.preventDefault?.();
 
         if (!user || !tripId) return;
 
         // Synchronous lock against rapid multi-click/double-submit
         if (isSubmittingRef.current || submitting) return;
 
+        // One reference ID per submit attempt, sent to the server so client + server logs line up
+        const requestId = generateRequestId();
+        const showSubmitError = (code, message, refId = requestId) =>
+            setSubmitError({ code, message, requestId: refId });
+        setSubmitError(null);
+
         // Prevent submission if anything is still uploading
         if (uploadingStudentId || Object.values(uploadingConsent).some(Boolean) || Object.values(uploadingDynamic).some(Boolean)) {
-            alert("Please wait for all file uploads to complete before submitting.");
+            showSubmitError("UPLOAD_PENDING", "Please wait for all file uploads to complete before submitting.", null);
             return;
         }
 
         isSubmittingRef.current = true;
         setSubmitting(true);
+
+        const controller = new AbortController();
+        let timedOut = false;
+        const timeoutHandle = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+        }, SUBMIT_TIMEOUT_MS);
 
         try {
             const token = await user.getIdToken();
@@ -845,7 +995,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
                 // Unverified / first-time student:
                 const availableIdCopy = studentIdFile || autofillData?.["Student ID Card Copy"];
                 if (!availableIdCopy || typeof availableIdCopy !== "string") {
-                    alert("Please upload your Student ID Card copy.");
+                    showSubmitError("VALIDATION_FAILED", "Please upload your Student ID Card copy.", null);
                     setSubmitting(false);
                     isSubmittingRef.current = false;
                     return;
@@ -866,7 +1016,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
                 for (const t of consentTemplates) {
                     const fileUrl = consentFiles[t.id];
                     if (!fileUrl || typeof fileUrl !== "string") {
-                        alert(`Please upload the signed copy of: ${t.name}`);
+                        showSubmitError("VALIDATION_FAILED", `Please upload the signed copy of: ${t.name}`, null);
                         setSubmitting(false);
                         isSubmittingRef.current = false;
                         return;
@@ -882,7 +1032,7 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
                     (s) => s.required !== false && !consentAccepted[s.id]
                 );
                 if (missing.length > 0) {
-                    alert("Please accept all required participation declarations before submitting.");
+                    showSubmitError("VALIDATION_FAILED", "Please accept all required participation declarations before submitting.", null);
                     setSubmitting(false);
                     isSubmittingRef.current = false;
                     return;
@@ -900,7 +1050,8 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
                 method: "POST",
                 headers: { 
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`
+                    "Authorization": `Bearer ${token}`,
+                    "X-Request-Id": requestId,
                 },
                 body: JSON.stringify({
                     tripId,
@@ -909,28 +1060,40 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
                     alsoUpdateProfileGender,
                     confirmUnknownGender: genderContact === "Unknown"
                 }),
+                signal: controller.signal,
             });
 
-            const data = await res.json();
+            // Tolerate non-JSON bodies (e.g. platform 502/504 HTML pages)
+            let data = {};
+            try {
+                data = await res.json();
+            } catch (_) {
+                data = {};
+            }
+            const refId = data?.requestId || res.headers.get("X-Request-Id") || requestId;
+
             if (!res.ok) {
                 // If user is already registered (e.g. from concurrent tab or retry), treat as success and refresh status
-                if (data.error && data.error.includes("already registered")) {
+                if (data?.code === "ALREADY_REGISTERED" || (data?.error && data.error.includes("already registered"))) {
                     if (onSuccess) onSuccess();
                     return;
                 }
-                alert(data.error || "Submission failed");
+                const code = data?.code || (res.status >= 500 ? "INTERNAL_ERROR" : "REGISTRATION_FAILED");
+                console.error(`[REGISTRATION][${refId}] submit failed status=${res.status} code=${code}`);
+                showSubmitError(code, getFriendlySubmitMessage(code, res.status, data?.error), refId);
                 return;
             }
             if (onSuccess) {
                 onSuccess();
             }
         } catch (error) {
-            console.error("Submission error:", error);
-            // Network failure recovery: check if registration actually succeeded on the server before alerting error
+            console.error(`[REGISTRATION][${requestId}] submission error:`, error);
+            // Network failure / timeout recovery: check if registration actually succeeded on the server before showing an error
             try {
                 const token = await user.getIdToken();
                 const checkRes = await fetch(`/api/user-registration?tripId=${tripId}`, {
                     headers: { Authorization: `Bearer ${token}` },
+                    signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(10_000) : undefined,
                 });
                 if (checkRes.ok) {
                     const checkData = await checkRes.json();
@@ -942,8 +1105,10 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
             } catch (recoveryErr) {
                 console.error("Recovery check error:", recoveryErr);
             }
-            alert("Something went wrong while submitting your registration. Your registration may already have been received. Check your registration status before trying again.");
+            const code = timedOut ? "TIMEOUT" : "NETWORK_ERROR";
+            showSubmitError(code, getFriendlySubmitMessage(code));
         } finally {
+            clearTimeout(timeoutHandle);
             setSubmitting(false);
             isSubmittingRef.current = false;
         }
@@ -1810,9 +1975,17 @@ export default function UserRegistrationForm({ user, setUser, tripId, trip, auto
                 </label>
               </div>
 
+              <SubmitErrorPanel
+                error={submitError}
+                retryDisabled={submitting}
+                onDismiss={() => setSubmitError(null)}
+                onRetry={submitError?.code === "UPLOAD_PENDING" || submitError?.code === "VALIDATION_FAILED" ? null : () => handleSubmit()}
+              />
+
               <div className="pt-2">
                 <button
                   type="submit"
+                  id="registration-submit-button"
                   disabled={submitting || Object.values(uploadingConsent).some(Boolean) || uploadingStudentId || Object.values(uploadingDynamic).some(Boolean)}
                   className="w-full flex justify-center items-center gap-2 text-xs sm:text-sm font-bold font-oswald uppercase tracking-wider text-white bg-[#3E1126] px-6 py-3.5 rounded-full shadow-[0_4px_14px_0_rgba(62,17,38,0.3)] hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-60 disabled:hover:scale-100 disabled:cursor-not-allowed cursor-pointer"
                 >
