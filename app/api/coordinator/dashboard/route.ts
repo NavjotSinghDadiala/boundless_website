@@ -74,6 +74,7 @@ export async function GET(request: Request) {
       if (isMe) {
         return {
           name: typeof c === "object" && c !== null ? c.name || cEmail : cEmail,
+          position: typeof c === "object" && c !== null ? String(c.position || c.role || c.notes || "").trim() : "",
           email: coordinator.email,
           phone: typeof c === "object" && c !== null ? String(c.phone || "") : "",
           assignedOption: typeof c === "object" && c !== null ? c.assignedOption || null : null,
@@ -81,6 +82,7 @@ export async function GET(request: Request) {
       }
       return {
         name: typeof c === "object" && c !== null ? c.name || "Coordinator" : String(c),
+        position: typeof c === "object" && c !== null ? String(c.position || c.role || c.notes || "").trim() : "",
       };
     });
 

@@ -423,12 +423,19 @@ export default function TripViewPage() {
                     key={coord.id || idx}
                     className="p-3.5 rounded-xl border border-stone-200/80 bg-stone-50/40 space-y-1.5"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm text-stone-900">
-                        {coord.name}
-                      </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="font-semibold text-sm text-stone-900 block truncate">
+                          {coord.name}
+                        </span>
+                        {coord.position && (
+                          <span className="text-[11px] font-mono font-medium text-blue-700 block truncate">
+                            {coord.position}
+                          </span>
+                        )}
+                      </div>
                       {coord.assignedOption && (
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 border border-stone-200">
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 border border-stone-200 shrink-0">
                           {coord.assignedOption}
                         </span>
                       )}

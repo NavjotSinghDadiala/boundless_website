@@ -6,6 +6,9 @@ import { formatTripDates } from "@/lib/tripDateUtils";
 
 export interface TripCoordinator {
   name: string;
+  position?: string | null;
+  role?: string | null;
+  notes?: string | null;
   email?: string;
   phone?: string;
   assignedOption?: string | null;

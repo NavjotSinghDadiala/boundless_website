@@ -1,5 +1,5 @@
 import React from "react";
-import { ShieldCheck, Compass, Sparkles } from "lucide-react";
+import { ShieldCheck, Compass } from "lucide-react";
 import { TripCoordinator } from "./TripCard";
 
 interface TripCoordinatorsProps {
@@ -11,17 +11,29 @@ export default function TripCoordinators({ coordinators }: TripCoordinatorsProps
     return null;
   }
 
-  // Extract clean names only — STRICTLY PRIVACY COMPLIANT (NO EMAILS OR PHONE NUMBERS EXPOSED PUBLICLY)
-  const names = coordinators
+  // Extract clean names and official positions — STRICTLY PRIVACY COMPLIANT (NO EMAILS OR PHONE NUMBERS EXPOSED PUBLICLY)
+  const list = coordinators
     .map((c) => {
       if (typeof c === "object" && c !== null) {
-        return c.name ? String(c.name).trim() : "";
+        const name = c.name ? String(c.name).trim() : "";
+        const rawPos = String(c.position || c.role || c.notes || "").trim();
+        const position = rawPos || "Trip Coordinator";
+        return {
+          name,
+          position,
+          assignedOption: c.assignedOption ? String(c.assignedOption).trim() : null,
+        };
       }
-      return String(c).trim();
+      const name = String(c).trim();
+      return {
+        name,
+        position: "Trip Coordinator",
+        assignedOption: null,
+      };
     })
-    .filter(Boolean);
+    .filter((c) => Boolean(c.name));
 
-  if (names.length === 0) {
+  if (list.length === 0) {
     return null;
   }
 
@@ -49,8 +61,8 @@ export default function TripCoordinators({ coordinators }: TripCoordinatorsProps
 
           {/* Holographic Cards Grid */}
           <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
-            {names.map((name, idx) => {
-              const initials = name
+            {list.map((coord, idx) => {
+              const initials = coord.name
                 .split(" ")
                 .map((n) => n[0])
                 .slice(0, 2)
@@ -71,18 +83,30 @@ export default function TripCoordinators({ coordinators }: TripCoordinatorsProps
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-blue-300/80">
-                        Lead Coordinator
+                    <div className="flex items-center gap-1.5 mb-1 min-w-0">
+                      <span
+                        className="text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-300 truncate"
+                        title={coord.position}
+                      >
+                        {coord.position}
                       </span>
                       <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     </div>
-                    <span className="block font-oswald text-base sm:text-lg font-bold text-white truncate" title={name}>
-                      {name}
+                    <span
+                      className="block font-oswald text-base sm:text-lg font-bold text-white truncate leading-snug"
+                      title={coord.name}
+                    >
+                      {coord.name}
                     </span>
-                    <span className="block text-[11px] font-mono text-white/40">
-                      Boundless Society
-                    </span>
+                    <div className="flex items-center gap-1.5 text-[11px] font-mono mt-0.5 text-white/50 truncate">
+                      <span className="text-blue-300/90 font-medium truncate" title={coord.position}>
+                        {coord.position}
+                      </span>
+                      <span className="text-white/30">•</span>
+                      <span className="text-white/40 truncate">
+                        {coord.assignedOption ? coord.assignedOption : "Boundless Society"}
+                      </span>
+                    </div>
                   </div>
                 </div>
               );

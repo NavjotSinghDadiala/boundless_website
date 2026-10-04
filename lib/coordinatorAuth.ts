@@ -427,3 +427,43 @@ export function isRegistrationAssignedToCoordinator(
   return false;
 }
 
+let cachedPositionsMap: Map<string, string> | null = null;
+let lastPositionsMapFetch = 0;
+
+/**
+ * Retrieves official coordinator positions/roles (e.g. "HOD - Technicals", "Secretary", etc.)
+ * mapped by normalized email and lowercase name.
+ * Caches in-memory for 60 seconds to avoid unnecessary Firestore lookups.
+ */
+export async function getCoordinatorPositionsMap(): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (cachedPositionsMap && now - lastPositionsMapFetch < 60_000) {
+    return cachedPositionsMap;
+  }
+
+  const map = new Map<string, string>();
+  try {
+    const snap = await adminDb.collection("coordinators").get();
+    snap.forEach((doc) => {
+      const data = doc.data() || {};
+      const pos = String(data.notes || data.position || data.role || "").trim();
+      if (pos) {
+        if (data.email) map.set(normalizeEmail(data.email), pos);
+        if (data.name) {
+          const n = String(data.name).toLowerCase().trim();
+          map.set(n, pos);
+          map.set(n.replace(/\s+/g, " "), pos);
+        }
+        if (doc.id.includes("@")) map.set(normalizeEmail(doc.id), pos);
+      }
+    });
+    cachedPositionsMap = map;
+    lastPositionsMapFetch = now;
+  } catch (err) {
+    console.error("Error building coordinator positions map:", err);
+    return cachedPositionsMap || map;
+  }
+
+  return map;
+}
+

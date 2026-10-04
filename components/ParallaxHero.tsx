@@ -92,11 +92,11 @@ function useIsMobile() {
   return isMobile;
 }
 
-/* ── Scroll tracking — synced directly to Lenis RAF loop (no redundant spring) ── */
+/* ── Scroll tracking — synced directly to Lenis RAF loop ─────────── */
 function usePageScroll() {
   const scrollY = useMotionValue(0);
 
-  // useLenis fires on EVERY Lenis animation frame — zero latency, perfectly smooth
+  // useLenis fires on EVERY Lenis animation frame — zero latency, smooth
   useLenis(({ scroll }: { scroll: number }) => {
     scrollY.set(scroll);
   });
@@ -104,43 +104,90 @@ function usePageScroll() {
   return scrollY;
 }
 
+/* ── Detect reduced motion preference ────────────────────────────── */
+function usePrefersReducedMotion() {
+  const [reducedMotion, setReducedMotion] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReducedMotion(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setReducedMotion(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return reducedMotion;
+}
+
 /* ── Gate component — mobile returns null, desktop renders scene ──── */
 export default function ParallaxHero() {
   const isMobile = useIsMobile();
-  // Safe early return: no hooks are called after this in THIS component
+  // Safe early return: mobile behavior remains 100% untouched
   if (isMobile) return null;
   return <ParallaxHeroScene />;
 }
 
-/* ── Desktop-only scene — owns all heavy hooks ───────────────────── */
+/* ── Desktop-only scene — owns sequential Phase 1 & Phase 2 lifecycle ── */
 function ParallaxHeroScene() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollY = usePageScroll();
   const [mounted, setMounted] = useState(false);
   const [heroVisible, setHeroVisible] = useState(true);
   const [testMode, setTestMode] = useState<string | null>(null);
+  const [viewportHeight, setViewportHeight] = useState(1000);
+  const prefersReducedMotion = usePrefersReducedMotion();
 
-  // Portal only works client-side; read testMode once on mount (no re-renders during scroll)
+  // Phase 1 scroll allocation: 2.5 viewports (~250vh) for slow, cinematic zoom
+  const CAVE_VH_FACTOR = 2.5;
+  const caveScrollDistance = viewportHeight * CAVE_VH_FACTOR;
+  // Total scroll container = 250vh (Cave Phase 1) + 700vh (Mountain Phase 2) = 950vh
+  const totalContainerHeight = `${(CAVE_VH_FACTOR * 100) + 700}vh`;
+
+  // Measure viewport height dynamically for responsive desktop scaling
   useEffect(() => {
     setMounted(true);
     if (typeof window !== "undefined") {
+      setViewportHeight(window.innerHeight || 1000);
+      const handleResize = () => setViewportHeight(window.innerHeight || 1000);
+      window.addEventListener("resize", handleResize);
+
       const p = new URLSearchParams(window.location.search);
       setTestMode(p.get("test") || p.get("mode") || null);
+
+      return () => window.removeEventListener("resize", handleResize);
     }
   }, []);
 
-  // Pre-decode layers ahead of time on desktop mount so decoding never hitches during active scroll
+  // ── INTELLIGENT TIERED MOUNTAIN PRELOAD & DECODE PIPELINE ──
+  // While user experiences Phase 1 (cave zoom), pre-download and decode
+  // Tier 1 mountain layers in GPU memory so Phase 2 starts with zero hitch
   useEffect(() => {
-    if (testMode !== "baseline") {
-      LAYERS.forEach((layer) => {
-        const img = new Image();
-        img.src = layer.src;
-        img.decode().catch(() => { });
-      });
-    }
+    if (testMode === "baseline") return;
+
+    // Tier 1: Critical mountain layers visible through cave opening and at start of Phase 2
+    // Indices: 0 (Bg silhouette), 1 (Cloud atmosphere), 2 (Rocky ridge), 3 (Mountain peak), 6 (Green hillside), 7 (Foreground ridge)
+    const tier1Indices = [0, 1, 2, 3, 6, 7];
+    // Tier 2: Deep scroll mist layers (100%+, 125%+) and ground mound (220%+)
+    const tier2Indices = [4, 5, 8];
+
+    const preloadBatch = async (indices: number[]) => {
+      await Promise.all(
+        indices.map((idx) => {
+          const layer = LAYERS[idx];
+          if (!layer) return Promise.resolve();
+          const img = new Image();
+          img.src = layer.src;
+          return img.decode().catch(() => {});
+        })
+      );
+    };
+
+    // Load and decode critical Tier 1 mountain assets during Phase 1
+    preloadBatch(tier1Indices).then(() => {
+      // Then asynchronously prepare Tier 2 deep scroll assets
+      preloadBatch(tier2Indices);
+    });
   }, [testMode]);
 
-  // Hide the fixed scene when the 700vh scroll container leaves the viewport
+  // Hide the fixed scene when the scroll container completely leaves the viewport
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -152,39 +199,102 @@ function ParallaxHeroScene() {
     return () => obs.disconnect();
   }, []);
 
+  // ── PHASE 1 TRANSFORMS: SLOW CAMERA ZOOM INTO CAVE OPENING ──
+  // Transform origin 56% 48% aligns precisely with the cave opening
+  const caveScale = useTransform(
+    scrollY,
+    [0, caveScrollDistance],
+    prefersReducedMotion ? [1.0, 1.0] : [1.0, 5.5],
+    { clamp: true }
+  );
+
+  // Cave opacity stays solid (1.0) through 85% of zoom, then dissolves in final 15%
+  const caveOpacity = useTransform(
+    scrollY,
+    [0, caveScrollDistance * 0.85, caveScrollDistance],
+    [1, 1, 0],
+    { clamp: true }
+  );
+
+  // ── PHASE 2 SCROLL ENGINE: SEQUENTIAL (STRICTLY ZERO MOVEMENT IN PHASE 1) ──
+  // While scrollY <= caveScrollDistance: effective mountain scroll is STRICTLY 0.
+  // Mountains stay 100% stationary during cave zoom.
+  // Once scrollY > caveScrollDistance: mountain parallax begins smoothly.
+  const mountainScrollY = useTransform(scrollY, (s) =>
+    Math.max(0, s - caveScrollDistance)
+  );
+
   const scene = (
     <div
       style={{
         position: "fixed",
-        top: 0, left: 0,
-        width: "100vw", height: "100svh",
+        top: 0,
+        left: 0,
+        width: "100vw",
+        height: "100svh",
         zIndex: 0,
         overflow: "hidden",
         pointerEvents: "none",
         opacity: heroVisible ? 1 : 0,
         transition: "opacity 0.4s ease",
-        background: "linear-gradient(180deg, #bdd4e4 0%, #d6e8f2 35%, #eaf3f8 65%, #f4f9fb 100%)",
+        background:
+          "linear-gradient(180deg, #bdd4e4 0%, #d6e8f2 35%, #eaf3f8 65%, #f4f9fb 100%)",
         willChange: heroVisible ? "opacity" : "auto",
       }}
     >
+      {/* ── PHASE 2: MOUNTAIN PARALLAX WORLD (Z-INDEX 1 TO 8) ── */}
       {LAYERS.map((layer, i) => (
         <ParallaxLayer
           key={`${layer.src}-${i}`}
           layer={layer}
-          scrollY={scrollY}
+          scrollY={mountainScrollY}
           heroVisible={heroVisible}
           testMode={testMode}
         />
       ))}
+
+      {/* ── PHASE 1: CAVE LAYER (BACKGROUND.PNG - Z-INDEX 20) ── */}
+      <motion.div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 20,
+          pointerEvents: "none",
+          scale: caveScale,
+          opacity: caveOpacity,
+          transformOrigin: "56% 48%",
+          willChange: "transform, opacity",
+          backfaceVisibility: "hidden",
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/background.png"
+          alt="Cave entrance"
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            objectPosition: "center center",
+            display: "block",
+          }}
+          loading="eager"
+          fetchPriority="high"
+          decoding="async"
+        />
+      </motion.div>
     </div>
   );
 
   return (
     <>
-      {/* Scroll height provider — sits in normal flow, pushes content down */}
+      {/* Combined scroll height provider: Phase 1 (250vh) + Phase 2 (700vh) = 950vh */}
       <div
         ref={containerRef}
-        style={{ height: "700vh", marginTop: "-80px" }}
+        style={{ height: totalContainerHeight, marginTop: "-80px" }}
       />
       {/* Scene portaled directly to body — bypasses all parent constraints */}
       {mounted && createPortal(scene, document.body)}
@@ -214,7 +324,7 @@ function ParallaxLayer({
   // In baseline: keep static will-change.
   // In no-will-change: omit will-change entirely.
   // In optimized default: dynamically promote to compositor layer only while heroVisible is true,
-  // releasing GPU compositor VRAM when scrolled past the 700vh hero section.
+  // releasing GPU compositor VRAM when scrolled past the hero section.
   const willChange = noWillChange
     ? undefined
     : isBaseline
@@ -261,3 +371,4 @@ function ParallaxLayer({
     </motion.div>
   );
 }
+

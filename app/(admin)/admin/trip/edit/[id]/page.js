@@ -517,6 +517,11 @@ function CoordinatorPickerRow({
                   <>
                     <UserCheckIcon className="size-3.5 text-primary shrink-0" />
                     <span className="truncate font-medium">{coordinator.name}</span>
+                    {coordinator.position && (
+                      <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded shrink-0">
+                        {coordinator.position}
+                      </span>
+                    )}
                     <span className="text-xs text-muted-foreground truncate hidden sm:inline">— {coordinator.email}</span>
                   </>
                 ) : (
@@ -570,7 +575,12 @@ function CoordinatorPickerRow({
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="font-medium truncate">{rc.name}</p>
-                              <p className="text-xs text-muted-foreground truncate">{rc.email}</p>
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground truncate">
+                                {(rc.notes || rc.position) && (
+                                  <span className="font-medium text-blue-600 truncate">{rc.notes || rc.position} •</span>
+                                )}
+                                <span className="truncate">{rc.email}</span>
+                              </div>
                             </div>
                             {rc.studentId && (
                               <span className="text-[10px] font-mono bg-purple-50 text-purple-700 border border-purple-200 rounded px-1.5 py-0.5 shrink-0">
@@ -877,7 +887,14 @@ export default function EditTripPage() {
     setCoordinators((prev) =>
       prev.map((c) =>
         c.id === rowId
-          ? { ...c, name: registered.name || "", email: registered.email || "", phone: registered.phone || "", studentId: registered.studentId || "" }
+          ? {
+              ...c,
+              name: registered.name || "",
+              email: registered.email || "",
+              phone: registered.phone || "",
+              studentId: registered.studentId || "",
+              position: registered.notes || registered.position || registered.role || "",
+            }
           : c
       )
     );
@@ -1221,6 +1238,7 @@ export default function EditTripPage() {
         name: c.name.trim(),
         email: c.email.trim(),
         phone: String(c.phone || "").trim(),
+        position: c.position ? String(c.position).trim() : (c.notes ? String(c.notes).trim() : ""),
         assignedOption: c.assignedOption ? c.assignedOption.trim() : null,
       }));
 

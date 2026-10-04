@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import * as yup from "yup";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { getAuthenticatedCoordinator } from "@/lib/coordinatorAuth";
+import { getAuthenticatedCoordinator, getCoordinatorPositionsMap } from "@/lib/coordinatorAuth";
 import { requireFullAdmin, recordAuditLog } from "@/lib/adminAuth";
 import { getTripCache, setTripCache, invalidateTripCache } from "@/lib/tripCache";
 import { invalidateStaffEmailsCache } from "@/lib/rateLimit";
@@ -123,6 +123,7 @@ const tripSchema = yup.object().shape({
             name: yup.string().required("Coordinator name is required").trim(),
             email: yup.string().email("Invalid email").required("Coordinator email is required").trim(),
             phone: yup.string().trim().optional().default(""),
+            position: yup.string().trim().nullable().optional(),
             assignedOption: yup.string().trim().nullable().optional(),
           });
         }
@@ -243,6 +244,7 @@ export async function POST(request) {
           name: String(c.name || "").trim(),
           email: String(c.email || "").trim(),
           phone: String(c.phone || "").trim(),
+          position: c.position ? String(c.position).trim() : (c.notes ? String(c.notes).trim() : ""),
           assignedOption: c.assignedOption ? String(c.assignedOption).trim() : null,
         };
       }
@@ -375,12 +377,28 @@ export async function POST(request) {
   }
 }
 
-function formatTripDoc(doc, { isAdmin, coordinator }) {
+function formatTripDoc(doc, { isAdmin, coordinator }, positionMap = null) {
   const data = doc.data();
 
   // Determine coordinator objects returned
   let coordinators = [];
   let isUserAssigned = false;
+
+  const resolvePos = (c) => {
+    if (typeof c === "object" && c !== null) {
+      const explicit = String(c.position || c.role || c.notes || "").trim();
+      if (explicit) return explicit;
+      if (positionMap) {
+        const email = String(c.email || "").toLowerCase().trim();
+        const name = String(c.name || "").toLowerCase().replace(/\s+/g, " ").trim();
+        const found = (email ? positionMap.get(email) : "") || (name ? positionMap.get(name) : "");
+        if (found) return found;
+      }
+      return "Trip Coordinator";
+    }
+    const name = String(c).toLowerCase().replace(/\s+/g, " ").trim();
+    return (positionMap && positionMap.get(name)) || "Trip Coordinator";
+  };
 
   if (isAdmin) {
     // Admin gets full coordinator objects with all emails and phones
@@ -388,12 +406,13 @@ function formatTripDoc(doc, { isAdmin, coordinator }) {
       if (typeof c === "object" && c !== null) {
         return {
           name: String(c.name || "").trim(),
+          position: resolvePos(c),
           email: String(c.email || "").trim(),
           phone: String(c.phone || "").trim(),
           assignedOption: c.assignedOption ? String(c.assignedOption).trim() : null,
         };
       }
-      return { name: String(c) };
+      return { name: String(c), position: resolvePos(c) };
     });
   } else if (coordinator) {
     // Coordinator mode: only include assignments, protect other coordinators' private data
@@ -404,20 +423,27 @@ function formatTripDoc(doc, { isAdmin, coordinator }) {
         isUserAssigned = true;
         return {
           name: typeof c === "object" && c !== null ? c.name : cEmail,
+          position: resolvePos(c),
           email: coordinator.email,
           phone: typeof c === "object" && c !== null ? String(c.phone || "") : "",
           assignedOption: typeof c === "object" && c !== null ? c.assignedOption || null : null,
         };
       }
       // Other coordinators: strip email and phone
-      if (typeof c === "object" && c !== null) return { name: c.name || "" };
-      return { name: String(c) };
+      if (typeof c === "object" && c !== null) return { name: c.name || "", position: resolvePos(c) };
+      return { name: String(c), position: resolvePos(c) };
     });
   } else {
-    // Public: ONLY expose names, NEVER email or phone
+    // Public: ONLY expose names and positions, NEVER email or phone
     coordinators = (data.coordinators || []).map((c) => {
-      if (typeof c === "object" && c !== null) return { name: c.name || "" };
-      return { name: String(c) };
+      if (typeof c === "object" && c !== null) {
+        return {
+          name: c.name || "",
+          position: resolvePos(c),
+          assignedOption: c.assignedOption ? String(c.assignedOption).trim() : null,
+        };
+      }
+      return { name: String(c), position: resolvePos(c) };
     });
   }
 
@@ -507,7 +533,8 @@ export async function GET(request) {
           { status: 404 }
         );
       }
-      const formattedTrip = formatTripDoc(doc, { isAdmin, coordinator });
+      const positionMap = await getCoordinatorPositionsMap();
+      const formattedTrip = formatTripDoc(doc, { isAdmin, coordinator }, positionMap);
       const isAssigned = formattedTrip._isUserAssigned;
       delete formattedTrip._isUserAssigned;
 
@@ -559,8 +586,9 @@ export async function GET(request) {
       .orderBy("createdAt", "desc")
       .get();
 
+    const positionMap = await getCoordinatorPositionsMap();
     let trips = querySnapshot.docs.map((doc) =>
-      formatTripDoc(doc, { isAdmin, coordinator })
+      formatTripDoc(doc, { isAdmin, coordinator }, positionMap)
     );
 
     // If caller is coordinator, return only trips assigned to them!
@@ -736,6 +764,7 @@ export async function PUT(request) {
             name: String(c.name || "").trim(),
             email: String(c.email || "").trim(),
             phone: String(c.phone || "").trim(),
+            position: c.position ? String(c.position).trim() : (c.notes ? String(c.notes).trim() : ""),
             assignedOption: c.assignedOption ? String(c.assignedOption).trim() : null,
           };
         }

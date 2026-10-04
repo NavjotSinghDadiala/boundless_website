@@ -19,6 +19,7 @@ import LocationProfileModal from "@/components/LocationProfileModal";
 /* ─── Types ──────────────────────────────────────────────────── */
 interface Coordinator {
   name: string;
+  position?: string;
   email?: string;
   phone?: string;
 }
@@ -220,6 +221,11 @@ function CoordinatorContact({ c }: { c: Coordinator }) {
       </div>
       <div className="flex flex-col gap-0.5 text-xs min-w-0">
         <span className="font-bold text-white truncate">{c.name}</span>
+        {c.position && (
+          <span className="text-[10px] font-mono font-medium text-cyan-300 truncate">
+            {c.position}
+          </span>
+        )}
         {c.email && (
           <a
             href={`mailto:${c.email}`}

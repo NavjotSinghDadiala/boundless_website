@@ -13,6 +13,7 @@ import TripBottomCTA from "@/components/trips/TripBottomCTA";
 import TripNotFound from "@/components/trips/TripNotFound";
 import Footer from "@/components/Footer";
 import { Trip } from "@/components/trips/TripCard";
+import { getCoordinatorPositionsMap } from "@/lib/coordinatorAuth";
 
 interface PageProps {
   params: Promise<{ tripId: string }>;
@@ -28,13 +29,35 @@ async function getTrip(tripId: string): Promise<Trip | null> {
     const data = doc.data();
     if (!data) return null;
 
-    // Public view: Strictly names only (NEVER private email/phone/whatsapp)
+    // Fetch registered coordinator positions (e.g. HOD, Secretary, Coordinator)
+    const positionMap = await getCoordinatorPositionsMap();
+
+    // Public view: Expose name & official position (NEVER private email/phone/whatsapp)
     const coordinators = (data.coordinators || [])
       .map((c: any) => {
         if (typeof c === "object" && c !== null) {
-          return { name: c.name ? String(c.name).trim() : "" };
+          const name = c.name ? String(c.name).trim() : "";
+          const email = c.email ? String(c.email).toLowerCase().trim() : "";
+          const nameKey = name.toLowerCase().replace(/\s+/g, " ").trim();
+          const position = String(
+            c.position ||
+            c.role ||
+            c.notes ||
+            (email ? positionMap.get(email) : "") ||
+            (nameKey ? positionMap.get(nameKey) : "") ||
+            "Trip Coordinator"
+          ).trim();
+
+          return {
+            name,
+            position,
+            assignedOption: c.assignedOption ? String(c.assignedOption).trim() : null,
+          };
         }
-        return { name: String(c).trim() };
+        const name = String(c).trim();
+        const nameKey = name.toLowerCase().replace(/\s+/g, " ").trim();
+        const position = (nameKey ? positionMap.get(nameKey) : "") || "Trip Coordinator";
+        return { name, position, assignedOption: null };
       })
       .filter((c: any) => Boolean(c.name));
 
