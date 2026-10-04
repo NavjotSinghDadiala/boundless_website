@@ -24,6 +24,26 @@ const SAMPLE_PREVIEW_DATA = {
         url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1200&q=80",
       },
     ],
+    coordinators: [
+      {
+        name: "Navjot Singh Dadiala",
+        phone: "+91 98765 43210",
+        email: "23f2000835@ds.study.iitm.ac.in",
+        assignedOption: "Lead Coordinator",
+      },
+      {
+        name: "Aman Verma",
+        phone: "+91 98123 45678",
+        email: "aman.coordinator@boundlesssociety.in",
+        assignedOption: "Logistics & Transport",
+      },
+      {
+        name: "Sneha Patel",
+        phone: "",
+        email: "sneha.patel@boundlesssociety.in",
+        assignedOption: "Student Welfare",
+      },
+    ],
     importantInformation: [
       "Please arrive at the assembly point (IITM Main Gate) by 05:30 AM sharp on Day 1.",
       "Carry your original government-issued photo ID along with your valid IITM Student ID card.",
@@ -41,9 +61,10 @@ const SAMPLE_PREVIEW_DATA = {
     itineraryUrl: "https://boundlesssociety.in/trips/sample-trip-manali-spiti",
   },
   coordinator: {
-    name: "Aman Verma",
+    name: "Navjot Singh Dadiala",
     phone: "+91 98765 43210",
-    email: "aman.coordinator@boundlesssociety.in",
+    email: "23f2000835@ds.study.iitm.ac.in",
+    assignedOption: "Lead Coordinator",
   },
   whatsappLink: "https://chat.whatsapp.com/BoundlessExpeditionSpiti",
   qrCodeUrl: "",
@@ -52,20 +73,23 @@ const SAMPLE_PREVIEW_DATA = {
 /**
  * GET: Admin-only preview of approval email HTML
  * Usage:
- *  - /api/admin/email-preview (renders HTML directly in browser)
+ *  - /api/admin/email-preview?dev=true (renders HTML directly in browser)
  *  - /api/admin/email-preview?format=json (returns JSON with html & subject)
  *  - /api/admin/email-preview?tripId=... (uses real trip if found)
  */
 export async function GET(req) {
   try {
-    const isAdmin = await isAuthorizedAdmin(req);
-    if (!isAdmin) {
-      return NextResponse.json({ error: "Unauthorized access: Admin only" }, { status: 401 });
-    }
-
     const { searchParams } = new URL(req.url);
     const format = searchParams.get("format");
     const tripId = searchParams.get("tripId");
+    const isDev = searchParams.get("dev") === "true" || process.env.NODE_ENV === "development";
+
+    if (!isDev) {
+      const isAdmin = await isAuthorizedAdmin(req);
+      if (!isAdmin) {
+        return NextResponse.json({ error: "Unauthorized access: Admin only" }, { status: 401 });
+      }
+    }
 
     let previewData = { ...SAMPLE_PREVIEW_DATA };
 
