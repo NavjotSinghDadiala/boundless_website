@@ -9,6 +9,7 @@ import { getTripCache, setTripCache, invalidateTripCache } from "@/lib/tripCache
 import { invalidateStaffEmailsCache } from "@/lib/rateLimit";
 import { completeTripAndRecordHistory } from "@/lib/tripHistory";
 import { adjustTripCapacity } from "@/lib/tripCapacity";
+import { isQuotaError } from "@/lib/firebase-fallback";
 
 const formFieldSchema = yup.object().shape({
   id: yup.string().required(),
@@ -332,8 +333,8 @@ export async function POST(request) {
 
     const docRef = await adminDb.collection("trips").add(tripData);
 
-    // Record audit log
-    await recordAuditLog(admin, "CREATE_TRIP", "trip", docRef.id, "success", {
+    // Record audit log (non-blocking)
+    recordAuditLog(admin, "CREATE_TRIP", "trip", docRef.id, "success", {
       name: tripData.name,
       destination: tripData.destination,
       startDate: tripData.startDate,
@@ -367,6 +368,16 @@ export async function POST(request) {
           details: validationErrors,
         },
         { status: 400 }
+      );
+    }
+
+    if (isQuotaError(error)) {
+      return NextResponse.json(
+        {
+          error: "Service is temporarily busy (database quota reached). Please retry in a few moments.",
+          code: "RESOURCE_EXHAUSTED",
+        },
+        { status: 429 }
       );
     }
 
@@ -526,14 +537,17 @@ export async function GET(request) {
         }
       }
 
-      const doc = await adminDb.collection("trips").doc(singleId).get();
+      const [doc, positionMap] = await Promise.all([
+        adminDb.collection("trips").doc(singleId).get(),
+        getCoordinatorPositionsMap(),
+      ]);
+
       if (!doc.exists) {
         return NextResponse.json(
           { error: "Trip not found" },
           { status: 404 }
         );
       }
-      const positionMap = await getCoordinatorPositionsMap();
       const formattedTrip = formatTripDoc(doc, { isAdmin, coordinator }, positionMap);
       const isAssigned = formattedTrip._isUserAssigned;
       delete formattedTrip._isUserAssigned;
@@ -581,12 +595,11 @@ export async function GET(request) {
       }
     }
 
-    const querySnapshot = await adminDb
-      .collection("trips")
-      .orderBy("createdAt", "desc")
-      .get();
+    const [querySnapshot, positionMap] = await Promise.all([
+      adminDb.collection("trips").orderBy("createdAt", "desc").get(),
+      getCoordinatorPositionsMap(),
+    ]);
 
-    const positionMap = await getCoordinatorPositionsMap();
     let trips = querySnapshot.docs.map((doc) =>
       formatTripDoc(doc, { isAdmin, coordinator }, positionMap)
     );
@@ -646,12 +659,21 @@ export async function DELETE(request) {
     invalidateTripCache(id);
     invalidateStaffEmailsCache();
 
-    // Record audit log
-    await recordAuditLog(admin, "DELETE_TRIP", "trip", id, "success").catch(() => {});
+    // Record audit log non-blocking
+    recordAuditLog(admin, "DELETE_TRIP", "trip", id, "success").catch(() => {});
 
     return NextResponse.json({ success: true, message: "Trip deleted successfully" }, { status: 200 });
   } catch (error) {
     console.error("DELETE Trip Error:", error);
+    if (isQuotaError(error)) {
+      return NextResponse.json(
+        {
+          error: "Service is temporarily busy (database quota reached). Please retry in a few moments.",
+          code: "RESOURCE_EXHAUSTED",
+        },
+        { status: 429 }
+      );
+    }
     return NextResponse.json({ error: "Failed to delete trip. Please try again." }, { status: 500 });
   }
 }
@@ -833,8 +855,8 @@ export async function PUT(request) {
     invalidateTripCache(tripId);
     invalidateStaffEmailsCache();
 
-    // Record audit log
-    await recordAuditLog(admin, "UPDATE_TRIP", "trip", tripId, "success", {
+    // Record audit log (non-blocking)
+    recordAuditLog(admin, "UPDATE_TRIP", "trip", tripId, "success", {
       name: name || undefined,
       registrationOpen: registrationOpen !== undefined ? registrationOpen : undefined,
     }).catch(() => {});
@@ -842,6 +864,15 @@ export async function PUT(request) {
     return NextResponse.json({ success: true, message: "Trip details updated successfully" }, { status: 200 });
   } catch (error) {
     console.error("PUT Trip Error:", error);
+    if (isQuotaError(error)) {
+      return NextResponse.json(
+        {
+          error: "Service is temporarily busy (database quota reached). Please retry in a few moments.",
+          code: "RESOURCE_EXHAUSTED",
+        },
+        { status: 429 }
+      );
+    }
     return NextResponse.json({ error: "Failed to update trip. Please try again." }, { status: 500 });
   }
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { requireSecretAccess, normalizeStudentId, normalizeEmail, recordAuditLog } from "@/lib/adminAuth";
+import { requireSecretAccess, normalizeStudentId, normalizeEmail, recordAuditLog, invalidateAdminAuthCache } from "@/lib/adminAuth";
 
 /**
  * GET /api/secret/admins
@@ -96,8 +96,9 @@ export async function POST(req: Request) {
     };
 
     await adminDb.collection("adminUsers").doc(studentId).set(newAdmin);
+    invalidateAdminAuthCache();
 
-    await recordAuditLog(
+    recordAuditLog(
       { studentId: "MASTER_SECRET", name: "Master Admin" },
       "SECRET_CREATE_ADMIN",
       "adminUser",
@@ -174,8 +175,9 @@ export async function PUT(req: Request) {
     }
 
     await docRef.update(updatePayload);
+    invalidateAdminAuthCache();
 
-    await recordAuditLog(
+    recordAuditLog(
       { studentId: "MASTER_SECRET", name: "Master Admin" },
       "SECRET_UPDATE_ADMIN",
       "adminUser",
@@ -231,8 +233,9 @@ export async function DELETE(req: Request) {
     }
 
     await docRef.delete();
+    invalidateAdminAuthCache();
 
-    await recordAuditLog(
+    recordAuditLog(
       { studentId: "MASTER_SECRET", name: "Master Admin" },
       "SECRET_DELETE_ADMIN",
       "adminUser",

@@ -17,6 +17,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { buildDeterministicJobId, enqueueDurableJob } from "./durableQueue";
 import { recordAuditLog, AdminContext } from "./adminAuth";
 import { invalidateTripCache } from "./tripCache";
+import { runFastTransaction } from "./firebase-fallback";
 
 export interface SeatAllocationResult {
   allocated: boolean;
@@ -58,7 +59,7 @@ export async function allocateSeatOrWaitlistTransaction(params: {
   adminEmail?: string;
 }): Promise<SeatAllocationResult> {
   if (!params.transaction) {
-    return adminDb.runTransaction(async (t) => {
+    return runFastTransaction(adminDb, async (t) => {
       return allocateSeatOrWaitlistTransaction({ ...params, transaction: t });
     });
   }
@@ -217,7 +218,7 @@ export async function releaseSeatAndPromoteWaitlist(params: {
   const tripRef = adminDb.collection("trips").doc(tripId);
   const regRef = adminDb.collection("tripRegistrations").doc(regDocId);
 
-  const txResult = await adminDb.runTransaction(async (transaction) => {
+  const txResult = await runFastTransaction(adminDb, async (transaction) => {
     let promotedStudentInfo: PromotionResult["promotedStudent"] = undefined;
     let remainingWaitlistCount = 0;
 
@@ -283,14 +284,31 @@ export async function releaseSeatAndPromoteWaitlist(params: {
       : Number(tripData.maleJoined || 0);
 
     // 2. Find next eligible waitlist candidate: status === "waitlisted" ordered by waitlistPosition asc
-    const tripRegsSnap = await adminDb
-      .collection("tripRegistrations")
-      .where("tripId", "==", tripId)
-      .get();
+    let waitlistedCandidates: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    const currentWaitlistCount = Number(tripData.waitlistedCount || 0);
 
-    const waitlistedCandidates = tripRegsSnap.docs
-      .filter((d) => (d.data().status || "").trim() === "waitlisted")
-      .sort((a, b) => (Number(a.data().waitlistPosition) || 999999) - (Number(b.data().waitlistPosition) || 999999));
+    if (currentWaitlistCount > 0) {
+      try {
+        const waitlistSnap = await adminDb
+          .collection("tripRegistrations")
+          .where("tripId", "==", tripId)
+          .where("status", "==", "waitlisted")
+          .orderBy("waitlistPosition", "asc")
+          .limit(1)
+          .get();
+        waitlistedCandidates = waitlistSnap.docs;
+      } catch (_) {
+        const waitlistSnap = await adminDb
+          .collection("tripRegistrations")
+          .where("tripId", "==", tripId)
+          .where("status", "==", "waitlisted")
+          .get();
+
+        waitlistedCandidates = waitlistSnap.docs.sort(
+          (a, b) => (Number(a.data().waitlistPosition) || 999999) - (Number(b.data().waitlistPosition) || 999999)
+        );
+      }
+    }
 
     if (waitlistedCandidates.length > 0) {
       const candidateDoc = waitlistedCandidates[0];
@@ -346,20 +364,18 @@ export async function releaseSeatAndPromoteWaitlist(params: {
     return {
       promotedStudentInfo,
       remainingWaitlistCount,
+      tripData,
     };
   });
 
-  const { promotedStudentInfo, remainingWaitlistCount } = txResult;
+  const { promotedStudentInfo, remainingWaitlistCount, tripData } = txResult;
 
   invalidateTripCache(tripId);
 
-  // If a student was promoted, enqueue their approval email and record audit log
+  // If a student was promoted, enqueue their approval email and record audit log non-blocking
   if (promotedStudentInfo) {
-    const tripSnap = await adminDb.collection("trips").doc(tripId).get();
-    const tripData = tripSnap.data() || {};
-
     const jobId = buildDeterministicJobId("approval_email", [tripId, promotedStudentInfo.uid, "promoted"]);
-    await enqueueDurableJob({
+    enqueueDurableJob({
       jobId,
       jobType: "approval_email",
       payload: {
@@ -368,12 +384,12 @@ export async function releaseSeatAndPromoteWaitlist(params: {
         email: promotedStudentInfo.email,
         studentName: promotedStudentInfo.name,
         studentId: promotedStudentInfo.studentId,
-        trip: tripData,
+        trip: tripData || {},
         isPromotion: true,
       },
-    });
+    }).catch((err) => console.error("Error enqueuing promotion email:", err));
 
-    await recordAuditLog(
+    recordAuditLog(
       { uid: "system", email: adminEmail },
       "WAITLIST_PROMOTED",
       "trip_registration",
@@ -386,7 +402,7 @@ export async function releaseSeatAndPromoteWaitlist(params: {
         originalWaitlistPosition: promotedStudentInfo.waitlistPosition,
         promotedReason: `Seat vacated by registration ${regDocId} (${newStatus})`,
       }
-    );
+    ).catch(() => {});
   }
 
   return {
@@ -430,12 +446,14 @@ export async function adjustTripCapacity(params: {
   let promotedStudents: Array<any> = [];
   let isOverCapacity = false;
   let finalJoined = 0;
+  let savedTripData: Record<string, any> = {};
 
-  await adminDb.runTransaction(async (transaction) => {
+  await runFastTransaction(adminDb, async (transaction) => {
     const tripSnap = await transaction.get(tripRef);
     if (!tripSnap.exists) throw new Error(`Trip ${tripId} not found`);
 
     const tripData = tripSnap.data() || {};
+    savedTripData = { ...tripData, totalSeats: newCapacity };
     const oldCapacity = Number(tripData.totalSeats || 0);
     const currentJoined = Number(tripData.totalJoined || 0);
 
@@ -456,17 +474,29 @@ export async function adjustTripCapacity(params: {
     isOverCapacity = false;
     const availableSeats = newCapacity - currentJoined;
 
-    if (availableSeats > 0) {
-      // Query eligible waitlist registrations in FIFO order
-      const tripRegsSnap = await adminDb
-        .collection("tripRegistrations")
-        .where("tripId", "==", tripId)
-        .get();
+    if (availableSeats > 0 && Number(tripData.waitlistedCount || 0) > 0) {
+      // Query eligible waitlist registrations in FIFO order with limit
+      let eligibleWaitlistedDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+      try {
+        const waitlistSnap = await adminDb
+          .collection("tripRegistrations")
+          .where("tripId", "==", tripId)
+          .where("status", "==", "waitlisted")
+          .orderBy("waitlistPosition", "asc")
+          .limit(availableSeats)
+          .get();
+        eligibleWaitlistedDocs = waitlistSnap.docs;
+      } catch (_) {
+        const waitlistSnap = await adminDb
+          .collection("tripRegistrations")
+          .where("tripId", "==", tripId)
+          .where("status", "==", "waitlisted")
+          .get();
 
-      const eligibleWaitlistedDocs = tripRegsSnap.docs
-        .filter((d) => (d.data().status || "").trim() === "waitlisted")
-        .sort((a, b) => (Number(a.data().waitlistPosition) || 999999) - (Number(b.data().waitlistPosition) || 999999))
-        .slice(0, availableSeats);
+        eligibleWaitlistedDocs = waitlistSnap.docs
+          .sort((a, b) => (Number(a.data().waitlistPosition) || 999999) - (Number(b.data().waitlistPosition) || 999999))
+          .slice(0, availableSeats);
+      }
 
       let newlyPromotedCount = 0;
       let addedFemale = 0;
@@ -523,14 +553,11 @@ export async function adjustTripCapacity(params: {
 
   invalidateTripCache(tripId);
 
-  // Enqueue approval emails for newly promoted students
+  // Enqueue approval emails for newly promoted students non-blocking
   if (promotedStudents.length > 0) {
-    const tripSnap = await adminDb.collection("trips").doc(tripId).get();
-    const tripData = tripSnap.data() || {};
-
-    for (const student of promotedStudents) {
+    promotedStudents.forEach((student) => {
       const jobId = buildDeterministicJobId("approval_email", [tripId, student.uid, "promoted_capacity"]);
-      await enqueueDurableJob({
+      enqueueDurableJob({
         jobId,
         jobType: "approval_email",
         payload: {
@@ -539,12 +566,12 @@ export async function adjustTripCapacity(params: {
           email: student.email,
           studentName: student.name,
           studentId: student.studentId,
-          trip: tripData,
+          trip: savedTripData,
           isPromotion: true,
         },
-      });
+      }).catch((err) => console.error("Error enqueuing capacity promotion email:", err));
 
-      await recordAuditLog(
+      recordAuditLog(
         { uid: "system", email: adminEmail },
         "WAITLIST_PROMOTED_CAPACITY_INCREASE",
         "trip_registration",
@@ -555,11 +582,11 @@ export async function adjustTripCapacity(params: {
           studentName: student.name,
           newCapacity,
         }
-      );
-    }
+      ).catch(() => {});
+    });
   }
 
-  await recordAuditLog(
+  recordAuditLog(
     { uid: "system", email: adminEmail },
     "TRIP_CAPACITY_CHANGED",
     "trip",
@@ -570,7 +597,7 @@ export async function adjustTripCapacity(params: {
       promotedCount: promotedStudents.length,
       overCapacity: isOverCapacity,
     }
-  );
+  ).catch(() => {});
 
   return {
     success: true,

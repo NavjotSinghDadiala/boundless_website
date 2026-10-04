@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 import { 
   Loader2Icon, 
@@ -134,6 +134,25 @@ const isUrlOrDriveLink = (val: unknown): boolean => {
   );
 };
 
+async function fetchWithAdminTimeout(url: string, options: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (err: any) {
+    if (err?.name === "AbortError" || controller.signal.aborted) {
+      throw new Error("Request timed out. The server took too long to respond. Please try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 export default function SubmissionsPage() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [selectedTripId, setSelectedTripId] = useState("");
@@ -254,22 +273,49 @@ export default function SubmissionsPage() {
     loadTrips();
   }, []);
 
-  // Fetch registrations and concerns for selected trip
-  const fetchTripData = async () => {
-    if (!selectedTripId) return;
+  // In-flight fetch tracking to prevent duplicate concurrent network requests
+  const inFlightFetchTripId = useRef<string | null>(null);
+
+  // Fetch registrations and concerns for selected trip in parallel
+  const fetchTripData = async (overrideTripId?: string) => {
+    const targetTripId = overrideTripId || selectedTripId;
+    if (!targetTripId) return;
+    if (inFlightFetchTripId.current === targetTripId) return;
+    inFlightFetchTripId.current = targetTripId;
     setLoading(true);
     try {
-      const regRes = await fetch(`/api/admin/registrations?tripId=${selectedTripId}`);
-      const concernsRes = await fetch(`/api/coordinator/concerns?tripId=${selectedTripId}`);
+      const [regRes, concernsRes] = await Promise.all([
+        fetch(`/api/admin/registrations?tripId=${targetTripId}`),
+        fetch(`/api/coordinator/concerns?tripId=${targetTripId}`),
+      ]);
       
-      if (regRes.ok && concernsRes.ok) {
+      if (regRes.ok) {
         const regData = await regRes.json();
-        const concernsData = await concernsRes.json();
         setRegistrations(regData.registrations || []);
+      }
+      if (concernsRes.ok) {
+        const concernsData = await concernsRes.json();
         setConcerns(concernsData.concerns || []);
       }
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to load registration data.");
+    } finally {
+      inFlightFetchTripId.current = null;
+      setLoading(false);
+    }
+  };
 
-      // Load specific trip metadata
+  // Only trigger network data load when selected trip ID actually changes
+  useEffect(() => {
+    if (selectedTripId) {
+      fetchTripData(selectedTripId);
+    }
+  }, [selectedTripId]);
+
+  // Synchronize trip controls metadata from local trips state without firing network calls
+  useEffect(() => {
+    if (selectedTripId && trips.length > 0) {
       const tripMatch = trips.find((t) => t.id === selectedTripId);
       if (tripMatch) {
         setSelectedTrip(tripMatch);
@@ -278,19 +324,8 @@ export default function SubmissionsPage() {
         setControlsFemaleSeats(tripMatch.femaleReservedSeats !== undefined ? tripMatch.femaleReservedSeats : 0);
         setControlsMaleSeats(tripMatch.maleReservedSeats !== undefined ? tripMatch.maleReservedSeats : Math.max(0, (tripMatch.totalSeats || 50) - (tripMatch.femaleReservedSeats || 0)));
       }
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to load registration data.");
-    } finally {
-      setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    if (selectedTripId) {
-      fetchTripData();
-    }
-  }, [selectedTripId, trips]);
+  }, [trips, selectedTripId]);
 
   const handleDownloadCSV = () => {
     if (!registrations.length) return;
@@ -656,7 +691,7 @@ export default function SubmissionsPage() {
 
   const handleToggleStudentIdVerification = async (regId: string, verified: boolean = true) => {
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -668,17 +703,19 @@ export default function SubmissionsPage() {
 
       if (res.ok) {
         toast.success(verified ? "Student ID verified successfully!" : "Student ID verification revoked.");
-        await fetchTripData();
+        setRegistrations((prev) =>
+          prev.map((r) => (r.id === regId ? { ...r, studentIdVerified: verified } : r))
+        );
         if (activeProfileReg && activeProfileReg.id === regId) {
           setActiveProfileReg((prev) => prev ? { ...prev, studentIdVerified: verified } : null);
         }
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         toast.error(err.error || "Failed to update Student ID verification.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred.");
+      toast.error(e?.message || "An error occurred.");
     }
   };
 
@@ -688,7 +725,7 @@ export default function SubmissionsPage() {
     verified: boolean = true
   ) => {
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -701,7 +738,21 @@ export default function SubmissionsPage() {
 
       if (res.ok) {
         toast.success(verified ? "Consent Form verified successfully!" : "Consent Form verification revoked.");
-        await fetchTripData();
+        setRegistrations((prev) =>
+          prev.map((r) => {
+            if (r.id !== regId) return r;
+            const updatedMap = { ...(r.verifiedConsentForms || {}), [templateId]: verified };
+            const templates = selectedTrip?.consentTemplates && selectedTrip.consentTemplates.length > 0
+              ? selectedTrip.consentTemplates
+              : (selectedTrip?.consentFormTemplateUrl ? [{ id: "legacy-consent" }] : []);
+            const allOk = templates.length > 0 && templates.every((t) => updatedMap[t.id]);
+            return {
+              ...r,
+              verifiedConsentForms: updatedMap,
+              consentFormVerified: allOk,
+            };
+          })
+        );
         if (activeProfileReg && activeProfileReg.id === regId) {
           setActiveProfileReg((prev) => {
             if (!prev) return null;
@@ -735,7 +786,7 @@ export default function SubmissionsPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -744,7 +795,7 @@ export default function SubmissionsPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         if (data.waitlisted) {
           toast.info(`ℹ Capacity full: Student placed on waiting list at position #${data.waitlistPosition || 1}.`);
@@ -759,14 +810,27 @@ export default function SubmissionsPage() {
         } else {
           toast.success("✓ Student approved successfully.");
         }
+
+        const nextStatus = data.registrationStatus || data.status || "mail_sent";
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === reg.id
+              ? {
+                  ...r,
+                  status: nextStatus,
+                  approvalEmailStatus: data.email?.status || r.approvalEmailStatus,
+                  approvalEmailError: data.email?.error || r.approvalEmailError,
+                }
+              : r
+          )
+        );
         setApproveConfirmReg(null);
-        await fetchTripData();
         if (activeProfileReg && activeProfileReg.id === reg.id) {
           setActiveProfileReg((prev) =>
             prev
               ? {
                   ...prev,
-                  status: data.registrationStatus || data.status || "mail_sent",
+                  status: nextStatus,
                   approvalEmailStatus: data.email?.status || prev.approvalEmailStatus,
                   approvalEmailError: data.email?.error || prev.approvalEmailError,
                 }
@@ -776,9 +840,9 @@ export default function SubmissionsPage() {
       } else {
         toast.error(data.error || "Failed to approve registration.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred while approving.");
+      toast.error(e?.message || "An error occurred while approving.");
     } finally {
       setSubmitting(false);
     }
@@ -787,7 +851,7 @@ export default function SubmissionsPage() {
   const handleResendApprovalEmail = async (reg: Registration) => {
     setSubmitting(true);
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -796,10 +860,21 @@ export default function SubmissionsPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.email?.sent) {
         toast.success("✓ Confirmation email resent successfully!");
-        await fetchTripData();
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === reg.id
+              ? {
+                  ...r,
+                  status: data.registrationStatus || data.status || "mail_sent",
+                  approvalEmailStatus: "sent",
+                  approvalEmailError: undefined,
+                }
+              : r
+          )
+        );
         if (activeProfileReg && activeProfileReg.id === reg.id) {
           setActiveProfileReg((prev) =>
             prev
@@ -815,9 +890,9 @@ export default function SubmissionsPage() {
       } else {
         toast.error(data.email?.error || data.error || "Failed to resend confirmation email.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred while resending the email.");
+      toast.error(e?.message || "An error occurred while resending the email.");
     } finally {
       setSubmitting(false);
     }
@@ -832,7 +907,7 @@ export default function SubmissionsPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -842,22 +917,33 @@ export default function SubmissionsPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         toast.success("Registration rejected.");
         const regId = rejectConfirmReg.id;
+        const reason = rejectReason.trim();
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === regId
+              ? {
+                  ...r,
+                  status: "rejected",
+                  issueText: reason,
+                }
+              : r
+          )
+        );
         setRejectConfirmReg(null);
         setRejectReason("");
-        await fetchTripData();
         if (activeProfileReg && activeProfileReg.id === regId) {
-          setActiveProfileReg((prev) => prev ? { ...prev, status: "rejected", issueText: rejectReason.trim() } : null);
+          setActiveProfileReg((prev) => prev ? { ...prev, status: "rejected", issueText: reason } : null);
         }
       } else {
         toast.error(data.error || "Failed to reject registration.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred while rejecting.");
+      toast.error(e?.message || "An error occurred while rejecting.");
     } finally {
       setSubmitting(false);
     }
@@ -872,7 +958,7 @@ export default function SubmissionsPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -882,22 +968,33 @@ export default function SubmissionsPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         toast.success("Approval revoked. Registration returned to pending review.");
         const regId = revokeConfirmReg.id;
+        const reason = revokeReason.trim();
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === regId
+              ? {
+                  ...r,
+                  status: "registered",
+                  issueText: reason,
+                }
+              : r
+          )
+        );
         setRevokeConfirmReg(null);
         setRevokeReason("");
-        await fetchTripData();
         if (activeProfileReg && activeProfileReg.id === regId) {
-          setActiveProfileReg((prev) => prev ? { ...prev, status: "registered", issueText: revokeReason.trim() } : null);
+          setActiveProfileReg((prev) => prev ? { ...prev, status: "registered", issueText: reason } : null);
         }
       } else {
         toast.error(data.error || "Failed to revoke approval.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred while revoking approval.");
+      toast.error(e?.message || "An error occurred while revoking approval.");
     } finally {
       setSubmitting(false);
     }
@@ -916,7 +1013,7 @@ export default function SubmissionsPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -927,28 +1024,41 @@ export default function SubmissionsPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         toast.success("Correction request sent to student.");
         const regId = reuploadRegId;
+        const reason = reuploadIssueText.trim();
+        const fields = [...reuploadFields];
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === regId
+              ? {
+                  ...r,
+                  status: "action_required",
+                  issueText: reason,
+                  actionRequiredFields: fields,
+                }
+              : r
+          )
+        );
         setReuploadRegId(null);
         setReuploadIssueText("");
         setReuploadFields([]);
-        await fetchTripData();
         if (activeProfileReg && activeProfileReg.id === regId) {
           setActiveProfileReg((prev) => prev ? {
             ...prev,
             status: "action_required",
-            issueText: reuploadIssueText.trim(),
-            actionRequiredFields: reuploadFields,
+            issueText: reason,
+            actionRequiredFields: fields,
           } : null);
         }
       } else {
         toast.error(data.error || "Failed to request correction.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred while sending correction request.");
+      toast.error(e?.message || "An error occurred while sending correction request.");
     } finally {
       setSubmitting(false);
     }
@@ -1195,7 +1305,7 @@ export default function SubmissionsPage() {
     setSubmitting(true);
 
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1223,11 +1333,12 @@ export default function SubmissionsPage() {
         });
         setTrips(updatedTrips);
       } else {
-        toast.error("Failed to update controls.");
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to update controls.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred.");
+      toast.error(e?.message || "An error occurred.");
     } finally {
       setSubmitting(false);
     }
@@ -1239,7 +1350,7 @@ export default function SubmissionsPage() {
     if (!confirm("Are you sure you want to mark this event as completed? This will archive the roster, close registration, and remove user access to register.")) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1263,11 +1374,12 @@ export default function SubmissionsPage() {
         });
         setTrips(updatedTrips);
       } else {
-        toast.error("Failed to complete event.");
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to complete event.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred.");
+      toast.error(e?.message || "An error occurred.");
     } finally {
       setSubmitting(false);
     }
@@ -1279,27 +1391,33 @@ export default function SubmissionsPage() {
     if (!confirm("Are you sure you want to delete this event completely? This action cannot be undone.")) return;
     
     setSubmitting(true);
+    const tripToDelete = selectedTripId;
     try {
-      const res = await fetch(`/api/trip?id=${selectedTripId}`, {
+      const res = await fetchWithAdminTimeout(`/api/trip?id=${tripToDelete}`, {
         method: "DELETE",
       });
       if (res.ok) {
         toast.success("Event deleted successfully!");
-        const remaining = trips.filter((t) => t.id !== selectedTripId);
+        const remaining = trips.filter((t) => t.id !== tripToDelete);
         setTrips(remaining);
         if (remaining.length > 0) {
-          setSelectedTripId(remaining[0].id);
+          const nextTrip = remaining[0];
+          setSelectedTripId(nextTrip.id);
+          setSelectedTrip(nextTrip);
+          fetchTripData(nextTrip.id);
         } else {
           setSelectedTripId("");
           setSelectedTrip(null);
           setRegistrations([]);
+          setConcerns([]);
         }
       } else {
-        toast.error("Failed to delete the event.");
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || "Failed to delete the event.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      toast.error("An error occurred.");
+      toast.error(e?.message || "An error occurred.");
     } finally {
       setSubmitting(false);
     }
@@ -1309,7 +1427,7 @@ export default function SubmissionsPage() {
   // Change individual registration status
   const handleStatusChange = async (regId: string, nextStatus: string, issueText?: string, actionRequiredFields?: string[]) => {
     try {
-      const res = await fetch("/api/admin/registrations", {
+      const res = await fetchWithAdminTimeout("/api/admin/registrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ registrationId: regId, status: nextStatus, issueText, actionRequiredFields }),
@@ -1317,12 +1435,25 @@ export default function SubmissionsPage() {
 
       if (res.ok) {
         toast.success(`Registration status set to: ${nextStatus}`);
-        fetchTripData();
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === regId
+              ? {
+                  ...r,
+                  status: nextStatus,
+                  issueText: issueText !== undefined ? issueText : r.issueText,
+                  actionRequiredFields: actionRequiredFields !== undefined ? actionRequiredFields : r.actionRequiredFields,
+                }
+              : r
+          )
+        );
       } else {
-        toast.error("Failed to update status.");
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to update status.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      toast.error(e?.message || "An error occurred.");
     }
   };
 
@@ -1392,7 +1523,7 @@ export default function SubmissionsPage() {
     if (!selectedTripId) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/trip", {
+      const res = await fetchWithAdminTimeout("/api/trip", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1421,19 +1552,19 @@ export default function SubmissionsPage() {
       if (res.ok) {
         toast.success("Event details and registration form saved successfully!");
         
-        const tripRes = await fetch("/api/trip");
-        if (tripRes.ok) {
-          const tripData = await tripRes.json();
+        const tripRes = await fetchWithAdminTimeout("/api/trip").catch(() => null);
+        if (tripRes && tripRes.ok) {
+          const tripData = await tripRes.json().catch(() => ({}));
           setTrips(tripData.trips || []);
         }
         setActiveTab("students");
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         toast.error(err.error || "Failed to save changes.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("An error occurred.");
+      toast.error(err?.message || "An error occurred.");
     } finally {
       setSubmitting(false);
     }
@@ -1504,7 +1635,7 @@ export default function SubmissionsPage() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await fetch("/api/trip", {
+      const res = await fetchWithAdminTimeout("/api/trip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1534,9 +1665,9 @@ export default function SubmissionsPage() {
       if (res.ok) {
         toast.success("New event created successfully!");
         
-        const tripRes = await fetch("/api/trip");
-        if (tripRes.ok) {
-          const tripData = await tripRes.json();
+        const tripRes = await fetchWithAdminTimeout("/api/trip").catch(() => null);
+        if (tripRes && tripRes.ok) {
+          const tripData = await tripRes.json().catch(() => ({}));
           setTrips(tripData.trips || []);
           if (tripData.trips && tripData.trips.length > 0) {
             setSelectedTripId(tripData.trips[0].id);
@@ -1544,12 +1675,12 @@ export default function SubmissionsPage() {
         }
         setActiveTab("students");
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         toast.error(err.error || "Failed to create event.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("An error occurred.");
+      toast.error(err?.message || "An error occurred.");
     } finally {
       setSubmitting(false);
     }

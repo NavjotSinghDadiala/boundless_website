@@ -25,6 +25,8 @@ import {
   adjustTripCapacity,
   enqueueWaitlistNotificationEmail,
 } from "@/lib/tripCapacity";
+import { invalidateStudentDirectoryCache } from "@/lib/studentDirectory";
+import { isQuotaError } from "@/lib/firebase-fallback";
 
 // Helper to resolve the coordinator assigned to a student's chosen option
 function resolveAssignedCoordinator(coordinators, formData) {
@@ -228,8 +230,7 @@ export async function POST(req) {
 
     let adminEmail = admin?.email || "Admin";
 
-    const clone = req.clone();
-    const body = await clone.json();
+    const body = await req.json();
     const {
       registrationId,
       action,
@@ -640,18 +641,17 @@ export async function POST(req) {
       updatePayload.actionRequiredFields = fields;
 
       if (!tripData.emailsDisabled) {
-        try {
-          await sendCorrectionRequestEmail(
-            regData.email,
-            userName,
-            tripData.name || "Trip",
-            correctionReason,
-            fields,
-            tripId
-          );
-        } catch (emailErr) {
+        // Dispatch correction request email (non-blocking so admin mutation resolves immediately)
+        sendCorrectionRequestEmail(
+          regData.email,
+          userName,
+          tripData.name || "Trip",
+          correctionReason,
+          fields,
+          tripId
+        ).catch((emailErr) => {
           console.error("Failed to send correction request email:", emailErr);
-        }
+        });
       }
 
       auditEntry = {
@@ -738,27 +738,34 @@ export async function POST(req) {
       updatePayload.conversationHistory = existingHistory;
     }
 
-    // 4. Dual-write updates:
-    // Canonical collection tripRegistrations/{tripId}_{uid}
+    // 4. Dual-write updates in parallel without redundant gets
+    const writePromises = [];
+
     if (canonicalDocId) {
       const canonicalRef = adminDb.collection("tripRegistrations").doc(canonicalDocId);
-      const cSnap = await canonicalRef.get();
-      if (cSnap.exists) {
-        await canonicalRef.update(updatePayload);
+      if (isCanonical) {
+        writePromises.push(canonicalRef.update(updatePayload));
       } else {
-        const backfilled = mergeLegacyIntoCanonical({}, regData, uid, email, tripId);
-        await canonicalRef.set({ ...backfilled, ...updatePayload });
+        writePromises.push(
+          (async () => {
+            const cSnap = await canonicalRef.get();
+            if (cSnap.exists) {
+              await canonicalRef.update(updatePayload);
+            } else {
+              const backfilled = mergeLegacyIntoCanonical({}, regData, uid, email, tripId);
+              await canonicalRef.set({ ...backfilled, ...updatePayload });
+            }
+          })()
+        );
       }
     }
 
-    // Legacy collection user-registrations
     if (legacyDocId) {
       const legacyRef = adminDb.collection("user-registrations").doc(legacyDocId);
-      const lSnap = await legacyRef.get();
-      if (lSnap.exists) {
-        await legacyRef.update(updatePayload);
-      }
+      writePromises.push(legacyRef.set(updatePayload, { merge: true }));
     }
+
+    await Promise.all(writePromises);
 
     // 5. Sync verified status to canonical students/{uid} collection
     if (updatePayload.studentIdVerified === true) {
@@ -778,8 +785,11 @@ export async function POST(req) {
       }
     }
 
-    // Record audit log for registration mutation
-    await recordAuditLog(
+    // Invalidate student directory cache so stats and registration counts refresh
+    invalidateStudentDirectoryCache();
+
+    // Record audit log for registration mutation (non-blocking)
+    recordAuditLog(
       admin,
       action ? action.toUpperCase() : (directStatus ? `SET_STATUS_${directStatus.toUpperCase()}` : "UPDATE_REGISTRATION"),
       "registration",
@@ -803,6 +813,15 @@ export async function POST(req) {
     });
   } catch (error) {
     console.error("POST Admin Registration Status Error:", error);
+    if (isQuotaError(error)) {
+      return NextResponse.json(
+        {
+          error: "Service is temporarily busy (database quota reached). Please retry in a few moments.",
+          code: "RESOURCE_EXHAUSTED",
+        },
+        { status: 429 }
+      );
+    }
     return NextResponse.json({ error: "Failed to update registration. Please try again." }, { status: 500 });
   }
 }
@@ -830,8 +849,7 @@ export async function PUT(req) {
       return NextResponse.json({ error: "Unauthorized access" }, { status: 401 });
     }
 
-    const clone = req.clone();
-    const body = await clone.json();
+    const body = await req.json();
     const {
       tripId,
       registrationOpen,
@@ -867,8 +885,8 @@ export async function PUT(req) {
 
     await tripRef.update(updateData);
 
-    // Record audit log for trip settings update
-    await recordAuditLog(
+    // Record audit log for trip settings update (non-blocking)
+    recordAuditLog(
       admin,
       "UPDATE_EVENT_SETTINGS",
       "trip",
@@ -880,9 +898,11 @@ export async function PUT(req) {
       }
     ).catch(() => {});
 
-    // If registrations were toggled to CLOSED, or marked completed, trigger roster archive and history indexing
+    // If registrations were toggled to CLOSED, or marked completed, trigger roster archive non-blocking
     if (registrationOpen === false || isCompleted === true) {
-      await archiveEventRoster(tripId);
+      archiveEventRoster(tripId).catch((err) => {
+        console.error("Error archiving event roster:", err);
+      });
     }
 
     if (isCompleted === true) {
@@ -894,6 +914,15 @@ export async function PUT(req) {
     return NextResponse.json({ success: true, message: "Trip settings updated successfully" });
   } catch (error) {
     console.error("PUT Trip Settings Error:", error);
+    if (isQuotaError(error)) {
+      return NextResponse.json(
+        {
+          error: "Service is temporarily busy (database quota reached). Please retry in a few moments.",
+          code: "RESOURCE_EXHAUSTED",
+        },
+        { status: 429 }
+      );
+    }
     return NextResponse.json({ error: "Failed to update trip settings. Please try again." }, { status: 500 });
   }
 }

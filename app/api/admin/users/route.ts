@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { normalizeStudentId, normalizeEmail, requireFullAdmin, recordAuditLog } from "@/lib/adminAuth";
+import { normalizeStudentId, normalizeEmail, requireFullAdmin, recordAuditLog, invalidateAdminAuthCache } from "@/lib/adminAuth";
 
 /**
  * GET /api/admin/users
@@ -166,9 +166,10 @@ export async function POST(request: Request) {
     };
 
     await adminDb.collection("adminUsers").doc(studentId).set(newAdminData);
+    invalidateAdminAuthCache();
 
     // Record audit log
-    await recordAuditLog(admin, "CREATE_ADMIN", "adminUser", studentId, "success", {
+    recordAuditLog(admin, "CREATE_ADMIN", "adminUser", studentId, "success", {
       targetStudentId: studentId,
       name,
       permissionLevel,
@@ -262,9 +263,10 @@ export async function PUT(request: Request) {
     }
 
     await targetDocRef.update(updatePayload);
+    invalidateAdminAuthCache();
 
     // Record audit log
-    await recordAuditLog(admin, "UPDATE_ADMIN", "adminUser", studentId, "success", {
+    recordAuditLog(admin, "UPDATE_ADMIN", "adminUser", studentId, "success", {
       targetStudentId: studentId,
       changes: {
         permissionLevel: updatePayload.permissionLevel,
@@ -340,9 +342,10 @@ export async function DELETE(request: Request) {
     }
 
     await targetDocRef.delete();
+    invalidateAdminAuthCache();
 
     // Record audit log
-    await recordAuditLog(admin, "DELETE_ADMIN", "adminUser", studentId, "success", {
+    recordAuditLog(admin, "DELETE_ADMIN", "adminUser", studentId, "success", {
       targetStudentId: studentId,
       name: currentData.name,
       permissionLevel: currentData.permissionLevel,

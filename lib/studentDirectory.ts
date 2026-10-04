@@ -87,6 +87,21 @@ export interface DirectoryFilterParams {
 let cachedDashboardStats: any = null;
 let cachedDashboardStatsExpiresAt = 0;
 
+// In-memory cache for student directory snapshot (30s TTL)
+interface CachedDirectorySnapshot {
+  expiresAt: number;
+  studentsSnap: FirebaseFirestore.QuerySnapshot;
+  studentTripsMap: Map<string, Array<{ tripId: string; status: string; submittedAt: any }>>;
+  tripsMap: Map<string, { name: string; destination: string; date: string; isCompleted: boolean }>;
+}
+let cachedDirectorySnapshot: CachedDirectorySnapshot | null = null;
+
+export function invalidateStudentDirectoryCache(): void {
+  cachedDirectorySnapshot = null;
+  cachedDashboardStats = null;
+  cachedDashboardStatsExpiresAt = 0;
+}
+
 /**
  * Format Firestore dates to ISO string safely.
  */
@@ -123,73 +138,89 @@ export async function getStudentsDirectory(params: DirectoryFilterParams = {}): 
   const sortBy = params.sortBy || "createdAt";
   const sortOrder = params.sortOrder || "desc";
 
-  // 1. Fetch all student profiles from canonical students collection
-  const studentsSnap = await adminDb.collection("students").get();
-  
-  // Also pre-fetch registrations summary to map trip counts and last trip without N+1
-  const registrationsSnap = await adminDb.collection("tripRegistrations").get();
-  const legacyRegSnap = await adminDb.collection("user-registrations").get().catch(() => null);
+  const nowMs = Date.now();
+  let studentsSnap: FirebaseFirestore.QuerySnapshot;
+  let studentTripsMap: Map<string, Array<{ tripId: string; status: string; submittedAt: any }>>;
+  let tripsMap: Map<string, { name: string; destination: string; date: string; isCompleted: boolean }>;
 
-  // Pre-fetch trips index to resolve completed status
-  const [tripsSnap, historySnap] = await Promise.all([
-    adminDb.collection("trips").get(),
-    adminDb.collection("previousTripRecords").get(),
-  ]);
+  if (cachedDirectorySnapshot && nowMs < cachedDirectorySnapshot.expiresAt) {
+    studentsSnap = cachedDirectorySnapshot.studentsSnap;
+    studentTripsMap = cachedDirectorySnapshot.studentTripsMap;
+    tripsMap = cachedDirectorySnapshot.tripsMap;
+  } else {
+    // Parallel fetch of canonical directory base collections in 1 roundtrip
+    const [sSnap, regSnap, tSnap, hSnap] = await Promise.all([
+      adminDb.collection("students").get(),
+      adminDb.collection("tripRegistrations").get(),
+      adminDb.collection("trips").get(),
+      adminDb.collection("previousTripRecords").get(),
+    ]);
 
-  const tripsMap = new Map<string, { name: string; destination: string; date: string; isCompleted: boolean }>();
-  tripsSnap.forEach((doc) => {
-    const d = doc.data() || {};
-    tripsMap.set(doc.id, {
-      name: d.name || d.title || "Trip",
-      destination: d.destination || "",
-      date: d.startDate || d.endDate || "",
-      isCompleted: Boolean(d.isCompleted),
-    });
-  });
-
-  historySnap.forEach((doc) => {
-    const d = doc.data() || {};
-    if (!tripsMap.has(doc.id)) {
+    studentsSnap = sSnap;
+    tripsMap = new Map<string, { name: string; destination: string; date: string; isCompleted: boolean }>();
+    tSnap.forEach((doc) => {
+      const d = doc.data() || {};
       tripsMap.set(doc.id, {
-        name: d.tripName || "Past Trip",
+        name: d.name || d.title || "Trip",
         destination: d.destination || "",
         date: d.startDate || d.endDate || "",
-        isCompleted: true,
+        isCompleted: Boolean(d.isCompleted),
       });
-    } else {
-      const existing = tripsMap.get(doc.id)!;
-      existing.isCompleted = true;
-    }
-  });
+    });
 
-  // Map student registrations by UID
-  const studentTripsMap = new Map<string, Array<{ tripId: string; status: string; submittedAt: any }>>();
-
-  function recordReg(uid: string, tripId: string, status: string, submittedAt: any) {
-    if (!uid || !tripId) return;
-    if (!studentTripsMap.has(uid)) {
-      studentTripsMap.set(uid, []);
-    }
-    const list = studentTripsMap.get(uid)!;
-    // Deduplicate same tripId for same student
-    if (!list.some((r) => r.tripId === tripId)) {
-      list.push({ tripId, status, submittedAt });
-    }
-  }
-
-  registrationsSnap.forEach((doc) => {
-    const d = doc.data() || {};
-    const uid = d.uid || doc.id.split("_")[1] || "";
-    recordReg(uid, d.tripId, d.status || "registered", d.submittedAt);
-  });
-
-  if (legacyRegSnap) {
-    legacyRegSnap.forEach((doc) => {
+    hSnap.forEach((doc) => {
       const d = doc.data() || {};
-      if (d.uid && d.tripId) {
-        recordReg(d.uid, d.tripId, d.status || "registered", d.submittedAt);
+      if (!tripsMap.has(doc.id)) {
+        tripsMap.set(doc.id, {
+          name: d.tripName || "Past Trip",
+          destination: d.destination || "",
+          date: d.startDate || d.endDate || "",
+          isCompleted: true,
+        });
+      } else {
+        const existing = tripsMap.get(doc.id)!;
+        existing.isCompleted = true;
       }
     });
+
+    studentTripsMap = new Map<string, Array<{ tripId: string; status: string; submittedAt: any }>>();
+
+    function recordReg(uid: string, tripId: string, status: string, submittedAt: any) {
+      if (!uid || !tripId) return;
+      if (!studentTripsMap.has(uid)) {
+        studentTripsMap.set(uid, []);
+      }
+      const list = studentTripsMap.get(uid)!;
+      if (!list.some((r) => r.tripId === tripId)) {
+        list.push({ tripId, status, submittedAt });
+      }
+    }
+
+    regSnap.forEach((doc) => {
+      const d = doc.data() || {};
+      const uid = d.uid || doc.id.split("_")[1] || "";
+      recordReg(uid, d.tripId, d.status || "registered", d.submittedAt);
+    });
+
+    // Fallback: only read legacy user-registrations if canonical tripRegistrations was completely empty
+    if (regSnap.empty) {
+      try {
+        const legRegSnap = await adminDb.collection("user-registrations").get();
+        legRegSnap.forEach((doc) => {
+          const d = doc.data() || {};
+          if (d.uid && d.tripId) {
+            recordReg(d.uid, d.tripId, d.status || "registered", d.submittedAt);
+          }
+        });
+      } catch (_) {}
+    }
+
+    cachedDirectorySnapshot = {
+      expiresAt: nowMs + 30_000,
+      studentsSnap,
+      studentTripsMap,
+      tripsMap,
+    };
   }
 
   let totalVerified = 0;
@@ -402,21 +433,29 @@ export async function getStudentWithTripHistory(uid: string): Promise<StudentFul
     });
   }
 
-  // 3. Resolve trip details for each registration
+  // 3. Resolve trip details for each registration in 1 roundtrip
   const tripIds = Array.from(rawRegistrationsMap.keys());
   const tripsMetadataMap = new Map<string, any>();
 
-  for (const tid of tripIds) {
-    const [tSnap, hSnap] = await Promise.all([
-      adminDb.collection("trips").doc(tid).get(),
-      adminDb.collection("previousTripRecords").doc(tid).get(),
+  if (tripIds.length > 0) {
+    const tripRefs = tripIds.map((tid) => adminDb.collection("trips").doc(tid));
+    const histRefs = tripIds.map((tid) => adminDb.collection("previousTripRecords").doc(tid));
+    const [tSnaps, hSnaps] = await Promise.all([
+      adminDb.getAll(...tripRefs),
+      adminDb.getAll(...histRefs),
     ]);
 
-    if (hSnap.exists) {
-      tripsMetadataMap.set(tid, { id: tid, ...hSnap.data(), isCompleted: true });
-    } else if (tSnap.exists) {
-      tripsMetadataMap.set(tid, { id: tid, ...tSnap.data() });
-    }
+    hSnaps.forEach((hSnap) => {
+      if (hSnap.exists) {
+        tripsMetadataMap.set(hSnap.id, { id: hSnap.id, ...hSnap.data(), isCompleted: true });
+      }
+    });
+
+    tSnaps.forEach((tSnap) => {
+      if (tSnap.exists && !tripsMetadataMap.has(tSnap.id)) {
+        tripsMetadataMap.set(tSnap.id, { id: tSnap.id, ...tSnap.data() });
+      }
+    });
   }
 
   const allTripItems: StudentTripHistoryItem[] = [];
@@ -514,12 +553,14 @@ export async function getAdminDashboardSummaryStats(): Promise<{
     allTripsCount,
     completedHistoryCount,
     approvedParticipationsCount,
+    regCount,
   ] = await Promise.all([
     adminDb.collection("students").count().get(),
     adminDb.collection("students").where("studentIdVerified", "==", true).count().get(),
     adminDb.collection("trips").count().get(),
     adminDb.collection("previousTripRecords").count().get(),
     adminDb.collection("tripRegistrations").where("status", "in", ["approved_to_pay", "mail_sent", "paid"]).count().get(),
+    adminDb.collection("tripRegistrations").count().get(),
   ]);
 
   const totalStudents = totalStudentsCount.data().count;
@@ -530,7 +571,6 @@ export async function getAdminDashboardSummaryStats(): Promise<{
   const totalApproved = approvedParticipationsCount.data().count;
 
   // Approximate students with trips via unique count or fallback
-  const regCount = await adminDb.collection("tripRegistrations").count().get();
   const studentsWithTrips = Math.min(totalStudents, regCount.data().count);
 
   const stats = {

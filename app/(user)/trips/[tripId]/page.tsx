@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { Metadata } from "next";
 import { adminDb } from "@/lib/firebase-admin";
 import TripDetailHero from "@/components/trips/TripDetailHero";
@@ -19,7 +20,7 @@ interface PageProps {
   params: Promise<{ tripId: string }>;
 }
 
-async function getTrip(tripId: string): Promise<Trip | null> {
+const getTrip = cache(async (tripId: string): Promise<Trip | null> => {
   try {
     const doc = await adminDb.collection("trips").doc(tripId).get();
     if (!doc.exists) {
@@ -95,7 +96,7 @@ async function getTrip(tripId: string): Promise<Trip | null> {
     console.error("Error fetching trip for page:", err);
     return null;
   }
-}
+});
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { tripId } = await params;

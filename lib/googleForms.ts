@@ -845,51 +845,92 @@ export async function getTripExternalFormResponses(
   }
 
   // 2. Fetch matched responses from registration subcollections
-  const regSnap = await adminDb
-    .collection("tripRegistrations")
-    .where("tripId", "==", cleanTripId)
-    .get();
-
   const matchedResponses: ExternalFormAssociation[] = [];
 
-  for (const regDoc of regSnap.docs) {
-    let subColQuery = regDoc.ref.collection("externalForms");
+  let loadedViaCollectionGroup = false;
+  try {
+    let cgQuery: FirebaseFirestore.Query = adminDb
+      .collectionGroup("externalForms")
+      .where("tripId", "==", cleanTripId);
     if (formId) {
-      const singleDoc = await subColQuery.doc(formId.trim()).get();
-      if (singleDoc.exists) {
-        const d = singleDoc.data() || {};
-        matchedResponses.push({
-          formId: d.formId || singleDoc.id,
-          tripId: d.tripId || cleanTripId,
-          uid: d.uid || regDoc.data().uid,
-          responseId: d.responseId || "",
-          source: "google_forms",
-          status: "matched",
-          submittedAt: formatIsoTimestamp(d.submittedAt),
-          matchedAt: formatIsoTimestamp(d.matchedAt),
-          matchedBy: d.matchedBy || "admin",
-          data: d.data || {},
-          responseHistory: d.responseHistory || [],
-        });
-      }
-    } else {
-      const subSnap = await subColQuery.get();
-      for (const formDoc of subSnap.docs) {
-        const d = formDoc.data() || {};
-        matchedResponses.push({
-          formId: d.formId || formDoc.id,
-          tripId: d.tripId || cleanTripId,
-          uid: d.uid || regDoc.data().uid,
-          responseId: d.responseId || "",
-          source: "google_forms",
-          status: "matched",
-          submittedAt: formatIsoTimestamp(d.submittedAt),
-          matchedAt: formatIsoTimestamp(d.matchedAt),
-          matchedBy: d.matchedBy || "admin",
-          data: d.data || {},
-          responseHistory: d.responseHistory || [],
-        });
-      }
+      cgQuery = cgQuery.where("formId", "==", formId.trim());
+    }
+    const cgSnap = await cgQuery.get();
+    for (const doc of cgSnap.docs) {
+      const d = doc.data() || {};
+      matchedResponses.push({
+        formId: d.formId || doc.id,
+        tripId: d.tripId || cleanTripId,
+        uid: d.uid || "",
+        responseId: d.responseId || "",
+        source: "google_forms",
+        status: "matched",
+        submittedAt: formatIsoTimestamp(d.submittedAt),
+        matchedAt: formatIsoTimestamp(d.matchedAt),
+        matchedBy: d.matchedBy || "admin",
+        data: d.data || {},
+        responseHistory: d.responseHistory || [],
+      });
+    }
+    loadedViaCollectionGroup = true;
+  } catch (cgErr) {
+    // Graceful fallback to parallelized subcollection lookup if collectionGroup index unavailable
+  }
+
+  if (!loadedViaCollectionGroup) {
+    const regSnap = await adminDb
+      .collection("tripRegistrations")
+      .where("tripId", "==", cleanTripId)
+      .get();
+
+    const chunks: FirebaseFirestore.QueryDocumentSnapshot[][] = [];
+    for (let i = 0; i < regSnap.docs.length; i += 25) {
+      chunks.push(regSnap.docs.slice(i, i + 25));
+    }
+
+    for (const chunk of chunks) {
+      await Promise.all(
+        chunk.map(async (regDoc) => {
+          const subColQuery = regDoc.ref.collection("externalForms");
+          if (formId) {
+            const singleDoc = await subColQuery.doc(formId.trim()).get();
+            if (singleDoc.exists) {
+              const d = singleDoc.data() || {};
+              matchedResponses.push({
+                formId: d.formId || singleDoc.id,
+                tripId: d.tripId || cleanTripId,
+                uid: d.uid || regDoc.data().uid,
+                responseId: d.responseId || "",
+                source: "google_forms",
+                status: "matched",
+                submittedAt: formatIsoTimestamp(d.submittedAt),
+                matchedAt: formatIsoTimestamp(d.matchedAt),
+                matchedBy: d.matchedBy || "admin",
+                data: d.data || {},
+                responseHistory: d.responseHistory || [],
+              });
+            }
+          } else {
+            const subSnap = await subColQuery.get();
+            for (const formDoc of subSnap.docs) {
+              const d = formDoc.data() || {};
+              matchedResponses.push({
+                formId: d.formId || formDoc.id,
+                tripId: d.tripId || cleanTripId,
+                uid: d.uid || regDoc.data().uid,
+                responseId: d.responseId || "",
+                source: "google_forms",
+                status: "matched",
+                submittedAt: formatIsoTimestamp(d.submittedAt),
+                matchedAt: formatIsoTimestamp(d.matchedAt),
+                matchedBy: d.matchedBy || "admin",
+                data: d.data || {},
+                responseHistory: d.responseHistory || [],
+              });
+            }
+          }
+        })
+      );
     }
   }
 

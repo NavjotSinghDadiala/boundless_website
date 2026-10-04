@@ -235,8 +235,7 @@ export async function getOrCreateStudentProfile(
 
   await studentDocRef.set(initialDoc);
 
-  const createdSnap = await studentDocRef.get();
-  return serializeStudentDoc(createdSnap.data() || initialDoc);
+  return serializeStudentDoc(initialDoc);
 }
 
 /**
@@ -354,8 +353,7 @@ export async function updateStudentProfile(
   // We NEVER retroactively mutate historical tripRegistrations.
   // Historical registrations preserve the exact data submitted at the time of the event.
 
-  const updatedSnap = await studentDocRef.get();
-  const studentData = updatedSnap.data() || {};
+  const studentData = { ...existingData, ...sanitizedUpdates };
 
   // Maintain backward compatibility: sync known attributes to user_profiles/{email}
   if (studentData.email) {
@@ -393,13 +391,23 @@ export async function syncStudentFromRegistration(
   uid: string,
   email: string,
   formData: Record<string, any>,
-  isIdVerified?: boolean
+  isIdVerified?: boolean,
+  cachedStudentData?: Record<string, any>
 ): Promise<void> {
   if (!uid || !email) return;
 
   try {
-    // Ensure the student document exists first
-    await getOrCreateStudentProfile(uid, email);
+    let studentData = cachedStudentData;
+
+    if (!studentData) {
+      const studentSnap = await adminDb.collection("students").doc(uid).get();
+      if (studentSnap.exists) {
+        studentData = studentSnap.data() || {};
+      } else {
+        const seeded = await getOrCreateStudentProfile(uid, email);
+        studentData = seeded as any;
+      }
+    }
 
     const extracted = extractStudentFieldsFromFormData(formData || {});
     const updatePayload: Record<string, any> = {
@@ -417,9 +425,7 @@ export async function syncStudentFromRegistration(
       updatePayload.state = canonicalizeState(extracted.state);
     }
     if (extracted.cityDistrict) {
-      const targetState =
-        updatePayload.state ||
-        (await adminDb.collection("students").doc(uid).get()).data()?.state;
+      const targetState = updatePayload.state || studentData?.state;
       if (targetState && isValidDistrict(targetState, extracted.cityDistrict)) {
         updatePayload.cityDistrict = canonicalizeDistrict(targetState, extracted.cityDistrict);
       }

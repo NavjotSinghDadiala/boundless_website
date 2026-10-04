@@ -2,6 +2,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { syncStudentFromRegistration, extractStudentFieldsFromFormData } from "@/lib/studentProfile";
 import { generateExternalRegistrationToken, generatePersonalizedFormLaunchUrl } from "@/lib/googleForms";
+import { runFastTransaction, isQuotaError } from "@/lib/firebase-fallback";
 
 export interface CanonicalTripRegistration {
   id?: string;
@@ -337,13 +338,14 @@ async function resolveExternalFormsForRegistration(
     studentId?: string | null;
   }
 ): Promise<Array<any>> {
-  const formsSnap = await canonicalRef.collection("externalForms").get();
+  const [formsSnap, tripFormsDocs] = await Promise.all([
+    canonicalRef.collection("externalForms").get(),
+    getCachedTripGoogleForms(tripId),
+  ]);
   const matchedMap = new Map<string, any>();
   formsSnap.docs.forEach((doc) => {
     matchedMap.set(doc.id, doc.data() || {});
   });
-
-  const tripFormsDocs = await getCachedTripGoogleForms(tripId);
 
   let regToken = studentContext?.token;
   let regEmail = studentContext?.email;
@@ -459,6 +461,7 @@ export async function getOrBackfillTripRegistration(
     const externalForms = await resolveExternalFormsForRegistration(canonicalRef, tripId, {
       token: data.externalRegistrationToken,
       email: data.email,
+      studentId: data.studentId || null,
     });
 
     return {
@@ -557,6 +560,8 @@ export async function saveDualTripRegistration({
   consentResponses = [],
   studentName,
   studentRoll,
+  studentPhone,
+  cachedStudentData,
 }: {
   tripId: string;
   uid: string;
@@ -567,6 +572,8 @@ export async function saveDualTripRegistration({
   consentResponses?: any[];
   studentName?: string;
   studentRoll?: string;
+  studentPhone?: string;
+  cachedStudentData?: Record<string, any>;
 }): Promise<{ canonicalId: string; legacyId: string; alreadyExists?: boolean }> {
   const canonicalId = getCanonicalTripRegDocId(tripId, uid);
   const legacyId = `${tripId}_${email}`;
@@ -579,6 +586,7 @@ export async function saveDualTripRegistration({
   let resolvedStudentName = studentName || extractedStudent.name || "";
   let resolvedStudentRoll = studentRoll || extractedStudent.studentId || "";
   let resolvedStudentPhone =
+    studentPhone ||
     extractedStudent.phone ||
     formData?.["Contact Number"] ||
     formData?.["Phone Number"] ||
@@ -586,7 +594,7 @@ export async function saveDualTripRegistration({
     formData?.["phone"] ||
     "";
 
-  if (!resolvedStudentName || !resolvedStudentPhone) {
+  if ((!resolvedStudentName || !resolvedStudentPhone) && !cachedStudentData) {
     try {
       const studentSnap = await adminDb.collection("students").doc(uid).get();
       if (studentSnap.exists) {
@@ -669,7 +677,7 @@ export async function saveDualTripRegistration({
   const canonicalRef = adminDb.collection("tripRegistrations").doc(canonicalId);
 
   // 1. Atomic registration creation via transaction (prevents race condition & double-submits)
-  const txResult = await adminDb.runTransaction(async (transaction) => {
+  const txResult = await runFastTransaction(adminDb, async (transaction) => {
     const canonicalSnap = await transaction.get(canonicalRef);
     if (canonicalSnap.exists) {
       const existingData = canonicalSnap.data() || {};
@@ -717,7 +725,18 @@ export async function saveDualTripRegistration({
       },
       { merge: true }
     ),
-    syncStudentFromRegistration(uid, email, formData, studentIdVerified),
+    syncStudentFromRegistration(
+      uid,
+      email,
+      formData,
+      studentIdVerified,
+      cachedStudentData || {
+        name: resolvedStudentName,
+        phone: resolvedStudentPhone,
+        studentId: resolvedStudentRoll,
+        gender,
+      }
+    ),
   ]).catch((err) => {
     console.error("Non-critical error writing legacy registration records:", err);
   });
@@ -834,22 +853,16 @@ export async function getDeduplicatedRegistrationsForTrip(
 ): Promise<CanonicalTripRegistration[]> {
   if (!tripId) return [];
 
-  // 1. Query canonical tripRegistrations
+  // 1. Query canonical tripRegistrations first (canonical source of truth)
   const canonicalSnap = await adminDb
     .collection("tripRegistrations")
-    .where("tripId", "==", tripId)
-    .get();
-
-  // 2. Query legacy user-registrations
-  const legacySnap = await adminDb
-    .collection("user-registrations")
     .where("tripId", "==", tripId)
     .get();
 
   const registrationsMap = new Map<string, CanonicalTripRegistration>();
   const seenEmails = new Set<string>();
 
-  // First pass: add all canonical registrations (source of truth)
+  // First pass: add all canonical registrations
   for (const doc of canonicalSnap.docs) {
     const data = doc.data() || {};
     const serialized = serializeTripRegistration(doc.id, data);
@@ -860,37 +873,50 @@ export async function getDeduplicatedRegistrationsForTrip(
     }
   }
 
-  // Second pass: add legacy registrations ONLY if student is not already represented
-  for (const doc of legacySnap.docs) {
-    const data = doc.data() || {};
-    const uid = data.uid;
-    const email = (data.email || "").toLowerCase();
+  // 2. Query legacy user-registrations ONLY if canonical collection is empty (e.g. unmigrated legacy trip)
+  if (canonicalSnap.empty) {
+    const legacySnap = await adminDb
+      .collection("user-registrations")
+      .where("tripId", "==", tripId)
+      .get();
 
-    // Check if this student is already in the map by UID or email
-    const alreadyPresentByUid = uid && registrationsMap.has(uid);
-    const alreadyPresentByEmail = email && seenEmails.has(email);
+    for (const doc of legacySnap.docs) {
+      const data = doc.data() || {};
+      const uid = data.uid;
+      const email = (data.email || "").toLowerCase();
 
-    if (!alreadyPresentByUid && !alreadyPresentByEmail) {
-      const serialized = serializeTripRegistration(doc.id, data);
-      const key = uid || email || doc.id;
-      registrationsMap.set(key, serialized);
-      if (email) {
-        seenEmails.add(email);
+      const alreadyPresentByUid = uid && registrationsMap.has(uid);
+      const alreadyPresentByEmail = email && seenEmails.has(email);
+
+      if (!alreadyPresentByUid && !alreadyPresentByEmail) {
+        const serialized = serializeTripRegistration(doc.id, data);
+        const key = uid || email || doc.id;
+        registrationsMap.set(key, serialized);
+        if (email) {
+          seenEmails.add(email);
+        }
       }
     }
   }
 
   const allRegistrations = Array.from(registrationsMap.values());
 
-  // 3. Batch-enrich registrations with student profile data (name, studentId)
-  const uids = Array.from(new Set(allRegistrations.map((r) => r.uid).filter(Boolean)));
-  if (uids.length > 0) {
-    const studentMap = new Map<string, any>();
-    const userMap = new Map<string, any>();
+  // 3. Selective batch-enrichment: only fetch student/user docs for registrations that actually lack name or studentId
+  const missingDataUids = Array.from(
+    new Set(
+      allRegistrations
+        .filter((r) => r.uid && (!r.name || !r.studentId))
+        .map((r) => r.uid)
+    )
+  );
 
+  const studentMap = new Map<string, any>();
+  const userMap = new Map<string, any>();
+
+  if (missingDataUids.length > 0) {
     const chunks: string[][] = [];
-    for (let i = 0; i < uids.length; i += 100) {
-      chunks.push(uids.slice(i, i + 100));
+    for (let i = 0; i < missingDataUids.length; i += 100) {
+      chunks.push(missingDataUids.slice(i, i + 100));
     }
 
     await Promise.all(
@@ -909,7 +935,7 @@ export async function getDeduplicatedRegistrationsForTrip(
       })
     );
 
-    const missingUids = uids.filter((uid) => !studentMap.get(uid)?.name);
+    const missingUids = missingDataUids.filter((uid) => !studentMap.get(uid)?.name);
     if (missingUids.length > 0) {
       const userChunks: string[][] = [];
       for (let i = 0; i < missingUids.length; i += 100) {

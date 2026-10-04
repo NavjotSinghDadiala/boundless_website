@@ -32,3 +32,27 @@ export async function withOverflowFallback<T>(
     throw err; // Re-throw non-quota errors
   }
 }
+
+/**
+ * Executes a Firestore transaction with controlled attempts and immediate fail-fast on quota exhaustion.
+ * Preserves normal Firestore retry behavior for concurrent conflict resolution,
+ * but prevents 30-60+ second uncontrolled gRPC backoff when quota is genuinely exhausted.
+ */
+export async function runFastTransaction<T>(
+  db: FirebaseFirestore.Firestore,
+  updateFunction: (transaction: FirebaseFirestore.Transaction) => Promise<T>,
+  options?: { maxAttempts?: number }
+): Promise<T> {
+  const maxAttempts = options?.maxAttempts ?? 2;
+  try {
+    return await db.runTransaction(updateFunction, { maxAttempts });
+  } catch (err: any) {
+    if (isQuotaError(err)) {
+      const quotaErr = new Error("Database quota reached. Please retry in a few moments.");
+      (quotaErr as any).code = "RESOURCE_EXHAUSTED";
+      (quotaErr as any).status = 429;
+      throw quotaErr;
+    }
+    throw err;
+  }
+}

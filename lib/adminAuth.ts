@@ -51,6 +51,24 @@ export function normalizeEmail(email?: string | null): string {
   return email.toLowerCase().trim();
 }
 
+interface CachedAdminAuth {
+  expiresAt: number;
+  result: AdminAuthResult;
+}
+
+const adminAuthSessionCache = new Map<string, CachedAdminAuth>();
+const inFlightAdminAuth = new Map<string, Promise<AdminAuthResult>>();
+
+export function invalidateAdminAuthCache(sessionId?: string): void {
+  if (sessionId) {
+    adminAuthSessionCache.delete(sessionId);
+    inFlightAdminAuth.delete(sessionId);
+  } else {
+    adminAuthSessionCache.clear();
+    inFlightAdminAuth.clear();
+  }
+}
+
 /**
  * Extract the admin session cookie from a Request or Next.js cookies context.
  */
@@ -120,7 +138,20 @@ export async function getAdminAccess(req?: Request): Promise<AdminAuthResult> {
       };
     }
 
-    const sessionDoc = await adminDb.collection("adminSessions").doc(sessionId).get();
+    const nowMs = Date.now();
+    const cachedAuth = adminAuthSessionCache.get(sessionId);
+    if (cachedAuth && nowMs < cachedAuth.expiresAt) {
+      return cachedAuth.result;
+    }
+
+    // Reuse in-flight verification if another concurrent request is currently resolving
+    const inFlight = inFlightAdminAuth.get(sessionId);
+    if (inFlight) {
+      return await inFlight;
+    }
+
+    const authPromise = (async (): Promise<AdminAuthResult> => {
+      const sessionDoc = await adminDb.collection("adminSessions").doc(sessionId).get();
     if (!sessionDoc.exists) {
       return {
         ok: false,
@@ -154,23 +185,29 @@ export async function getAdminAccess(req?: Request): Promise<AdminAuthResult> {
     }
 
     // Step 3: Re-query adminUsers in real time from database
-    // Ensures immediate access revocation if active === false or record is removed
-    const adminUserQuery = await adminDb
-      .collection("adminUsers")
-      .where("studentId", "==", sessionStudentId)
-      .limit(1)
-      .get();
+    // Prefer deterministic doc read (primary document key is studentId), with fallback to where query
+    let adminUserData: Record<string, any> | null = null;
+    const directAdminDoc = await adminDb.collection("adminUsers").doc(sessionStudentId).get();
+    if (directAdminDoc.exists) {
+      adminUserData = directAdminDoc.data() || {};
+    } else {
+      const adminUserQuery = await adminDb
+        .collection("adminUsers")
+        .where("studentId", "==", sessionStudentId)
+        .limit(1)
+        .get();
+      if (!adminUserQuery.empty) {
+        adminUserData = adminUserQuery.docs[0].data() || {};
+      }
+    }
 
-    if (adminUserQuery.empty) {
+    if (!adminUserData) {
       return {
         ok: false,
         status: 403,
         error: "Forbidden: Admin user record not found or revoked.",
       };
     }
-
-    const adminUserDoc = adminUserQuery.docs[0];
-    const adminUserData = adminUserDoc.data() || {};
 
     // Strict active check
     if (adminUserData.active !== true) {
@@ -196,11 +233,26 @@ export async function getAdminAccess(req?: Request): Promise<AdminAuthResult> {
       nextAuthEmail,
     };
 
-    return {
+    const successResult: AdminAuthResult = {
       ok: true,
       status: 200,
       admin: adminContext,
     };
+
+    adminAuthSessionCache.set(sessionId, {
+      expiresAt: Date.now() + 15_000,
+      result: successResult,
+    });
+
+      return successResult;
+    })();
+
+    inFlightAdminAuth.set(sessionId, authPromise);
+    try {
+      return await authPromise;
+    } finally {
+      inFlightAdminAuth.delete(sessionId);
+    }
   } catch (err: any) {
     if (err?.digest === "DYNAMIC_SERVER_USAGE" || err?.message?.includes("Dynamic server usage")) {
       throw err;
@@ -315,7 +367,11 @@ export async function recordAuditLog(
       metadata: sanitizedMetadata,
     };
 
-    const docRef = await adminDb.collection("adminAuditLogs").add(logEntry);
+    const writePromise = adminDb.collection("adminAuditLogs").add(logEntry);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Audit log write timed out")), 3000)
+    );
+    const docRef = await Promise.race([writePromise, timeoutPromise]);
     return docRef.id;
   } catch (err) {
     console.error("CRITICAL: Failed to write to adminAuditLogs:", err);

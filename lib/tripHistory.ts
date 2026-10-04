@@ -12,6 +12,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { AdminContext, recordAuditLog } from "@/lib/adminAuth";
 import { invalidateTripCache } from "@/lib/tripCache";
+import { invalidateStudentDirectoryCache } from "./studentDirectory";
 
 export interface CompletedTripRecord {
   tripId: string;
@@ -72,17 +73,11 @@ export async function completeTripAndRecordHistory(
 
   const tripData = tripSnap.data() || {};
 
-  // 1. Fetch all canonical registrations for this trip
-  const regSnap = await adminDb
-    .collection("tripRegistrations")
-    .where("tripId", "==", tripId)
-    .get();
-
-  // Also query legacy user-registrations to ensure zero legacy participant omissions
-  const legacyRegSnap = await adminDb
-    .collection("user-registrations")
-    .where("tripId", "==", tripId)
-    .get();
+  // 1. Fetch canonical and legacy registrations for this trip in parallel
+  const [regSnap, legacyRegSnap] = await Promise.all([
+    adminDb.collection("tripRegistrations").where("tripId", "==", tripId).get(),
+    adminDb.collection("user-registrations").where("tripId", "==", tripId).get(),
+  ]);
 
   const participantsMap = new Map<string, {
     uid: string;
@@ -196,16 +191,16 @@ export async function completeTripAndRecordHistory(
     historyRecordPayload.createdAt = now;
   }
 
-  // 2. Persist to previousTripRecords without deleting anything
-  await historyRef.set(historyRecordPayload, { merge: true });
-
-  // 3. Mark the original trip as isCompleted: true and registrationOpen: false
-  await tripRef.update({
-    isCompleted: true,
-    registrationOpen: false,
-    completedAt: completedAtIso,
-    updatedAt: now,
-  });
+  // 2. Persist to previousTripRecords and 3. update original trip in parallel
+  await Promise.all([
+    historyRef.set(historyRecordPayload, { merge: true }),
+    tripRef.update({
+      isCompleted: true,
+      registrationOpen: false,
+      completedAt: completedAtIso,
+      updatedAt: now,
+    }),
+  ]);
 
   // 4. Update student lastTrip metadata for approved participants
   const batch = adminDb.batch();
@@ -238,6 +233,7 @@ export async function completeTripAndRecordHistory(
 
   // 5. Invalidate caches
   invalidateTripCache(tripId);
+  invalidateStudentDirectoryCache();
 
   // 6. Record audit log
   if (admin) {

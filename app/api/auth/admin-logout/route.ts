@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { adminDb } from "@/lib/firebase-admin";
+import { invalidateAdminAuthCache } from "@/lib/adminAuth";
 
 /**
  * POST /api/auth/admin-logout
@@ -12,6 +13,7 @@ export async function POST(req: Request) {
     const sessionCookie = cookieStore.get("boundless_admin_session");
 
     if (sessionCookie?.value) {
+      invalidateAdminAuthCache(sessionCookie.value);
       await adminDb.collection("adminSessions").doc(sessionCookie.value).delete().catch(() => {});
     }
 

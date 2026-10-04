@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
@@ -12,16 +12,16 @@ export async function GET(req) {
 
     // Fetch single item for the Edit page
     if (id) {
-      const docRef = doc(db, "previous_trips", id);
-      const docSnap = await getDoc(docRef);
-      if (!docSnap.exists()) return NextResponse.json({ error: "Trip not found" }, { status: 404 });
+      const docSnap = await adminDb.collection("previous_trips").doc(id).get();
+      if (!docSnap.exists) return NextResponse.json({ error: "Trip not found" }, { status: 404 });
       return NextResponse.json({ id: docSnap.id, ...docSnap.data() }, { status: 200 });
     }
 
     // Fetch all items for the Manage List page
-    const tripsRef = collection(db, "previous_trips");
-    const q = query(tripsRef, orderBy("createdAt", "desc"));
-    const querySnapshot = await getDocs(q);
+    const querySnapshot = await adminDb
+      .collection("previous_trips")
+      .orderBy("createdAt", "desc")
+      .get();
 
     const trips = querySnapshot.docs.map((doc) => ({
       id: doc.id,
@@ -62,11 +62,11 @@ export async function POST(req) {
       photos: sanitizeMediaUrls(body.photos),
       videos: sanitizeMediaUrls(body.videos),
       
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     };
-    const docRef = await addDoc(collection(db, "previous_trips"), tripData);
+    const docRef = await adminDb.collection("previous_trips").add(tripData);
 
-    await recordAuditLog(admin, "CREATE_PREVIOUS_TRIP", "previous_trip", docRef.id, "success", {
+    recordAuditLog(admin, "CREATE_PREVIOUS_TRIP", "previous_trip", docRef.id, "success", {
       heading: body.heading,
       venue: body.venue,
     }).catch(() => {});
@@ -104,7 +104,7 @@ export async function PUT(req) {
 
     if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
-    await updateDoc(doc(db, "previous_trips", id), {
+    await adminDb.collection("previous_trips").doc(id).update({
       heading, 
       subHeading, 
       img, 
@@ -118,10 +118,10 @@ export async function PUT(req) {
       })) : [],
       photos: sanitizeMediaUrls(photos),
       videos: sanitizeMediaUrls(videos),
-      updatedAt: serverTimestamp()
+      updatedAt: FieldValue.serverTimestamp(),
     });
 
-    await recordAuditLog(admin, "UPDATE_PREVIOUS_TRIP", "previous_trip", id, "success", {
+    recordAuditLog(admin, "UPDATE_PREVIOUS_TRIP", "previous_trip", id, "success", {
       heading,
     }).catch(() => {});
 
@@ -146,9 +146,9 @@ export async function DELETE(req) {
 
     if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
-    await deleteDoc(doc(db, "previous_trips", id));
+    await adminDb.collection("previous_trips").doc(id).delete();
 
-    await recordAuditLog(admin, "DELETE_PREVIOUS_TRIP", "previous_trip", id, "success").catch(() => {});
+    recordAuditLog(admin, "DELETE_PREVIOUS_TRIP", "previous_trip", id, "success").catch(() => {});
 
     return NextResponse.json({ success: true, message: "Trip deleted" }, { status: 200 });
   } catch (error) {

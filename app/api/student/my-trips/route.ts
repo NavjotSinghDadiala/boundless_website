@@ -34,6 +34,10 @@ async function authenticateStudent(request: Request) {
   return { uid, email, name: decoded.name || "" };
 }
 
+// In-memory 60s cache for archived rosters
+let cachedArchivedRosters: Array<any> | null = null;
+let cachedArchivedRostersExpiresAt = 0;
+
 /* ─────────────────────────────────────────────────────────────
    Status mapping: canonical Firestore status → human label.
 ───────────────────────────────────────────────────────────── */
@@ -174,12 +178,21 @@ export async function GET(request: Request) {
       }
     }
 
-    // ── 5. Fetch archived_rosters appearances ───────────────
-    const archiveSnap = await adminDb.collection("archived_rosters").get();
+    // ── 5. Fetch archived_rosters appearances with 60s in-memory cache ───────
+    const nowMs = Date.now();
+    let archiveDocs: Array<any>;
+    if (cachedArchivedRosters && nowMs < cachedArchivedRostersExpiresAt) {
+      archiveDocs = cachedArchivedRosters;
+    } else {
+      const archiveSnap = await adminDb.collection("archived_rosters").get();
+      archiveDocs = archiveSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+      cachedArchivedRosters = archiveDocs;
+      cachedArchivedRostersExpiresAt = nowMs + 60_000;
+    }
+
     const archivedTripIds = new Set<string>();
 
-    for (const doc of archiveSnap.docs) {
-      const data = doc.data() || {};
+    for (const data of archiveDocs) {
       const attendees: any[] = data.attendees || [];
       const appeared = attendees.some(
         (a: any) =>
@@ -187,7 +200,7 @@ export async function GET(request: Request) {
           (a.email && a.email.toLowerCase() === email.toLowerCase())
       );
       if (appeared) {
-        archivedTripIds.add(data.tripId || doc.id);
+        archivedTripIds.add(data.tripId || data.id);
       }
     }
 
@@ -207,12 +220,10 @@ export async function GET(request: Request) {
       });
     }
 
-    // ── 7. Batch-fetch trip metadata ────────────────────────
+    // ── 7. Batch-fetch trip metadata in 1 roundtrip ─────────
     const tripIds = Array.from(allTripIds);
-    const tripFetches = tripIds.map((id) =>
-      adminDb.collection("trips").doc(id).get()
-    );
-    const tripSnaps = await Promise.all(tripFetches);
+    const tripRefs = tripIds.map((id) => adminDb.collection("trips").doc(id));
+    const tripSnaps = await adminDb.getAll(...tripRefs);
 
     const tripsById = new Map<string, any>();
     for (const snap of tripSnaps) {

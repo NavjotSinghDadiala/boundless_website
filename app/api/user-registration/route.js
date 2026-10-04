@@ -14,6 +14,8 @@ import {
   saveDualTripRegistration,
   updateDualTripRegistration,
 } from "@/lib/tripRegistration";
+import { createProfiler } from "@/lib/perfMetrics";
+import { isQuotaError } from "@/lib/firebase-fallback";
 
 /* GET → Check if registered & fetch autofill profile data */
 export async function GET(request) {
@@ -41,8 +43,8 @@ export async function GET(request) {
       return Response.json({ error: "Unauthorized domain. Only IITM emails are allowed." }, { status: 403 });
     }
 
-    // 1 & 2 & 3: Run registration fetch, student profile, and profile read concurrently
-    const [regResult, studentProfile, profileSnap] = await Promise.all([
+    // 1 & 2: Run registration fetch and canonical student profile concurrently (2 deterministic gets)
+    const [regResult, studentProfile] = await Promise.all([
       tripId
         ? getOrBackfillTripRegistration(tripId, uid, email)
         : Promise.resolve({ registration: null }),
@@ -50,46 +52,36 @@ export async function GET(request) {
         console.error("Error obtaining canonical student profile in GET:", profErr);
         return null;
       }),
-      adminDb.collection("user_profiles").doc(email).get().catch(() => null),
     ]);
 
     const registration = regResult?.registration || null;
 
-    // 3. Fetch past registration data to auto-fill (try master profile first, fallback to past registrations)
-    let autofillData = profileSnap?.exists ? profileSnap.data().formData || null : null;
-    if (!autofillData) {
-      // Check canonical tripRegistrations first with tight limit
-      const pastCanonicalSnap = await adminDb
-        .collection("tripRegistrations")
-        .where("uid", "==", uid)
-        .limit(3)
-        .get();
-
-      let pastDocs = [...pastCanonicalSnap.docs];
-
-      // Fallback to legacy user-registrations if none found
-      if (pastDocs.length === 0) {
-        const pastLegacySnap = await adminDb
-          .collection("user-registrations")
-          .where("email", "==", email)
-          .limit(3)
-          .get();
-        pastDocs = [...pastLegacySnap.docs];
+    // 3. Resolve autofill data: prefer existing registration formData, then canonical studentProfile
+    let autofillData = registration?.formData ? { ...registration.formData } : null;
+    if (!autofillData && studentProfile) {
+      autofillData = {};
+      if (studentProfile.name) autofillData["Full Name"] = studentProfile.name;
+      if (studentProfile.studentId) autofillData["Roll Number"] = studentProfile.studentId;
+      if (studentProfile.phone) autofillData["Contact Number"] = studentProfile.phone;
+      if (studentProfile.gender && studentProfile.gender !== "unknown") {
+        autofillData["Gender"] = studentProfile.gender.charAt(0).toUpperCase() + studentProfile.gender.slice(1);
       }
+      if (studentProfile.state) autofillData["State"] = studentProfile.state;
+      if (studentProfile.cityDistrict) autofillData["City / District"] = studentProfile.cityDistrict;
+    }
 
-      if (pastDocs.length > 0) {
-        const sortedDocs = pastDocs.sort((a, b) => {
-          const timeA = a.data().submittedAt?.toDate?.()?.getTime() || 0;
-          const timeB = b.data().submittedAt?.toDate?.()?.getTime() || 0;
-          return timeB - timeA;
-        });
-        autofillData = sortedDocs[0].data().formData || null;
-      }
+    // Only fallback to legacy user_profiles if studentProfile was empty or missing core fields
+    if (!autofillData || !autofillData["Full Name"]) {
+      try {
+        const profileSnap = await adminDb.collection("user_profiles").doc(email).get();
+        if (profileSnap.exists) {
+          autofillData = { ...(profileSnap.data()?.formData || {}), ...(autofillData || {}) };
+        }
+      } catch (_) {}
     }
 
     // If autofillData is missing any fields, supplement from canonical students/{uid}
-    if (studentProfile) {
-      if (!autofillData) autofillData = {};
+    if (studentProfile && autofillData) {
       if (!autofillData["Full Name"] && studentProfile.name) autofillData["Full Name"] = studentProfile.name;
       if (!autofillData["Roll Number"] && studentProfile.studentId) autofillData["Roll Number"] = studentProfile.studentId;
       if (!autofillData["Contact Number"] && studentProfile.phone) autofillData["Contact Number"] = studentProfile.phone;
@@ -103,7 +95,6 @@ export async function GET(request) {
     }
 
     // 4. Sanitize registration payload: never expose externalRegistrationToken to the student browser.
-    // The token remains securely in Firestore tripRegistrations/{tripId}_{uid} as an internal correlation identifier.
     let sanitizedRegistration = registration;
     if (registration && registration.externalRegistrationToken !== undefined) {
       const { externalRegistrationToken, ...rest } = registration;
@@ -178,52 +169,68 @@ export async function POST(request) {
       return Response.json({ error: "Missing required fields (tripId, formData)" }, { status: 400 });
     }
 
-    // Parallel pre-read: Trip metadata, Canonical student doc, and Legacy master profile in 1 roundtrip
-    const [tripSnap, studentDocSnap, profileSnap] = await Promise.all([
-      adminDb.collection("trips").doc(tripId).get(),
-      adminDb.collection("students").doc(uid).get(),
-      adminDb.collection("user_profiles").doc(email).get(),
-    ]);
+    const profiler = createProfiler("student registration");
+
+    // Parallel pre-read: Canonical trip metadata, student profile, and registration in 1 roundtrip
+    const [tripSnap, studentDocSnap, regDocSnap] = await profiler.step(
+      "parallel pre-reads",
+      () =>
+        Promise.all([
+          adminDb.collection("trips").doc(tripId).get(),
+          adminDb.collection("students").doc(uid).get(),
+          adminDb.collection("tripRegistrations").doc(`${tripId}_${uid}`).get(),
+        ]),
+      { reads: 3 }
+    );
 
     if (!tripSnap.exists) {
+      profiler.end();
       return Response.json({ error: "Trip not found" }, { status: 404 });
     }
     const tripData = tripSnap.data() || {};
     if (tripData.registrationOpen === false) {
+      profiler.end();
       return Response.json({ error: "Registration for this trip is closed" }, { status: 400 });
     }
 
-    // Fast past form data lookup (prefer user_profiles, fallback to past registration if needed)
-    let pastFormData = profileSnap.exists ? profileSnap.data().formData || null : null;
-    if (!pastFormData) {
-      const pastCanonicalSnap = await adminDb
-        .collection("tripRegistrations")
-        .where("uid", "==", uid)
-        .limit(1)
-        .get();
-      if (!pastCanonicalSnap.empty) {
-        pastFormData = pastCanonicalSnap.docs[0].data().formData || null;
-      }
-    }
-
-    if (pastFormData) {
-      // Reuse past Student ID copy if student did not explicitly upload a replacement
-      const pastIdCopy = pastFormData["Student ID Card Copy"];
-      if (!formData["Student ID Card Copy"] && pastIdCopy) {
-        formData["Student ID Card Copy"] = pastIdCopy;
-      }
-
-      // Enforce read-only logic on fields configured by the admin
-      if (tripData?.form?.fields) {
-        tripData.form.fields.forEach((field) => {
-          if (field.allowEditIfPrefilled === false && pastFormData[field.name] !== undefined) {
-            formData[field.name] = pastFormData[field.name];
-          }
-        });
+    if (regDocSnap.exists) {
+      const existingStatus = (regDocSnap.data()?.status || "").toLowerCase().trim();
+      if (existingStatus !== "rejected") {
+        profiler.end();
+        return Response.json(
+          { error: "You are already registered for this trip.", id: regDocSnap.id },
+          { status: 400 }
+        );
       }
     }
 
     const studentDocData = studentDocSnap.exists ? studentDocSnap.data() || {} : {};
+
+    // Reuse past Student ID copy if student did not upload a replacement
+    if (!formData["Student ID Card Copy"] && studentDocData.studentIdUrl) {
+      formData["Student ID Card Copy"] = studentDocData.studentIdUrl;
+    }
+
+    // Only query past form data if student ID copy is still missing or read-only configured fields exist
+    const hasReadOnlyFields = tripData?.form?.fields?.some((f) => f.allowEditIfPrefilled === false);
+    if (!formData["Student ID Card Copy"] || hasReadOnlyFields) {
+      try {
+        const profileSnap = await adminDb.collection("user_profiles").doc(email).get();
+        if (profileSnap.exists) {
+          const pastFormData = profileSnap.data()?.formData || {};
+          if (!formData["Student ID Card Copy"] && pastFormData["Student ID Card Copy"]) {
+            formData["Student ID Card Copy"] = pastFormData["Student ID Card Copy"];
+          }
+          if (tripData?.form?.fields) {
+            tripData.form.fields.forEach((field) => {
+              if (field.allowEditIfPrefilled === false && pastFormData[field.name] !== undefined) {
+                formData[field.name] = pastFormData[field.name];
+              }
+            });
+          }
+        }
+      } catch (_) {}
+    }
 
     // Automatically detect gender from formData keys (e.g. key containing "gender" or "sex")
     const genderKey = Object.keys(formData).find(
@@ -349,17 +356,26 @@ export async function POST(request) {
     delete formData["district"];
 
     // Save with atomic transaction on canonical ID tripRegistrations/{tripId}_{uid}
-    const { canonicalId, alreadyExists } = await saveDualTripRegistration({
-      tripId,
-      uid,
-      email,
-      formData,
-      gender,
-      studentIdVerified: isIdVerified,
-      consentResponses: consentResponses || [],
-      studentName: studentDocData.name || decodedToken.name || "",
-      studentRoll: studentDocData.studentId || "",
-    });
+    const { canonicalId, alreadyExists } = await profiler.step(
+      "transaction and dual-writes",
+      () =>
+        saveDualTripRegistration({
+          tripId,
+          uid,
+          email,
+          formData,
+          gender,
+          studentIdVerified: isIdVerified,
+          consentResponses: consentResponses || [],
+          studentName: studentDocData.name || decodedToken.name || "",
+          studentRoll: studentDocData.studentId || "",
+          studentPhone: finalPhone,
+          cachedStudentData: studentDocData,
+        }),
+      { writes: 3, transactions: 1 }
+    );
+
+    profiler.end();
 
     if (alreadyExists) {
       return Response.json(
@@ -374,6 +390,15 @@ export async function POST(request) {
     );
   } catch (error) {
     console.error("POST user-registration error:", error);
+    if (isQuotaError(error)) {
+      return Response.json(
+        {
+          error: "Service is temporarily busy (database quota reached). Please retry in a few moments.",
+          code: "RESOURCE_EXHAUSTED",
+        },
+        { status: 429 }
+      );
+    }
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }
@@ -552,6 +577,15 @@ export async function PATCH(request) {
     return Response.json({ success: true, message: "Registration updated successfully." }, { status: 200 });
   } catch (error) {
     console.error("PATCH user-registration error:", error);
+    if (isQuotaError(error)) {
+      return Response.json(
+        {
+          error: "Service is temporarily busy (database quota reached). Please retry in a few moments.",
+          code: "RESOURCE_EXHAUSTED",
+        },
+        { status: 429 }
+      );
+    }
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -83,48 +83,44 @@ export async function enqueueDurableJob(params: {
   const now = new Date();
   const scheduledTime = new Date(now.getTime() + delaySeconds * 1000);
 
-  const result = await adminDb.runTransaction(async (transaction) => {
-    const snap = await transaction.get(jobRef);
-    if (snap.exists) {
-      const data = snap.data();
-      // If already completed or actively pending, preserve idempotency
-      if (data?.status === "completed" || data?.status === "processing") {
-        return { enqueued: false, id: jobId, status: data?.status || "existing" };
-      }
-      // If failed or dead_letter, permit retry if payload was updated
-      if (data?.status === "failed") {
-        transaction.update(jobRef, {
-          status: "pending",
-          scheduledAt: Timestamp.fromDate(scheduledTime),
-          updatedAt: FieldValue.serverTimestamp(),
-          attempts: 0,
-          lastError: null,
-          payload: { ...data.payload, ...payload },
-        });
-        return { enqueued: true, id: jobId, status: "retried" };
-      }
-      return { enqueued: false, id: jobId, status: data?.status || "pending" };
+  const snap = await jobRef.get();
+  if (snap.exists) {
+    const data = snap.data();
+    // If already completed or actively pending, preserve idempotency
+    if (data?.status === "completed" || data?.status === "processing") {
+      return { enqueued: false, id: jobId, status: data?.status || "existing" };
     }
+    // If failed or dead_letter, permit retry if payload was updated
+    if (data?.status === "failed") {
+      await jobRef.update({
+        status: "pending",
+        scheduledAt: Timestamp.fromDate(scheduledTime),
+        updatedAt: FieldValue.serverTimestamp(),
+        attempts: 0,
+        lastError: null,
+        payload: { ...data.payload, ...payload },
+      });
+      return { enqueued: true, id: jobId, status: "retried" };
+    }
+    return { enqueued: false, id: jobId, status: data?.status || "pending" };
+  }
 
-    const newJob: Record<string, any> = {
-      id: jobId,
-      jobType,
-      status: "pending",
-      payload,
-      attempts: 0,
-      maxAttempts,
-      scheduledAt: Timestamp.fromDate(scheduledTime),
-      lockedUntil: null,
-      lockedBy: null,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    };
+  const newJob: Record<string, any> = {
+    id: jobId,
+    jobType,
+    status: "pending",
+    payload,
+    attempts: 0,
+    maxAttempts,
+    scheduledAt: Timestamp.fromDate(scheduledTime),
+    lockedUntil: null,
+    lockedBy: null,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
 
-    transaction.set(jobRef, newJob);
-    return { enqueued: true, id: jobId, status: "pending" };
-  });
-
-  return result;
+  await jobRef.set(newJob);
+  return { enqueued: true, id: jobId, status: "pending" };
 }
 
 /**

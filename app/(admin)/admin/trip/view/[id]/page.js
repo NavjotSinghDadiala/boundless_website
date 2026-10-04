@@ -70,28 +70,26 @@ export default function TripViewPage() {
         setLoading(true);
         setError(null);
 
-        // 1. Fetch trip details
-        const tripRes = await fetch("/api/trip", {
-          headers: { "x-admin-dev": "true" },
-        });
+        // 1 & 2: Fetch specific trip details and its registrations concurrently
+        const [tripRes, regRes] = await Promise.all([
+          fetch(`/api/trip?id=${tripId}`, {
+            headers: { "x-admin-dev": "true" },
+          }),
+          fetch(`/api/admin/registrations?tripId=${tripId}`).catch(() => null),
+        ]);
+
         const tripData = await tripRes.json();
         if (!tripRes.ok) throw new Error(tripData.error || "Failed to load trip");
 
-        const foundTrip = (tripData.trips || []).find((t) => t.id === tripId);
+        const foundTrip = tripData.trip || (tripData.trips || []).find((t) => t.id === tripId);
         if (!foundTrip) {
           throw new Error("Trip not found");
         }
         setTrip(foundTrip);
 
-        // 2. Fetch registrations for this trip
-        try {
-          const regRes = await fetch(`/api/admin/registrations?tripId=${tripId}`);
-          if (regRes.ok) {
-            const regData = await regRes.json();
-            setRegistrations(regData.registrations || []);
-          }
-        } catch (regErr) {
-          console.warn("Could not load registrations for trip:", regErr);
+        if (regRes && regRes.ok) {
+          const regData = await regRes.json();
+          setRegistrations(regData.registrations || []);
         }
       } catch (err) {
         setError(err.message || "Failed to load trip details");
