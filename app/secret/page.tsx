@@ -1103,7 +1103,7 @@ export default function SecretAdministrationPage() {
                       studentId: e.target.value.toUpperCase(),
                     }))
                   }
-                  placeholder="23F2000835"
+                  placeholder=""
                   className="w-full px-3 py-2 bg-[#1A1724] border border-stone-700 rounded-xl text-white uppercase focus:outline-none focus:border-[#FFE878]"
                 />
               </div>

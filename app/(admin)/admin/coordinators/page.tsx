@@ -178,7 +178,7 @@ export default function AdminCoordinatorsPage() {
     const errors: { studentId?: string; name?: string } = {};
 
     if (!formData.studentId.trim()) {
-      errors.studentId = "Student ID is required (e.g. AE22B042, 23f2000835).";
+      errors.studentId = "Student ID is required (e.g. AE22B042).";
     }
     if (!formData.name.trim()) {
       errors.name = "Coordinator full name is required.";
@@ -650,7 +650,7 @@ export default function AdminCoordinatorsPage() {
                     setFormData((prev) => ({ ...prev, studentId: e.target.value.toUpperCase() }));
                     setFormErrors((prev) => ({ ...prev, studentId: undefined }));
                   }}
-                  placeholder="e.g. AE22B042, 23f2000835"
+                  placeholder="e.g. AE22B042"
                   className={`w-full px-4 py-2.5 bg-stone-50 border rounded-xl text-sm font-mono uppercase font-bold focus:outline-none focus:ring-2 transition-all ${
                     formErrors.studentId
                       ? "border-red-400 focus:ring-red-200"

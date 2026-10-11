@@ -641,7 +641,7 @@ export default function AdminUsersManagementPage() {
                     required
                     value={addForm.studentId}
                     onChange={(e) => handleStudentSearch(e.target.value)}
-                    placeholder="e.g. 23F2000835, AE22B042"
+                    placeholder="AE22B042"
                     className="w-full px-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm font-mono uppercase font-bold focus:outline-none focus:border-[#3B001B] focus:ring-2 focus:ring-[#3B001B]/20 transition-all"
                   />
                   {searchingStudents && (

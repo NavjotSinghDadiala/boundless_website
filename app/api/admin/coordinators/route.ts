@@ -134,7 +134,7 @@ export async function POST(request: Request) {
     // Validation: studentId and name are required
     if (!studentId) {
       return NextResponse.json(
-        { error: "Student ID is required (e.g. AE22B042, 23f2000835)." },
+        { error: "Student ID is required (e.g. AE22B042)." },
         { status: 400 }
       );
     }

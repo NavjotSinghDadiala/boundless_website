@@ -87,7 +87,7 @@ export default function AdminVerifyPage() {
               id="admin_student_id"
               className="bg-white/90 border border-amber-300/80 focus:border-[#3B001B] focus:ring-2 focus:ring-[#FFE878] outline-none px-3.5 py-2.5 rounded-xl shadow-sm text-sm text-stone-900 placeholder:text-stone-400 font-mono transition-all uppercase tracking-wider"
               type="text"
-              placeholder="e.g. 23F2000835"
+              placeholder="Enter Student ID"
               value={studentId}
               onChange={(e) => setStudentId(e.target.value.toUpperCase())}
               required
