@@ -4,6 +4,7 @@ import React from 'react';
 import BoundlessCanvasLoader from './BoundlessCanvasLoader';
 import ScrollWrapper from './ScrollWrapper';
 import Hero3D from './Hero3D';
+import ExpeditionsGrid from './ExpeditionsGrid';
 import ScrollHint from './ScrollHint';
 import ThemeSwitcher3D from './ThemeSwitcher3D';
 
@@ -15,6 +16,7 @@ export const BoundlessExperienceSection: React.FC = () => {
         <BoundlessCanvasLoader>
           <ScrollWrapper>
             <Hero3D />
+            <ExpeditionsGrid />
           </ScrollWrapper>
         </BoundlessCanvasLoader>
 
