@@ -6,13 +6,15 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import { isMobile } from 'react-device-detect';
 import AtmosphereSky from './AtmosphereSky';
+import ExpeditionPortalGate from './ExpeditionPortalGate';
+import TextExpeditionWindow from './TextExpeditionWindow';
 
 export const Hero3D: React.FC = () => {
   const mainTitleRef = useRef<THREE.Mesh>(null);
   const subtitleRef = useRef<THREE.Mesh>(null);
 
   useEffect(() => {
-    // Elegant entrance animation on initial scene mount
+    // Entrance animation on initial scene mount
     if (mainTitleRef.current && subtitleRef.current) {
       gsap.fromTo(
         mainTitleRef.current.position,
@@ -31,12 +33,12 @@ export const Hero3D: React.FC = () => {
     <>
       <AtmosphereSky />
 
-      {/* 3D Main Title */}
+      {/* 3D Main Title in Top Sky */}
       <Text
         ref={mainTitleRef}
         position={[0, 2.2, -8]}
         fontSize={isMobile ? 0.9 : 1.6}
-        color="#3B001B" // Deep Maroon Boundless Primary
+        color="#3B001B"
         anchorX="center"
         anchorY="middle"
         letterSpacing={0.15}
@@ -49,13 +51,20 @@ export const Hero3D: React.FC = () => {
         ref={subtitleRef}
         position={[0, 0.8, -8]}
         fontSize={isMobile ? 0.28 : 0.42}
-        color="#7C2D12" // Warm Amber / Rust Accent
+        color="#7C2D12"
         anchorX="center"
         anchorY="middle"
         letterSpacing={0.25}
       >
         IITM BS TRAVEL SOCIETY
       </Text>
+
+      {/* Descent Threshold at Y = -25: The Expedition Portal Gate & Text Cube */}
+      <group position={[0, -25, 5.69]}>
+        <pointLight castShadow position={[1, 1.5, -2.5]} intensity={50} distance={12} color="#FFE878" />
+        <ExpeditionPortalGate />
+        <TextExpeditionWindow />
+      </group>
     </>
   );
 };
