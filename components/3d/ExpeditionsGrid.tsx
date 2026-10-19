@@ -7,12 +7,16 @@ import { isMobile } from 'react-device-detect';
 import * as THREE from 'three';
 import { useBoundless3DStore } from '@/context/boundless3dStore';
 import PortalTile from './PortalTile';
+import TripsCarousel from './trips/TripsCarousel';
+import TouchPanControls from './trips/TouchPanControls';
+import PastJourneysTimeline from './journeys/PastJourneysTimeline';
 
 export const ExpeditionsGrid: React.FC = () => {
   const titleRef = useRef<THREE.Group>(null);
   const groupRef = useRef<THREE.Group>(null);
   const data = useScroll();
   const isActive = useBoundless3DStore((state) => !!state.activePortalId);
+  const activePortalId = useBoundless3DStore((state) => state.activePortalId);
 
   const fontProps = {
     fontSize: isMobile ? 0.28 : 0.45,
@@ -60,7 +64,7 @@ export const ExpeditionsGrid: React.FC = () => {
 
         {/* The Two Interactive 3D Portal Portals */}
         <group position={[0, -1, 0]} ref={groupRef}>
-          {/* Portal 1: Upcoming Trips */}
+          {/* Portal 1: Upcoming Expeditions (Cylindrical Carousel) */}
           <PortalTile
             id="trips"
             title="UPCOMING EXPEDITIONS"
@@ -68,16 +72,11 @@ export const ExpeditionsGrid: React.FC = () => {
             position={new THREE.Vector3(isMobile ? -1 : -2.2, 0, isMobile ? 0.4 : 0)}
           >
             <ambientLight intensity={0.9} />
-            <mesh position={[0, 0, -2]}>
-              <sphereGeometry args={[1.5, 32, 32]} />
-              <meshStandardMaterial color="#D97706" wireframe />
-            </mesh>
-            <Text position={[0, 0, -1]} fontSize={0.4} color="#3B001B">
-              UPCOMING TRIPS PORTAL
-            </Text>
+            <TripsCarousel />
+            {isActive && activePortalId === 'trips' && isMobile && <TouchPanControls />}
           </PortalTile>
 
-          {/* Portal 2: Past Journeys */}
+          {/* Portal 2: Past Expeditions (3D Trail Spline) */}
           <PortalTile
             id="journeys"
             title="PAST EXPEDITIONS"
@@ -85,13 +84,7 @@ export const ExpeditionsGrid: React.FC = () => {
             position={new THREE.Vector3(isMobile ? 1 : 2.2, 0, 0)}
           >
             <ambientLight intensity={0.9} />
-            <mesh position={[0, 0, -2]}>
-              <torusGeometry args={[1.4, 0.4, 16, 100]} />
-              <meshStandardMaterial color="#7C2D12" wireframe />
-            </mesh>
-            <Text position={[0, 0, -1]} fontSize={0.4} color="#3B001B">
-              EXPEDITION TRAILS ARCHIVE
-            </Text>
+            <PastJourneysTimeline />
           </PortalTile>
         </group>
       </group>

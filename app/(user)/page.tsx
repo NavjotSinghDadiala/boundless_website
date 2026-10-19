@@ -1,61 +1,25 @@
 "use client";
 
-import {
-  Plus,
-  Menu,
-  Mail,
-  Linkedin,
-  Instagram,
-  Youtube,
-  X as XIcon,
-} from "lucide-react";
-
+import React from "react";
+import BoundlessExperienceSection from "@/components/3d/BoundlessExperienceSection";
 import Hero from "@/components/Hero1";
-import PreviousTrip from "@/components/PreviousTrips";
-import Team from "@/components/Team";
 import TripsPlanned from "@/components/tripsPlanned";
-import CityMeetup from "@/components/cityMeetup";
-import Section from "@/components/Section";
-import Proud from "@/components/Proud";
-
 import Gallery from "@/components/Gallery";
-import About from "@/components/About";
 import Prev from "@/components/Prev";
-import AnimatedByChar from "@/components/AnimatedByWord";
-import About2 from "@/components/About2";
-import GetToKnowUs from "@/components/GetToKnowUs";
+import Section from "@/components/Section";
+import CityMeetup from "@/components/cityMeetup";
+import Proud from "@/components/Proud";
+import About from "@/components/About";
 import AmazingTeam from "@/components/AmazingTeam";
-import Footer from "@/components/Footer";
-import StatsShowcase from "@/components/StatsShowcase";
-import ParallaxHero from "@/components/ParallaxHero";
 
 export default function BoundlessTravelSociety() {
-  function borderBetweenPages(col: string) {
-    let elem = [];
-    for (let i = 0; i < 30; i++) {
-      elem.push(
-        <div
-          key={i}
-          className="rounded-t-lg"
-          style={{
-            width: "50px",
-            height: "50px",
-            background: "#" + col,
-            borderTopRightRadius: "50px",
-          }}
-        ></div>
-      );
-    }
-    return elem;
-  }
-
   return (
     <>
-      {/* ── Parallax Mountain Hero — full bleed, outside any wrapper ── */}
-      <ParallaxHero />
+      {/* 3D Immersive Spatial Continuum & Virtual Scroll Journey */}
+      <BoundlessExperienceSection />
 
-      <div className="min-h-screen bg-gradient-to-b from-amber-50 to-amber-100">
-        {/* ── Original Hero (video section) ── */}
+      {/* Semantic Content Sections (Managed seamlessly by Document Scroll & Lenis) */}
+      <div className="min-h-screen bg-gradient-to-b from-amber-50 to-amber-100 relative z-10 shadow-2xl">
         <Hero />
 
         <div id="upcoming-trips">
