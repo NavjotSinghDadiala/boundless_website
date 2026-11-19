@@ -120,7 +120,13 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
             color={theme === 'golden_hour' ? '#ffe0a3' : '#ffffff'}
             castShadow={!isMobile}
           />
-          <ScrollControls pages={4} damping={0.4} maxSpeed={1} distance={1} style={{ zIndex: 1 }}>
+          <ScrollControls
+            pages={4}
+            damping={0.15}
+            maxSpeed={1}
+            distance={1}
+            style={{ zIndex: 1, overflow: 'hidden', pointerEvents: 'auto' }}
+          >
             {children}
           </ScrollControls>
           <Preload all />

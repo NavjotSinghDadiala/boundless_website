@@ -46,6 +46,10 @@ export const PortalTile: React.FC<PortalTileProps> = ({
         duration: 0.5,
       });
     }
+    return () => {
+      document.body.style.overflow = '';
+      document.querySelectorAll('.boundless-close-btn').forEach((el) => el.remove());
+    };
   }, [id]);
 
   useFrame(() => {
@@ -66,6 +70,7 @@ export const PortalTile: React.FC<PortalTileProps> = ({
     e.stopPropagation();
     setActivePortal(id);
     document.body.style.cursor = 'auto';
+    document.body.style.overflow = 'hidden';
 
     // Mount floating .close button HUD
     const existingClose = document.querySelector('.boundless-close-btn');
@@ -100,6 +105,7 @@ export const PortalTile: React.FC<PortalTileProps> = ({
   const exitPortal = (force = false) => {
     if (!force && !activePortalId) return;
     setActivePortal(null);
+    document.body.style.overflow = '';
 
     // Smoothly restore camera position and rotation
     gsap.to(camera.position, {

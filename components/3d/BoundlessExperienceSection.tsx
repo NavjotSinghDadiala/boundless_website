@@ -12,7 +12,7 @@ import AccessibleShadowTree from './AccessibleShadowTree';
 
 export const BoundlessExperienceSection: React.FC = () => {
   return (
-    <div id="boundless-3d-experience" className="relative w-full h-[400vh] bg-[#fffbea]">
+    <div id="boundless-3d-experience" className="relative w-full h-[400vh] bg-[#fffbea] -mt-20">
       {/* Synchronized Accessible Semantic Shadow Tree for Crawlers & Screen Readers */}
       <AccessibleShadowTree />
 

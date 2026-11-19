@@ -19,6 +19,24 @@ export const ScrollWrapper: React.FC<ScrollWrapperProps> = ({ children }) => {
 
   useFrame((state, delta) => {
     if (data) {
+      // Synchronize Drei's virtual scroll target with the document's pinned scroll position
+      const section = typeof document !== 'undefined' ? document.getElementById('boundless-3d-experience') : null;
+      if (section) {
+        const rect = section.getBoundingClientRect();
+        const maxScroll = section.offsetHeight - window.innerHeight;
+        const progress = maxScroll > 0 ? Math.max(0, Math.min(1, -rect.top / maxScroll)) : 0;
+
+        if (data.scroll) {
+          data.scroll.current = progress;
+        }
+        if (data.el) {
+          const scrollThreshold = data.el.scrollHeight - data.el.clientHeight;
+          if (scrollThreshold > 0) {
+            data.el.scrollTop = progress * scrollThreshold;
+          }
+        }
+      }
+
       // Map scroll intervals using the proven exponential dampening equations
       const a = data.range(0, 0.3);       // Pitch downward: 0 to -90 deg
       const b = data.range(0.3, 0.5);     // Vertical descent: Y = 0 to -37
