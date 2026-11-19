@@ -3,6 +3,7 @@
 import React, { useRef } from 'react';
 import { useScroll, Edges } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
+import { isMobile } from 'react-device-detect';
 import * as THREE from 'three';
 
 export const ExpeditionPortalGate: React.FC = () => {
@@ -12,24 +13,27 @@ export const ExpeditionPortalGate: React.FC = () => {
   const data = useScroll();
 
   useFrame(() => {
-    // b in [0.4, 0.5]: latch unlocks and pivots
-    const b = data.range(0.4, 0.1);
-    // c in [0.5, 0.6]: double gate wings swing outward
-    const c = data.range(0.5, 0.1);
+    // b in [0.30, 0.38]: brass latch unlocks and pivots during approach
+    const b = data.range(0.30, 0.08);
+    // c in [0.36, 0.44]: double timber wings swing inward away from camera before threshold crossing at Y = -10.5
+    const c = data.range(0.36, 0.08);
 
     if (latchRef.current) {
       latchRef.current.rotation.z = -0.5 * Math.PI * b;
     }
     if (leftGateRef.current) {
-      leftGateRef.current.rotation.y = -0.45 * Math.PI * c;
+      leftGateRef.current.rotation.y = 0.48 * Math.PI * c;
     }
     if (rightGateRef.current) {
-      rightGateRef.current.rotation.y = 0.45 * Math.PI * c;
+      rightGateRef.current.rotation.y = -0.48 * Math.PI * c;
     }
   });
 
+  // Proportionally enlarged monumental entrance with comfortable clearance for camera crossing
+  const gateScale = isMobile ? 1.18 : 1.72;
+
   return (
-    <group dispose={null}>
+    <group dispose={null} rotation={[-Math.PI / 2, 0, 0]} scale={gateScale}>
       {/* Outer Timber Archway Frame */}
       <group position={[0, 0, 0]}>
         {/* Left Timber Post */}

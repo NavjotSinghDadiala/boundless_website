@@ -1,220 +1,229 @@
 'use client';
 
-import React, { useRef, useEffect } from 'react';
-import { Edges, MeshPortalMaterial, Text, TextProps, useScroll } from '@react-three/drei';
-import { useFrame, useThree } from '@react-three/fiber';
-import { isMobile } from 'react-device-detect';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
+import { Edges, Text } from '@react-three/drei';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import gsap from 'gsap';
-import { useBoundless3DStore } from '@/context/boundless3dStore';
-import { TriangleGeometry } from './Triangle';
 
-interface PortalTileProps {
+/**
+ * Optimizes existing Boundless Cloudinary URLs to lightweight WebP textures
+ * without introducing any new image storage or proxy.
+ */
+export function optimizeGatewayUrl(rawUrl: string, width = 640): string {
+  if (!rawUrl || !rawUrl.includes('res.cloudinary.com') || !rawUrl.includes('/image/upload/')) {
+    return rawUrl;
+  }
+  const transform = `f_webp,q_auto:good,w_${width},c_limit`;
+  if (rawUrl.includes(`/image/upload/${transform}/`)) {
+    return rawUrl;
+  }
+  return rawUrl.replace('/image/upload/', `/image/upload/${transform}/`);
+}
+
+interface CachedGatewayTexture {
+  texture: THREE.Texture | null;
+  refs: number;
+  loading: boolean;
+  callbacks: Array<(tex: THREE.Texture | null) => void>;
+}
+
+const gatewayTextureCache = new Map<string, CachedGatewayTexture>();
+const gatewayLoader = new THREE.TextureLoader();
+gatewayLoader.setCrossOrigin('anonymous');
+
+export function acquireGatewayTexture(url: string, onReady: (tex: THREE.Texture | null) => void): void {
+  if (!url) {
+    onReady(null);
+    return;
+  }
+  let entry = gatewayTextureCache.get(url);
+  if (!entry) {
+    entry = { texture: null, refs: 0, loading: false, callbacks: [] };
+    gatewayTextureCache.set(url, entry);
+  }
+  entry.refs += 1;
+
+  if (entry.texture) {
+    onReady(entry.texture);
+    return;
+  }
+
+  entry.callbacks.push(onReady);
+  if (!entry.loading) {
+    entry.loading = true;
+    gatewayLoader.load(
+      url,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        tex.needsUpdate = true;
+
+        const current = gatewayTextureCache.get(url);
+        if (!current || current.refs <= 0) {
+          tex.dispose();
+          gatewayTextureCache.delete(url);
+          return;
+        }
+        current.texture = tex;
+        current.loading = false;
+        const cbs = current.callbacks.splice(0);
+        cbs.forEach((cb) => cb(tex));
+      },
+      undefined,
+      () => {
+        const current = gatewayTextureCache.get(url);
+        if (current) {
+          current.loading = false;
+          const cbs = current.callbacks.splice(0);
+          cbs.forEach((cb) => cb(null));
+        }
+      }
+    );
+  }
+}
+
+export function releaseGatewayTexture(url: string): void {
+  if (!url) return;
+  const entry = gatewayTextureCache.get(url);
+  if (!entry) return;
+  entry.refs = Math.max(0, entry.refs - 1);
+  if (entry.refs === 0) {
+    if (entry.texture) {
+      entry.texture.dispose();
+      entry.texture = null;
+    }
+    gatewayTextureCache.delete(url);
+  }
+}
+
+// Shared unit plane geometry reused across gateway frames & photo layers
+export const SHARED_GATEWAY_PLANE = new THREE.PlaneGeometry(1, 1);
+
+export interface PortalTileProps {
   id: string;
   title: string;
-  textAlign?: TextProps['textAlign'];
-  children?: React.ReactNode;
-  color: string;
-  position: THREE.Vector3;
+  subtitle?: string;
+  width: number;
+  height: number;
+  position: [number, number, number];
+  accentColor: string;
+  surfaceColor: string;
+  onNavigate: () => void;
+  children: (hovered: boolean) => React.ReactNode;
 }
 
 export const PortalTile: React.FC<PortalTileProps> = ({
-  id,
   title,
-  textAlign = 'center',
-  children,
-  color,
+  subtitle,
+  width,
+  height,
   position,
+  accentColor,
+  surfaceColor,
+  onNavigate,
+  children,
 }) => {
-  const titleRef = useRef<THREE.Group>(null);
-  const gridRef = useRef<THREE.Mesh>(null);
-  const hoverBoxRef = useRef<THREE.Mesh>(null);
-  const portalRef = useRef<any>(null);
-  const { camera } = useThree();
+  const groupRef = useRef<THREE.Group>(null);
+  const [hovered, setHovered] = useState(false);
 
-  const setActivePortal = useBoundless3DStore((state) => state.setActivePortal);
-  const activePortalId = useBoundless3DStore((state) => state.activePortalId);
-  const isActive = activePortalId === id;
-  const data = useScroll();
-
+  // Clean up pointer cursor if unmounted while hovered
   useEffect(() => {
-    if (isMobile && titleRef.current) {
-      const isTrips = id === 'trips';
-      gsap.to(titleRef.current.position, {
-        x: isTrips ? 1 : -1,
-        y: isTrips ? -1.7 : 1.5,
-        duration: 0.5,
-      });
-    }
     return () => {
-      document.body.style.overflow = '';
-      document.querySelectorAll('.boundless-close-btn').forEach((el) => el.remove());
+      document.body.style.cursor = 'auto';
     };
-  }, [id]);
+  }, []);
 
-  useFrame(() => {
-    if (data && isMobile && titleRef.current) {
-      const d = data.range(0.95, 0.05);
-      (titleRef.current as any).fillOpacity = d;
-    }
+  // Memoize frame box geometry per responsive dimension & dispose on resize/unmount
+  const frameGeo = useMemo(() => new THREE.BoxGeometry(width, height, 0.08), [width, height]);
+  useEffect(() => {
+    return () => {
+      frameGeo.dispose();
+    };
+  }, [frameGeo]);
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+    const targetZ = hovered ? 0.24 : 0;
+    const targetScale = hovered ? 1.028 : 1.0;
+    groupRef.current.position.z = THREE.MathUtils.damp(groupRef.current.position.z, targetZ, 7, delta);
+    groupRef.current.scale.x = THREE.MathUtils.damp(groupRef.current.scale.x, targetScale, 7, delta);
+    groupRef.current.scale.y = THREE.MathUtils.damp(groupRef.current.scale.y, targetScale, 7, delta);
   });
 
-  const handleEscape = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      exitPortal(true);
-    }
-  };
-
-  const portalInto = (e: any) => {
-    if (isActive || activePortalId) return;
-    e.stopPropagation();
-    setActivePortal(id);
-    document.body.style.cursor = 'auto';
-    document.body.style.overflow = 'hidden';
-
-    // Mount floating .close button HUD
-    const existingClose = document.querySelector('.boundless-close-btn');
-    if (!existingClose) {
-      const div = document.createElement('div');
-      div.className = 'fixed top-8 left-8 z-50 boundless-close-btn cursor-pointer';
-      div.innerHTML = `
-        <button aria-label="Close portal" class="flex items-center gap-2 px-4 py-2 rounded-full bg-[#3B001B] text-[#FFF9C7] border border-[#FFE878]/40 shadow-xl hover:scale-105 active:scale-95 transition-all text-xs font-bold uppercase tracking-wider">
-          <span>✕ Close</span>
-        </button>
-      `;
-      div.onclick = () => exitPortal(true);
-      document.body.appendChild(div);
-
-      gsap.fromTo(
-        div,
-        { scale: 0, rotate: '-90deg', opacity: 0 },
-        { scale: 1, rotate: '0deg', opacity: 1, duration: 0.6, ease: 'back.out(1.7)' }
-      );
-    }
-
-    document.body.addEventListener('keydown', handleEscape);
-    if (portalRef.current) {
-      gsap.to(portalRef.current, {
-        blend: 1,
-        duration: 0.6,
-        ease: 'power2.out',
-      });
-    }
-  };
-
-  const exitPortal = (force = false) => {
-    if (!force && !activePortalId) return;
-    setActivePortal(null);
-    document.body.style.overflow = '';
-
-    // Smoothly restore camera position and rotation
-    gsap.to(camera.position, {
-      x: 0,
-      duration: 1,
-      ease: 'power2.inOut',
-    });
-
-    gsap.to(camera.rotation, {
-      x: -Math.PI / 2,
-      y: 0,
-      duration: 1,
-      ease: 'power2.inOut',
-    });
-
-    if (portalRef.current) {
-      gsap.to(portalRef.current, {
-        blend: 0,
-        duration: 0.8,
-        ease: 'power2.inOut',
-      });
-    }
-
-    // Clean up close button
-    const closeBtn = document.querySelector('.boundless-close-btn');
-    if (closeBtn) {
-      gsap.to(closeBtn, {
-        scale: 0,
-        opacity: 0,
-        duration: 0.4,
-        onComplete: () => {
-          document.querySelectorAll('.boundless-close-btn').forEach((el) => el.remove());
-        },
-      });
-    }
-
-    document.body.removeEventListener('keydown', handleEscape);
-  };
-
-  const fontProps: Partial<TextProps> = {
-    maxWidth: 2.5,
-    anchorX: 'center',
-    anchorY: 'bottom',
-    fontSize: isMobile ? 0.35 : 0.55,
-    color: '#3B001B',
-    textAlign: textAlign,
-    fillOpacity: 0.85,
-  };
-
-  const onPointerOver = () => {
-    if (isActive || isMobile) return;
-    document.body.style.cursor = 'pointer';
-    if (titleRef.current) {
-      gsap.to(titleRef.current, { fillOpacity: 1, duration: 0.3 });
-    }
-    if (gridRef.current && hoverBoxRef.current) {
-      gsap.to(gridRef.current.position, { z: 0.4, duration: 0.3 });
-      gsap.to(hoverBoxRef.current.scale, { x: 1, y: 1, z: 1, duration: 0.3 });
-    }
-  };
-
-  const onPointerOut = () => {
-    if (isMobile) return;
-    document.body.style.cursor = 'auto';
-    if (titleRef.current) {
-      gsap.to(titleRef.current, { fillOpacity: 0.85, duration: 0.3 });
-    }
-    if (gridRef.current && hoverBoxRef.current) {
-      gsap.to(gridRef.current.position, { z: 0, duration: 0.3 });
-      gsap.to(hoverBoxRef.current.scale, { x: 0, y: 0, z: 0, duration: 0.3 });
-    }
-  };
-
-  const getGeometry = () => {
-    if (!isMobile) {
-      return <planeGeometry args={[4, 4, 1]} />;
-    }
-    const isTrips = id === 'trips';
-    const points = isTrips
-      ? [[-1, 2, 0], [-1, -2, 0], [3, -2, 0]]
-      : [[-3, 2, 0], [1, -2, 0], [1, 2, 0]];
-    return <primitive object={TriangleGeometry({ points })} attach="geometry" />;
-  };
+  const isCompact = height < 2.8;
+  const titleFontSize = isCompact ? Math.min(0.165, width * 0.054) : 0.27;
+  const subFontSize = isCompact ? Math.min(0.10, width * 0.035) : 0.13;
+  const scrimHeight = isCompact ? 0.70 : 1.02;
 
   return (
-    <mesh
-      ref={gridRef}
-      position={position}
-      onClick={portalInto}
-      onPointerOver={onPointerOver}
-      onPointerOut={onPointerOut}
-    >
-      {getGeometry()}
-      <group>
-        <mesh position={[0, 0, -0.01]} ref={hoverBoxRef} scale={[0, 0, 0]}>
-          <boxGeometry args={[4, 4, 0.4]} />
-          <meshPhysicalMaterial color="#FFE878" transparent opacity={0.25} />
-          <Edges color="#3B001B" lineWidth={2} />
+    <group position={position}>
+      <group
+        ref={groupRef}
+        onClick={(e) => {
+          e.stopPropagation();
+          onNavigate();
+        }}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          setHovered(true);
+          document.body.style.cursor = 'pointer';
+        }}
+        onPointerOut={() => {
+          setHovered(false);
+          document.body.style.cursor = 'auto';
+        }}
+      >
+        {/* Cosmic obsidian gateway backing */}
+        <mesh geometry={frameGeo} position={[0, 0, -0.04]}>
+          <meshStandardMaterial color={surfaceColor} roughness={0.85} metalness={0.15} />
+          <Edges color={hovered ? '#FFE878' : accentColor} lineWidth={hovered ? 1.8 : 1.1} />
         </mesh>
-        <Text position={[0, -1.8, 0.4]} {...fontProps} ref={titleRef}>
+
+        {/* Layered 3D photographic composition (U1 or P1) */}
+        {children(hovered)}
+
+        {/* Bottom dark editorial scrim ensuring crisp heading contrast over photographs */}
+        <mesh
+          geometry={SHARED_GATEWAY_PLANE}
+          scale={[width - 0.04, scrimHeight, 1]}
+          position={[0, -height / 2 + scrimHeight / 2 + 0.02, 0.28]}
+        >
+          <meshBasicMaterial color="#06030a" transparent opacity={0.82} depthWrite={false} />
+        </mesh>
+
+        {/* Gateway Heading */}
+        <Text
+          position={[0, -height / 2 + (isCompact ? 0.44 : 0.62), 0.30]}
+          fontSize={titleFontSize}
+          color="#FFF8E7"
+          anchorX="center"
+          anchorY="middle"
+          textAlign="center"
+          letterSpacing={0.09}
+          maxWidth={width - 0.18}
+        >
           {title}
         </Text>
-      </group>
 
-      <MeshPortalMaterial ref={portalRef} blend={0} resolution={0} blur={0}>
-        <color attach="background" args={[color]} />
-        {children}
-      </MeshPortalMaterial>
-    </mesh>
+        {/* Subtle Live Metadata Subtitle */}
+        {subtitle && (
+          <Text
+            position={[0, -height / 2 + (isCompact ? 0.18 : 0.26), 0.30]}
+            fontSize={subFontSize}
+            color="#FDE68A"
+            anchorX="center"
+            anchorY="middle"
+            textAlign="center"
+            letterSpacing={0.08}
+            maxWidth={width - 0.18}
+          >
+            {subtitle}
+          </Text>
+        )}
+      </group>
+    </group>
   );
 };
 

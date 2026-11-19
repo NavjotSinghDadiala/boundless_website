@@ -43,10 +43,10 @@ export const ScrollWrapper: React.FC<ScrollWrapperProps> = ({ children }) => {
       const d = data.range(0.85, 0.18);   // Depth arrival: Z = 5 to 15
 
       if (!isActive) {
-        // Continuous camera dampening rig
-        camera.rotation.x = THREE.MathUtils.damp(camera.rotation.x, -0.5 * Math.PI * a, 5, delta);
-        camera.position.y = THREE.MathUtils.damp(camera.position.y, -37 * b, 7, delta);
-        camera.position.z = THREE.MathUtils.damp(camera.position.z, 5 + 10 * d, 7, delta);
+        // Continuous camera dampening rig (moderately snappier response while preserving smoothness)
+        camera.rotation.x = THREE.MathUtils.damp(camera.rotation.x, -0.5 * Math.PI * a, 6.5, delta);
+        camera.position.y = THREE.MathUtils.damp(camera.position.y, -37 * b, 8.5, delta);
+        camera.position.z = THREE.MathUtils.damp(camera.position.z, 5 + 10 * d, 8.5, delta);
 
         // Sync global store for overlays, badges, and hints
         setScrollProgress(data.range(0, 1));

@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 
-export type ExpeditionTheme = 'golden_hour' | 'day' | 'night';
+export type ExpeditionTheme = 'night';
 
 export interface Boundless3DState {
   // Global virtual scroll progress [0, 1]
@@ -13,7 +13,7 @@ export interface Boundless3DState {
   activePortalId: string | null;
   setActivePortal: (id: string | null) => void;
 
-  // Visual expedition atmosphere
+  // Visual expedition atmosphere (permanently Night / Cosmic)
   theme: ExpeditionTheme;
   setTheme: (theme: ExpeditionTheme) => void;
 
@@ -35,8 +35,8 @@ export const useBoundless3DStore = create<Boundless3DState>((set) => ({
   activePortalId: null,
   setActivePortal: (id) => set({ activePortalId: id }),
 
-  theme: 'golden_hour',
-  setTheme: (theme) => set({ theme }),
+  theme: 'night',
+  setTheme: () => set({ theme: 'night' }),
 
   isLoaded: false,
   setIsLoaded: (loaded) => set({ isLoaded: loaded }),

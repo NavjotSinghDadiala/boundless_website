@@ -31,14 +31,16 @@ export const Footer3D: React.FC = () => {
   });
 
   return (
-    <group position={[0, -44, 18]} rotation={[-Math.PI / 2, 0, 0]} ref={groupRef}>
-      <group position={[isMobile ? -2.2 : -4.5, 0, 0]}>
+    <group position={[0, -41.5, 16.4]} rotation={[-Math.PI / 2, 0, 0]} ref={groupRef}>
+      <group position={[isMobile ? -1.8 : -4.4, 0, 0]}>
         {BOUNDLESS_LINKS.map((link, i) => (
-          <group key={i} position={[i * (isMobile ? 1.0 : 2.2), 0, 0]}>
+          <group key={i} position={[i * (isMobile ? 0.9 : 2.2), 0, 0]}>
             <Text
-              fontSize={isMobile ? 0.18 : 0.28}
-              color="#3B001B"
-              letterSpacing={0.1}
+              fontSize={isMobile ? 0.16 : 0.24}
+              color="#FDE68A"
+              letterSpacing={0.14}
+              anchorX="center"
+              anchorY="middle"
               onClick={() => window.open(link.url, '_blank')}
               onPointerOver={(e) => {
                 e.stopPropagation();

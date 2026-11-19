@@ -22,7 +22,6 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
 
   const isWebGlSupported = useBoundless3DStore((s) => s.isWebGlSupported);
   const setWebGlSupported = useBoundless3DStore((s) => s.setWebGlSupported);
-  const theme = useBoundless3DStore((s) => s.theme);
 
   useEffect(() => {
     setMounted(true);
@@ -45,19 +44,6 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
     return <>{fallback || null}</>;
   }
 
-  // Atmospheric background tone based on theme
-  const getBackgroundColor = () => {
-    switch (theme) {
-      case 'golden_hour':
-        return '#fffbea'; // Warm Cream Boundless primary
-      case 'night':
-        return '#1b000c'; // Deep Maroon Night sky
-      case 'day':
-      default:
-        return '#fdf8ec';
-    }
-  };
-
   const canvasStyle: React.CSSProperties = {
     position: 'absolute',
     top: 0,
@@ -67,43 +53,27 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
     width: '100%',
     height: '100%',
     overflow: 'hidden',
-    ...(mounted && !isMobile && {
-      inset: '0.75rem',
-      width: 'calc(100% - 1.5rem)',
-      height: 'calc(100% - 1.5rem)',
-      borderRadius: '1.25rem',
-    }),
-  };
-
-  // Subtle ambient noise texture overlay matching the reference technique
-  const noiseOverlayStyle: React.CSSProperties = {
-    backgroundBlendMode: 'soft-light',
-    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cfilter id='a'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23a)'/%3E%3C/svg%3E")`,
-    backgroundRepeat: 'repeat',
-    backgroundSize: '120px',
+    backgroundColor: '#040207',
   };
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[100dvh] overflow-hidden select-none transition-colors duration-1000"
-      style={{ backgroundColor: getBackgroundColor() }}
+      className="relative w-full h-[100dvh] overflow-hidden select-none bg-[#040207]"
     >
       <Canvas
         className="boundless-3d-canvas"
         ref={canvasRef}
         shadows={!isMobile}
-        dpr={isMobile ? [1, 1.2] : [1, 2]}
+        dpr={isMobile ? [1, 1.2] : [1, 1.75]}
         gl={{
-          antialias: true,
+          antialias: !isMobile,
           powerPreference: 'high-performance',
-          alpha: true,
+          alpha: false,
         }}
-        style={{
-          ...canvasStyle,
-          ...noiseOverlayStyle,
-        }}
+        style={canvasStyle}
         onCreated={({ gl }) => {
+          gl.setClearColor('#040207', 1);
           gl.domElement.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
             console.warn('WebGL Context Lost. Switching to semantic fallback.');
@@ -112,18 +82,26 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
           });
         }}
       >
+        <color attach="background" args={['#040207']} />
+        <fog attach="fog" args={['#040207', 24, 68]} />
         <Suspense fallback={null}>
-          <ambientLight intensity={theme === 'night' ? 0.3 : 0.7} />
+          {/* Subtle cosmic ambient + cool violet/indigo rim + warm maroon/gold fill */}
+          <ambientLight intensity={0.48} color="#d8ccf0" />
           <directionalLight
-            position={[5, 10, 7]}
-            intensity={theme === 'night' ? 0.4 : 1.2}
-            color={theme === 'golden_hour' ? '#ffe0a3' : '#ffffff'}
+            position={[6, 12, 8]}
+            intensity={0.95}
+            color="#e2d9ff"
             castShadow={!isMobile}
           />
+          <directionalLight
+            position={[-7, -4, -6]}
+            intensity={0.45}
+            color="#9d174d"
+          />
           <ScrollControls
-            pages={4}
-            damping={0.15}
-            maxSpeed={1}
+            pages={3.2}
+            damping={0.11}
+            maxSpeed={1.25}
             distance={1}
             style={{ zIndex: 1, overflow: 'hidden', pointerEvents: 'auto' }}
           >
