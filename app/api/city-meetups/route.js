@@ -13,6 +13,7 @@ import {
   getDoc
 } from "firebase/firestore";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
 
 /* GET → List All or Single (if ?id= is passed) */
 export async function GET(req) {
@@ -63,6 +64,17 @@ export async function POST(req) {
       img: body.img, 
       caption: body.caption || "",
       galleryLink: body.galleryLink || "",
+      venue: body.venue || "",
+      participants: body.participants !== undefined && body.participants !== "" ? Number(body.participants) : 0,
+      summary: body.summary || "",
+      instagramHandle: body.instagramHandle || "",
+      link: body.link || "",
+      graphData: Array.isArray(body.graphData) ? body.graphData.map(item => ({
+        x: item.x !== undefined ? String(item.x) : "",
+        y: item.y !== undefined ? String(item.y) : ""
+      })) : [],
+      photos: sanitizeMediaUrls(body.photos),
+      videos: sanitizeMediaUrls(body.videos),
       createdAt: serverTimestamp(),
     };
 
@@ -89,13 +101,50 @@ export async function PUT(req) {
     }
 
     const body = await req.json();
-    const { id, mainSection, subSection, cityName, color, img, caption, galleryLink } = body;
+    const {
+      id,
+      mainSection,
+      subSection,
+      cityName,
+      color,
+      img,
+      caption,
+      galleryLink,
+      venue,
+      participants,
+      summary,
+      instagramHandle,
+      link,
+      graphData,
+      photos,
+      videos,
+    } = body;
 
     if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
-    await updateDoc(doc(db, "city_meetups", id), {
-      mainSection, subSection, cityName, color, img, caption, galleryLink, updatedAt: serverTimestamp()
-    });
+    const updatePayload = {
+      mainSection,
+      subSection,
+      cityName,
+      color: color || "#FEFAE7",
+      img,
+      caption: caption || "",
+      galleryLink: galleryLink || "",
+      venue: venue || "",
+      participants: participants !== undefined && participants !== "" ? Number(participants) : 0,
+      summary: summary || "",
+      instagramHandle: instagramHandle || "",
+      link: link || "",
+      graphData: Array.isArray(graphData) ? graphData.map(item => ({
+        x: item.x !== undefined ? String(item.x) : "",
+        y: item.y !== undefined ? String(item.y) : ""
+      })) : [],
+      photos: sanitizeMediaUrls(photos),
+      videos: sanitizeMediaUrls(videos),
+      updatedAt: serverTimestamp(),
+    };
+
+    await updateDoc(doc(db, "city_meetups", id), updatePayload);
 
     await recordAuditLog(admin, "UPDATE_CITY_MEETUP", "city_meetup", id, "success", {
       cityName,

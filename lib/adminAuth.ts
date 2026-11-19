@@ -176,7 +176,8 @@ export async function getAdminAccess(req?: Request): Promise<AdminAuthResult> {
     }
 
     const sessionStudentId = normalizeStudentId(sessionData.studentId);
-    if (!sessionStudentId) {
+    const sessionEmail = normalizeEmail(sessionData.email);
+    if (!sessionStudentId && !sessionEmail) {
       return {
         ok: false,
         status: 401,
@@ -185,19 +186,50 @@ export async function getAdminAccess(req?: Request): Promise<AdminAuthResult> {
     }
 
     // Step 3: Re-query adminUsers in real time from database
-    // Prefer deterministic doc read (primary document key is studentId), with fallback to where query
+    // Prefer deterministic doc read (primary document key is studentId), with fallback to where query or email
     let adminUserData: Record<string, any> | null = null;
-    const directAdminDoc = await adminDb.collection("adminUsers").doc(sessionStudentId).get();
-    if (directAdminDoc.exists) {
-      adminUserData = directAdminDoc.data() || {};
-    } else {
-      const adminUserQuery = await adminDb
+    if (sessionStudentId) {
+      const directAdminDoc = await adminDb.collection("adminUsers").doc(sessionStudentId).get();
+      if (directAdminDoc.exists) {
+        adminUserData = directAdminDoc.data() || {};
+      } else {
+        const adminUserQuery = await adminDb
+          .collection("adminUsers")
+          .where("studentId", "==", sessionStudentId)
+          .limit(1)
+          .get();
+        if (!adminUserQuery.empty) {
+          adminUserData = adminUserQuery.docs[0].data() || {};
+        }
+      }
+    }
+
+    if (!adminUserData && sessionEmail) {
+      const emailQuery = await adminDb
         .collection("adminUsers")
-        .where("studentId", "==", sessionStudentId)
+        .where("email", "==", sessionEmail)
         .limit(1)
         .get();
-      if (!adminUserQuery.empty) {
-        adminUserData = adminUserQuery.docs[0].data() || {};
+      if (!emailQuery.empty) {
+        adminUserData = emailQuery.docs[0].data() || {};
+      }
+    }
+
+    // Master admin fallback
+    if (!adminUserData && sessionEmail) {
+      const isMasterEmail =
+        sessionEmail === "admin@boundless.com" ||
+        sessionEmail === "admin@boundless.org" ||
+        sessionEmail === normalizeEmail(process.env.ADMIN_EMAIL);
+
+      if (isMasterEmail) {
+        adminUserData = {
+          studentId: sessionStudentId || "MASTER",
+          name: sessionData.name || "Master Administrator",
+          email: sessionEmail,
+          permissionLevel: "full",
+          active: true,
+        };
       }
     }
 

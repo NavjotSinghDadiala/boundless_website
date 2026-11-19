@@ -14,6 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import MediaFileUpload from "@/components/MediaFileUpload";
+import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
 
 export default function AddCityMeetupPage() {
   const router = useRouter();
@@ -39,7 +41,35 @@ export default function AddCityMeetupPage() {
   const [formData, setFormData] = useState({
     cityName: "",
     color: "#FFD700",
+    venue: "",
+    participants: "",
+    summary: "",
+    instagramHandle: "",
+    link: "",
+    galleryLink: "",
+    photos: [],
+    videos: [],
+    graphData: [],
   });
+
+  const handleGraphValueChange = (index, field, value) => {
+    const updated = [...(formData.graphData || [])];
+    updated[index] = { ...updated[index], [field]: value };
+    setFormData({ ...formData, graphData: updated });
+  };
+
+  const addGraphEntry = () => {
+    setFormData({
+      ...formData,
+      graphData: [...(formData.graphData || []), { x: "", y: "" }],
+    });
+  };
+
+  const removeGraphEntry = (index) => {
+    const updated = [...(formData.graphData || [])];
+    updated.splice(index, 1);
+    setFormData({ ...formData, graphData: updated });
+  };
 
   // -- IMAGE STATE --
   const [image, setImage] = useState({ file: null, preview: null, base64: null });
@@ -267,6 +297,15 @@ const handleFileChange = (e) => {
           subSection: selectedSubSection.name,
           cityName: formData.cityName,
           color: formData.color,
+          venue: formData.venue,
+          participants: formData.participants,
+          summary: formData.summary,
+          instagramHandle: formData.instagramHandle,
+          link: formData.link,
+          galleryLink: formData.galleryLink,
+          photos: sanitizeMediaUrls(formData.photos),
+          videos: sanitizeMediaUrls(formData.videos),
+          graphData: formData.graphData,
           img: imageUrl,
         }),
       });
@@ -461,6 +500,145 @@ const handleFileChange = (e) => {
             />
             <span className="text-sm text-muted-foreground uppercase">{formData.color}</span>
           </div>
+        </div>
+
+        {/* VENUE & PARTICIPANTS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="venue">Venue / Location</Label>
+            <Input
+              id="venue"
+              placeholder="e.g. Connaught Place, Central Park, Delhi"
+              value={formData.venue}
+              onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="participants">Total Participants</Label>
+            <Input
+              id="participants"
+              type="number"
+              placeholder="e.g. 35"
+              value={formData.participants}
+              onChange={(e) => setFormData({ ...formData, participants: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {/* SOCIAL & LINKS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="instagramHandle">Instagram Handle</Label>
+            <Input
+              id="instagramHandle"
+              placeholder="e.g. @boundless_iitm"
+              value={formData.instagramHandle}
+              onChange={(e) => setFormData({ ...formData, instagramHandle: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="link">Instagram / Action Post Link</Label>
+            <Input
+              id="link"
+              placeholder="e.g. https://instagram.com/p/..."
+              value={formData.link}
+              onChange={(e) => setFormData({ ...formData, link: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {/* GALLERY LINK */}
+        <div className="space-y-2">
+          <Label htmlFor="galleryLink">Gallery Link (Optional)</Label>
+          <Input
+            id="galleryLink"
+            placeholder="e.g. /gallery/delhi or external album link"
+            value={formData.galleryLink}
+            onChange={(e) => setFormData({ ...formData, galleryLink: e.target.value })}
+          />
+        </div>
+
+        {/* SUMMARY / RECAP */}
+        <div className="space-y-2">
+          <Label htmlFor="summary">Summary / Description (Recap)</Label>
+          <textarea
+            id="summary"
+            className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            placeholder="Write meetup details, highlights, experiences..."
+            value={formData.summary}
+            onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
+          />
+        </div>
+
+        {/* GLIMPSES GALLERY */}
+        <div className="p-4 border border-dashed rounded-lg space-y-6">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Glimpses Gallery</h3>
+
+          <MediaFileUpload
+            label="Photos"
+            inputId="glimpses-photos"
+            urls={formData.photos}
+            onChange={(photos) => setFormData({ ...formData, photos })}
+            accept="image/*"
+            resourceType="image"
+            folder="city_meetups"
+          />
+
+          <MediaFileUpload
+            label="Videos"
+            inputId="glimpses-videos"
+            urls={formData.videos}
+            onChange={(videos) => setFormData({ ...formData, videos })}
+            accept="video/*"
+            resourceType="video"
+            folder="city_meetups"
+          />
+        </div>
+
+        {/* GRAPH DATA */}
+        <div className="p-4 border border-dashed rounded-lg space-y-4">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Meetup Statistics / Graph Data</h3>
+          
+          {(formData.graphData || []).map((entry, index) => (
+            <div key={index} className="flex items-end gap-4">
+              <div className="flex-1 space-y-1">
+                <Label htmlFor={`graph-x-${index}`}>Category / Label</Label>
+                <Input
+                  id={`graph-x-${index}`}
+                  placeholder="e.g. Foundation / Degree / Alumni"
+                  value={entry.x}
+                  onChange={(e) => handleGraphValueChange(index, "x", e.target.value)}
+                />
+              </div>
+              <div className="flex-1 space-y-1">
+                <Label htmlFor={`graph-y-${index}`}>Count / Value</Label>
+                <Input
+                  id={`graph-y-${index}`}
+                  type="number"
+                  placeholder="e.g. 15"
+                  value={entry.y}
+                  onChange={(e) => handleGraphValueChange(index, "y", e.target.value)}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="destructive"
+                size="icon"
+                onClick={() => removeGraphEntry(index)}
+              >
+                <TrashIcon className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={addGraphEntry}
+            className="w-full mt-2"
+          >
+            <PlusIcon className="mr-2 h-4 w-4" /> Add Graph Entry
+          </Button>
         </div>
 
         {/* IMAGE UPLOAD FIELD */}

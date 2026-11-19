@@ -14,10 +14,36 @@ import {
   Search,
   MapPinOff,
   ChevronRight,
-  TrendingUp
+  TrendingUp,
+  Users,
+  Instagram,
+  Compass,
+  ExternalLink,
+  Calendar,
 } from "lucide-react"
 import IndiaMap from "@/components/IndiaMap"
 import MeetupSection from "@/components/MeetupSection"
+import { Sheet, SheetContent } from "@/components/ui/sheet"
+import GlimpsesGallery from "@/components/GlimpsesGallery"
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts"
+
+const AMBER_COLORS = [
+  "#b45309",
+  "#d97706",
+  "#f59e0b",
+  "#f97316",
+  "#ea580c",
+  "#fbbf24",
+  "#c2410c",
+  "#9a3412",
+]
 
 // Types
 interface Meetup {
@@ -30,6 +56,20 @@ interface Meetup {
   caption?: string
   galleryLink?: string
   createdAt?: any
+  venue?: string
+  participants?: number | string
+  instagramHandle?: string
+  summary?: string
+  feedback?: string
+  graphData?: Array<{ x?: string | number; y?: string | number }>
+  link?: string
+  photos?: string[]
+  videos?: string[]
+  glimpsesPhotos?: string
+  glimpsesVideos?: string
+  heading?: string
+  subHeading?: string
+  [key: string]: any
 }
 
 interface CityGroup {
@@ -132,8 +172,24 @@ export default function CityMeetupsPage() {
   const [activeFilter, setActiveFilter] = useState<string>("All")
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCityName, setSelectedCityName] = useState<string | null>(null)
+  const [selectedMeetup, setSelectedMeetup] = useState<Meetup | null>(null)
+  const [chartMounted, setChartMounted] = useState(false)
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setChartMounted(true)
+  }, [])
+
+  const chartData = useMemo(() => {
+    if (!selectedMeetup) return []
+    return (selectedMeetup.graphData || [])
+      .map((item: any) => ({
+        name: item.x || "Unnamed",
+        value: parseFloat(item.y) || 0,
+      }))
+      .filter((item: any) => item.value > 0)
+  }, [selectedMeetup])
 
   useEffect(() => {
     const fetchMeetups = async () => {
@@ -241,6 +297,7 @@ export default function CityMeetupsPage() {
         acc[heading] = []
       }
       acc[heading].push({
+        ...meetup,
         city: meetup.cityName || "Unknown City",
         img: meetup.img,
         caption: meetup.caption || meetup.cityName || "",
@@ -561,7 +618,8 @@ export default function CityMeetupsPage() {
 
                             {/* Timeline Card */}
                             <div
-                              className="flex-1 rounded-2xl border border-amber-900/10 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300"
+                              onClick={() => setSelectedMeetup(meetup)}
+                              className="flex-1 rounded-2xl border border-amber-900/10 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer hover:border-amber-900/30"
                               style={{ backgroundColor: meetup.color + "15" }}
                             >
                               <div className="relative h-44 w-full bg-amber-100">
@@ -668,7 +726,8 @@ export default function CityMeetupsPage() {
 
                             {/* Card Content */}
                             <div
-                              className="flex-1 rounded-2xl border border-amber-900/10 overflow-hidden shadow-sm"
+                              onClick={() => setSelectedMeetup(meetup)}
+                              className="flex-1 rounded-2xl border border-amber-900/10 overflow-hidden shadow-sm cursor-pointer hover:border-amber-900/30"
                               style={{ backgroundColor: meetup.color + "15" }}
                             >
                               <div className="relative h-36 w-full bg-amber-100">
@@ -719,6 +778,7 @@ export default function CityMeetupsPage() {
                     key={idx}
                     title={section.sectionTitle}
                     cards={section.cards}
+                    onCardClick={(card) => setSelectedMeetup(card)}
                   />
                 ))
               )}
@@ -726,6 +786,205 @@ export default function CityMeetupsPage() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Dynamic Summary Bottom Sheet */}
+      <Sheet open={!!selectedMeetup} onOpenChange={(open) => !open && setSelectedMeetup(null)}>
+        <SheetContent
+          side="bottom"
+          className="h-[70vh] w-full gap-0 p-0 flex flex-col overflow-hidden overscroll-contain rounded-t-[32px] border-none bg-amber-50/95 backdrop-blur-md text-gray-800 shadow-2xl transition duration-500 focus:outline-none"
+        >
+          {selectedMeetup && (
+            <>
+              <div className="flex h-full min-h-0 flex-col">
+                <div
+                  className="flex-1 min-h-0 overflow-y-scroll overscroll-contain"
+                  data-lenis-prevent
+                >
+                  <div className="flex flex-col">
+                    <div className="relative w-full h-[220px] sm:h-[320px] flex-shrink-0">
+                      <Image
+                        src={selectedMeetup.img || "/placeholder.jpg"}
+                        alt={selectedMeetup.cityName || selectedMeetup.subSection || "Meetup Image"}
+                        fill
+                        priority
+                        className="object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-amber-950 via-black/25 to-transparent" />
+                      <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 flex flex-col justify-end">
+                        <h2 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight drop-shadow-md">
+                          {selectedMeetup.heading || (selectedMeetup.cityName ? `${selectedMeetup.cityName} Meetup` : selectedMeetup.subSection)}
+                        </h2>
+                        {(selectedMeetup.subHeading || selectedMeetup.subSection || selectedMeetup.caption) && (
+                          <p className="text-sm sm:text-base font-medium text-amber-100/90 mt-1 drop-shadow">
+                            {selectedMeetup.subHeading || selectedMeetup.subSection || selectedMeetup.caption}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-6 sm:p-8 pb-12">
+                      <div className="max-w-6xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                        <div className="space-y-6">
+                          {(selectedMeetup.venue || selectedMeetup.cityName || selectedMeetup.participants || selectedMeetup.instagramHandle || selectedMeetup.subSection) && (
+                            <div className="bg-white/80 backdrop-blur-sm border border-amber-100 rounded-2xl p-5 shadow-sm space-y-4">
+                              <h3 className="text-lg font-bold text-amber-900 border-b border-amber-50 pb-2 flex items-center gap-2">
+                                <Compass className="size-5" /> Meetup Details
+                              </h3>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                {(selectedMeetup.venue || selectedMeetup.cityName) && (
+                                  <div className="flex items-center gap-3 sm:col-span-2">
+                                    <div className="p-2 bg-amber-100/80 text-amber-700 rounded-xl flex-shrink-0">
+                                      <MapPin className="size-5" />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Location / Venue</p>
+                                      <p className="text-sm font-medium text-gray-800">
+                                        {selectedMeetup.venue || selectedMeetup.cityName}
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {(selectedMeetup.subSection || selectedMeetup.mainSection) && (
+                                  <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-amber-100/80 text-amber-700 rounded-xl flex-shrink-0">
+                                      <Sparkles className="size-5" />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Event Edition</p>
+                                      <p className="text-sm font-medium text-gray-800">
+                                        {selectedMeetup.subSection || selectedMeetup.mainSection}
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {selectedMeetup.participants && (
+                                  <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-amber-100/80 text-amber-700 rounded-xl flex-shrink-0">
+                                      <Users className="size-5" />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Total Participants</p>
+                                      <p className="text-sm font-bold text-gray-800">{selectedMeetup.participants} attendees</p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {selectedMeetup.instagramHandle && (
+                                  <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-amber-100/80 text-amber-700 rounded-xl flex-shrink-0">
+                                      <Instagram className="size-5" />
+                                    </div>
+                                    <div>
+                                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Instagram</p>
+                                      <p className="text-sm font-medium text-gray-800">{selectedMeetup.instagramHandle}</p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          <GlimpsesGallery trip={selectedMeetup} />
+                        </div>
+
+                        {(selectedMeetup.summary || selectedMeetup.caption || selectedMeetup.feedback || (chartMounted && chartData.length > 0)) && (
+                          <div className="space-y-6">
+                            {(selectedMeetup.summary || selectedMeetup.caption) && (
+                              <div className="bg-white/80 backdrop-blur-sm border border-amber-100 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
+                                <h3 className="text-lg font-bold text-amber-900 border-b border-amber-50 pb-2">
+                                  Meetup Summary
+                                </h3>
+                                <div className="text-gray-700 text-sm leading-relaxed space-y-4 font-normal max-h-[350px] overflow-y-auto pr-1">
+                                  {(selectedMeetup.summary || selectedMeetup.caption).split("\n").map((para: string, idx: number) => (
+                                    para.trim() && <p key={idx}>{para.trim()}</p>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {chartMounted && chartData.length > 0 && (
+                              <div className="bg-white/80 backdrop-blur-sm border border-amber-100 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
+                                <h3 className="text-lg font-bold text-amber-900 border-b border-amber-50 pb-2">
+                                  Meetup Statistics
+                                </h3>
+                                <div className="w-full h-[260px] flex justify-center items-center">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                      <Pie
+                                        data={chartData}
+                                        cx="50%"
+                                        cy="50%"
+                                        labelLine={false}
+                                        outerRadius={75}
+                                        fill="#8884d8"
+                                        dataKey="value"
+                                      >
+                                        {chartData.map((entry: any, index: number) => (
+                                          <Cell key={`cell-${index}`} fill={AMBER_COLORS[index % AMBER_COLORS.length]} />
+                                        ))}
+                                      </Pie>
+                                      <Tooltip
+                                        formatter={(value: any, name: any, props: any) => {
+                                          const percent = props?.payload?.percent;
+                                          const percentageStr = percent !== undefined ? ` (${(percent * 100).toFixed(1)}%)` : "";
+                                          return [`${value}${percentageStr}`, name];
+                                        }}
+                                        contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #f59e0b', borderRadius: '12px' }}
+                                      />
+                                      <Legend 
+                                        verticalAlign="bottom" 
+                                        height={36}
+                                        iconType="circle"
+                                        wrapperStyle={{ fontSize: '12px', color: '#78350f' }}
+                                      />
+                                    </PieChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-shrink-0 bg-white/90 backdrop-blur-sm border-t border-amber-100 p-4 flex items-center justify-end gap-3 w-full shadow-md">
+                  <button
+                    onClick={() => setSelectedMeetup(null)}
+                    className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  {selectedMeetup.link && (
+                    <a
+                      href={selectedMeetup.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm transition hover:scale-[1.02] bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 cursor-pointer"
+                    >
+                      <Instagram className="size-4" /> View on Instagram <ExternalLink className="size-3" />
+                    </a>
+                  )}
+                  {!selectedMeetup.link && selectedMeetup.galleryLink && selectedMeetup.galleryLink !== "#" && (
+                    <a
+                      href={selectedMeetup.galleryLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm transition hover:scale-[1.02] bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 cursor-pointer"
+                    >
+                      <ExternalLink className="size-4" /> View Gallery
+                    </a>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

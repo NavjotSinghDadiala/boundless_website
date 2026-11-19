@@ -2,7 +2,15 @@ import React from "react"
 import { motion } from "framer-motion"
 import Image from "next/image";
 
-export default function MeetupSection({ title, cards }: { title: string, cards: any[] }) {
+export default function MeetupSection({
+  title,
+  cards,
+  onCardClick,
+}: {
+  title: string;
+  cards: any[];
+  onCardClick?: (card: any) => void;
+}) {
   // Split cards into rows of 3 (desktop/tablet) or 2 (mobile)
   const getRows = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -43,11 +51,12 @@ export default function MeetupSection({ title, cards }: { title: string, cards: 
             {row.map((card, cardIdx) => (
               <motion.div
                 key={cardIdx}
+                onClick={() => onCardClick?.(card)}
                 className={`
                   flex flex-col w-full max-w-[340px] min-w-[180px]
                   rounded-[32px] border-2 shadow-xl
                   transition-transform duration-300
-                  bg-white
+                  bg-white cursor-pointer
                 `}
                 whileHover={{ scale: 1.04, boxShadow: "0 8px 32px #00000022" }}
               >
