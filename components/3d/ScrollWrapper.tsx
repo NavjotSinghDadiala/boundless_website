@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useScroll } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import { isMobile } from 'react-device-detect';
@@ -17,7 +17,51 @@ export const ScrollWrapper: React.FC<ScrollWrapperProps> = ({ children }) => {
   const isActive = useBoundless3DStore((state) => !!state.activePortalId);
   const setScrollProgress = useBoundless3DStore((state) => state.setScrollProgress);
 
-  useFrame((state, delta) => {
+  // Align camera, Drei scroll offset, and store progress immediately on mount / route return
+  useEffect(() => {
+    const syncInitialScroll = () => {
+      const section = typeof document !== 'undefined' ? document.getElementById('boundless-3d-experience') : null;
+      let initialProgress = 0;
+      if (section) {
+        const rect = section.getBoundingClientRect();
+        const maxScroll = section.offsetHeight - window.innerHeight;
+        initialProgress = maxScroll > 0 ? Math.max(0, Math.min(1, -rect.top / maxScroll)) : 0;
+      }
+
+      if (data) {
+        const scrollRef = (data as unknown as { scroll?: { current: number } }).scroll;
+        if (scrollRef) {
+          scrollRef.current = initialProgress;
+        }
+        data.offset = initialProgress;
+        if (data.el) {
+          const scrollThreshold = data.el.scrollHeight - data.el.clientHeight;
+          if (scrollThreshold > 0) {
+            data.el.scrollTop = initialProgress * scrollThreshold;
+          }
+        }
+      }
+
+      const a = THREE.MathUtils.clamp(initialProgress / 0.3, 0, 1);
+      const b = THREE.MathUtils.clamp((initialProgress - 0.3) / 0.5, 0, 1);
+      const d = THREE.MathUtils.clamp((initialProgress - 0.85) / 0.18, 0, 1);
+
+      camera.rotation.x = -0.5 * Math.PI * a;
+      camera.rotation.y = 0;
+      camera.position.y = -37 * b;
+      camera.position.z = 5 + 10 * d;
+      camera.updateProjectionMatrix();
+      setScrollProgress(initialProgress);
+    };
+
+    syncInitialScroll();
+    // Re-sync once after ScrollControls attaches data.el and Next.js settles scroll restoration
+    const rafId = window.requestAnimationFrame(syncInitialScroll);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [camera, data, setScrollProgress]);
+
+  useFrame((state, rawDelta) => {
+    const delta = Math.min(rawDelta, 0.1);
     if (data) {
       // Synchronize Drei's virtual scroll target with the document's pinned scroll position
       const section = typeof document !== 'undefined' ? document.getElementById('boundless-3d-experience') : null;
@@ -26,8 +70,9 @@ export const ScrollWrapper: React.FC<ScrollWrapperProps> = ({ children }) => {
         const maxScroll = section.offsetHeight - window.innerHeight;
         const progress = maxScroll > 0 ? Math.max(0, Math.min(1, -rect.top / maxScroll)) : 0;
 
-        if (data.scroll) {
-          data.scroll.current = progress;
+        const scrollRef = (data as unknown as { scroll?: { current: number } }).scroll;
+        if (scrollRef) {
+          scrollRef.current = progress;
         }
         if (data.el) {
           const scrollThreshold = data.el.scrollHeight - data.el.clientHeight;

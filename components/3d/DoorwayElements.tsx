@@ -7,19 +7,22 @@ import { isMobile } from 'react-device-detect';
 import * as THREE from 'three';
 
 /**
- * Curated, lightweight travel accents surrounding and floating above the wooden entrance
- * at [0, -10.5, 5.0] without modifying ExpeditionPortalGate.tsx or obstructing the doorway:
- * - Floating golden navigation astrolabe/compass crest centered above the archway header
- * - Subtle golden constellation guide arcs leading the eye toward the entrance flanks
+ * Curated, aesthetic travel portal accents surrounding the wooden entrance at [0, -10.5, 5.0]
+ * without obstructing the doorway opening or camera passage:
+ * - Ornate 4-point Golden Compass Rose Crest floating centered above the archway crown
+ * - Twin Warm Glowing Brass Expedition Lanterns flanking the outer left & right timber posts
+ * - Subtle golden navigation guide arcs sweeping toward the outer doorway flanks
  * - Instanced orbiting golden diamond markers outside the timber posts
  *
- * Strictly fades out cleanly as the camera crosses Y = -10.5 so Memories in Motion beyond
+ * Cleanly fades out as the camera crosses Y = -10.5 so Memories in Motion beyond
  * the door remains 100% unobstructed.
  */
 export const DoorwayElements: React.FC = () => {
   const rootRef = useRef<THREE.Group>(null);
   const crestOuterRef = useRef<THREE.Mesh>(null);
-  const crestInnerRef = useRef<THREE.Mesh>(null);
+  const crestInnerRef = useRef<THREE.Group>(null);
+  const leftLanternRef = useRef<THREE.Group>(null);
+  const rightLanternRef = useRef<THREE.Group>(null);
   const markersRef = useRef<THREE.InstancedMesh>(null);
   const reducedMotionRef = useRef(false);
 
@@ -41,17 +44,31 @@ export const DoorwayElements: React.FC = () => {
   }, []);
 
   const assets = useMemo(() => {
-    const outerRingGeo = new THREE.TorusGeometry(0.52, 0.015, 8, 42);
-    const innerRingGeo = new THREE.TorusGeometry(0.34, 0.011, 8, 32);
-    const coreDiamondGeo = new THREE.OctahedronGeometry(0.09, 0);
+    const outerRingGeo = new THREE.TorusGeometry(0.56, 0.017, 8, 48);
+    const innerRingGeo = new THREE.TorusGeometry(0.36, 0.012, 8, 36);
+    const compassSpikeGeo = new THREE.ConeGeometry(0.055, 0.34, 4);
+    const coreDiamondGeo = new THREE.OctahedronGeometry(0.095, 0);
     const markerGeo = new THREE.OctahedronGeometry(0.065, 0);
 
+    // Expedition Lantern geometries
+    const lanternCapGeo = new THREE.ConeGeometry(0.18, 0.14, 6);
+    const lanternGlassGeo = new THREE.CylinderGeometry(0.11, 0.095, 0.28, 6);
+    const lanternBaseGeo = new THREE.CylinderGeometry(0.14, 0.11, 0.07, 6);
+    const lanternRingGeo = new THREE.TorusGeometry(0.055, 0.012, 6, 16);
+
     const goldMat = new THREE.MeshStandardMaterial({
-      color: '#E8D29D',
-      metalness: 0.72,
-      roughness: 0.28,
+      color: '#E8CC8C',
+      emissive: '#3D2A0B',
+      emissiveIntensity: 0.42,
+      metalness: 0.45,
+      roughness: 0.3,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
+    });
+    const lanternGlassMat = new THREE.MeshBasicMaterial({
+      color: '#FFE099',
+      transparent: true,
+      opacity: 0.86,
     });
     const markerMat = new THREE.MeshBasicMaterial({
       color: '#FDE68A',
@@ -59,16 +76,35 @@ export const DoorwayElements: React.FC = () => {
       opacity: 0.78,
     });
 
-    return { outerRingGeo, innerRingGeo, coreDiamondGeo, markerGeo, goldMat, markerMat };
+    return {
+      outerRingGeo,
+      innerRingGeo,
+      compassSpikeGeo,
+      coreDiamondGeo,
+      markerGeo,
+      lanternCapGeo,
+      lanternGlassGeo,
+      lanternBaseGeo,
+      lanternRingGeo,
+      goldMat,
+      lanternGlassMat,
+      markerMat,
+    };
   }, []);
 
   useEffect(() => {
     return () => {
       assets.outerRingGeo.dispose();
       assets.innerRingGeo.dispose();
+      assets.compassSpikeGeo.dispose();
       assets.coreDiamondGeo.dispose();
       assets.markerGeo.dispose();
+      assets.lanternCapGeo.dispose();
+      assets.lanternGlassGeo.dispose();
+      assets.lanternBaseGeo.dispose();
+      assets.lanternRingGeo.dispose();
       assets.goldMat.dispose();
+      assets.lanternGlassMat.dispose();
       assets.markerMat.dispose();
     };
   }, [assets]);
@@ -76,17 +112,17 @@ export const DoorwayElements: React.FC = () => {
   // Subtle golden navigation guide lines sweeping toward the outer doorway flanks (desktop/tablet)
   const leftGuidePoints = useMemo<[number, number, number][]>(
     () => [
-      [-4.9, -5.2, 4.2],
-      [-4.5, -7.8, 4.6],
-      [-3.9, -10.3, 5.0],
+      [-5.0, -5.2, 4.2],
+      [-4.6, -7.8, 4.6],
+      [-4.0, -10.3, 5.0],
     ],
     []
   );
   const rightGuidePoints = useMemo<[number, number, number][]>(
     () => [
-      [4.9, -5.2, 4.2],
-      [4.5, -7.8, 4.6],
-      [3.9, -10.3, 5.0],
+      [5.0, -5.2, 4.2],
+      [4.6, -7.8, 4.6],
+      [4.0, -10.3, 5.0],
     ],
     []
   );
@@ -95,15 +131,15 @@ export const DoorwayElements: React.FC = () => {
   const markerSpecs = useMemo(() => {
     if (isNarrow) {
       return [
-        { x: -2.45, y: -10.3, z: 4.5, speed: 0.65, phase: 0.4, radius: 0.16 },
-        { x: 2.45, y: -10.3, z: 5.5, speed: 0.52, phase: 2.3, radius: 0.16 },
+        { x: -2.5, y: -10.3, z: 4.5, speed: 0.65, phase: 0.4, radius: 0.16 },
+        { x: 2.5, y: -10.3, z: 5.5, speed: 0.52, phase: 2.3, radius: 0.16 },
       ];
     }
     return [
-      { x: -4.15, y: -10.2, z: 3.6, speed: 0.62, phase: 0.3, radius: 0.22 },
-      { x: 4.15, y: -10.2, z: 3.6, speed: 0.54, phase: 1.9, radius: 0.22 },
-      { x: -4.35, y: -10.4, z: 6.4, speed: 0.48, phase: 3.1, radius: 0.20 },
-      { x: 4.35, y: -10.4, z: 6.4, speed: 0.58, phase: 4.6, radius: 0.20 },
+      { x: -4.25, y: -10.2, z: 3.6, speed: 0.62, phase: 0.3, radius: 0.22 },
+      { x: 4.25, y: -10.2, z: 3.6, speed: 0.54, phase: 1.9, radius: 0.22 },
+      { x: -4.45, y: -10.4, z: 6.4, speed: 0.48, phase: 3.1, radius: 0.20 },
+      { x: 4.45, y: -10.4, z: 6.4, speed: 0.58, phase: 4.6, radius: 0.20 },
     ];
   }, [isNarrow]);
 
@@ -123,17 +159,23 @@ export const DoorwayElements: React.FC = () => {
     rootRef.current.visible = alpha > 0.01;
     if (!rootRef.current.visible) return;
 
-    assets.goldMat.opacity = alpha * 0.85;
+    assets.goldMat.opacity = alpha * 0.9;
+    assets.lanternGlassMat.opacity = alpha * 0.86;
     assets.markerMat.opacity = alpha * 0.78;
 
     const t = reducedMotionRef.current ? 0 : state.clock.elapsedTime;
 
     if (crestOuterRef.current) {
-      crestOuterRef.current.rotation.z = t * 0.22;
+      crestOuterRef.current.rotation.z = t * 0.18;
     }
     if (crestInnerRef.current) {
-      crestInnerRef.current.rotation.z = -t * 0.35;
-      crestInnerRef.current.rotation.x = Math.sin(t * 0.4) * 0.28;
+      crestInnerRef.current.rotation.z = -t * 0.24;
+    }
+    if (leftLanternRef.current) {
+      leftLanternRef.current.rotation.z = Math.sin(t * 0.9 + 0.4) * 0.06;
+    }
+    if (rightLanternRef.current) {
+      rightLanternRef.current.rotation.z = Math.sin(t * 0.9 + 2.1) * 0.06;
     }
 
     if (markersRef.current) {
@@ -153,28 +195,56 @@ export const DoorwayElements: React.FC = () => {
     }
   });
 
-  // Positioned cleanly above the upright wooden header beam (door header is at Z ~ 1.90 desktop / 2.88 mobile)
-  const crestPos: [number, number, number] = isNarrow ? [0, -10.35, 1.95] : [0, -10.35, 1.0];
-  const crestScale = isNarrow ? 0.68 : 1.0;
+  // Positioned cleanly above the top header beam in camera-looking-down orientation (-Z is "up" on screen)
+  const crestZ = isNarrow ? 1.65 : 0.85;
+  const crestScale = isNarrow ? 0.72 : 1.04;
+  const lanternX = isNarrow ? 2.68 : 3.45;
+  const lanternZ = isNarrow ? 3.55 : 2.95;
+  const lanternScale = isNarrow ? 0.72 : 1.05;
+
+  const renderLantern = (ref: React.RefObject<THREE.Group | null>, x: number) => (
+    <group
+      ref={ref}
+      position={[x, -10.22, lanternZ]}
+      rotation={[-Math.PI / 2, 0, 0]}
+      scale={lanternScale}
+    >
+      <mesh geometry={assets.lanternRingGeo} material={assets.goldMat} position={[0, 0.27, 0]} />
+      <mesh geometry={assets.lanternCapGeo} material={assets.goldMat} position={[0, 0.19, 0]} />
+      <mesh geometry={assets.lanternGlassGeo} material={assets.lanternGlassMat} position={[0, 0, 0]} />
+      <mesh geometry={assets.lanternBaseGeo} material={assets.goldMat} position={[0, -0.17, 0]} />
+    </group>
+  );
 
   return (
-    <group ref={rootRef} name="doorway-travel-elements" visible={false}>
-      {/* Floating Golden Navigation Astrolabe Crest above the wooden entrance */}
-      <group position={crestPos} rotation={[-Math.PI / 2, 0, 0]} scale={crestScale}>
+    <group ref={rootRef} name="doorway-travel-accents" visible={false}>
+      {/* Floating Golden 4-Point Compass Rose Crest Centered Above the Archway Header */}
+      <group position={[0, -10.25, crestZ]} rotation={[-Math.PI / 2, 0, 0]} scale={crestScale}>
         <mesh ref={crestOuterRef} geometry={assets.outerRingGeo} material={assets.goldMat} />
-        <mesh ref={crestInnerRef} geometry={assets.innerRingGeo} material={assets.goldMat} />
+        <group ref={crestInnerRef}>
+          <mesh geometry={assets.innerRingGeo} material={assets.goldMat} />
+          {/* Cardinal 4-point compass spikes */}
+          <mesh geometry={assets.compassSpikeGeo} material={assets.goldMat} position={[0, 0.42, 0]} />
+          <mesh geometry={assets.compassSpikeGeo} material={assets.goldMat} position={[0, -0.42, 0]} rotation={[0, 0, Math.PI]} />
+          <mesh geometry={assets.compassSpikeGeo} material={assets.goldMat} position={[0.42, 0, 0]} rotation={[0, 0, -Math.PI / 2]} />
+          <mesh geometry={assets.compassSpikeGeo} material={assets.goldMat} position={[-0.42, 0, 0]} rotation={[0, 0, Math.PI / 2]} />
+        </group>
         <mesh geometry={assets.coreDiamondGeo} material={assets.markerMat} />
       </group>
 
-      {/* Subtle golden constellation guide lines leading to the outer doorway flanks */}
+      {/* Twin Warm Hanging Brass Expedition Lanterns Flanking the Outer Timber Posts */}
+      {renderLantern(leftLanternRef, -lanternX)}
+      {renderLantern(rightLanternRef, lanternX)}
+
+      {/* Subtle Golden Navigation Guide Arcs Flanking the Entrance (Desktop/Tablet) */}
       {!isNarrow && (
         <>
-          <Line points={leftGuidePoints} color="#D4AF6A" lineWidth={1} transparent opacity={0.22} />
-          <Line points={rightGuidePoints} color="#D4AF6A" lineWidth={1} transparent opacity={0.22} />
+          <Line points={leftGuidePoints} color="#D4AF6A" lineWidth={0.9} transparent opacity={0.22} />
+          <Line points={rightGuidePoints} color="#D4AF6A" lineWidth={0.9} transparent opacity={0.22} />
         </>
       )}
 
-      {/* Instanced orbiting golden diamond markers around the outer doorway perimeter */}
+      {/* Orbiting Perimeter Waypoint Diamonds Strictly Outside the Timber Frame */}
       <instancedMesh
         ref={markersRef}
         args={[assets.markerGeo, assets.markerMat, markerSpecs.length]}

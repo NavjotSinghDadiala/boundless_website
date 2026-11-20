@@ -1,10 +1,12 @@
 'use client';
 
-import React, { Suspense, useRef, useEffect, useState } from 'react';
+import React, { Suspense, useRef, useEffect, useInsertionEffect, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { AdaptiveDpr, Preload, ScrollControls } from '@react-three/drei';
 import { isMobile } from 'react-device-detect';
 import { useBoundless3DStore } from '@/context/boundless3dStore';
+
+const useIsomorphicInsertionEffect = typeof window !== 'undefined' ? useInsertionEffect : useEffect;
 
 interface BoundlessCanvasLoaderProps {
   children: React.ReactNode;
@@ -17,30 +19,56 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [mounted, setMounted] = useState(false);
+  const glElementRef = useRef<HTMLCanvasElement | null>(null);
+  const contextLostHandlerRef = useRef<((e: Event) => void) | null>(null);
+  const contextRestoredHandlerRef = useRef<(() => void) | null>(null);
+  const isUnmountingRef = useRef(false);
+
   const [webGlFailed, setWebGlFailed] = useState(false);
 
-  const isWebGlSupported = useBoundless3DStore((s) => s.isWebGlSupported);
   const setWebGlSupported = useBoundless3DStore((s) => s.setWebGlSupported);
+  const setActivePortal = useBoundless3DStore((s) => s.setActivePortal);
+
+  // Insertion-phase cleanup runs BEFORE child <CanvasImpl>'s useInsertionEffect
+  // calls root.current.unmount() -> gl.forceContextLoss().
+  useIsomorphicInsertionEffect(() => {
+    isUnmountingRef.current = false;
+    return () => {
+      isUnmountingRef.current = true;
+      const dom = glElementRef.current;
+      if (dom) {
+        if (contextLostHandlerRef.current) {
+          dom.removeEventListener('webglcontextlost', contextLostHandlerRef.current);
+        }
+        if (contextRestoredHandlerRef.current) {
+          dom.removeEventListener('webglcontextrestored', contextRestoredHandlerRef.current);
+        }
+      }
+      glElementRef.current = null;
+      contextLostHandlerRef.current = null;
+      contextRestoredHandlerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
-    setMounted(true);
-    // Probe WebGL support
-    try {
-      const testCanvas = document.createElement('canvas');
-      const gl = testCanvas.getContext('webgl2') || testCanvas.getContext('webgl');
-      if (!gl) {
-        setWebGlSupported(false);
-        setWebGlFailed(true);
-      }
-    } catch {
+    setActivePortal(null);
+
+    // Check WebGL API availability without allocating/losing a throwaway GPU context
+    const hasWebGLApi =
+      typeof window !== 'undefined' &&
+      Boolean(window.WebGL2RenderingContext || window.WebGLRenderingContext);
+
+    if (!hasWebGLApi) {
       setWebGlSupported(false);
       setWebGlFailed(true);
+    } else {
+      setWebGlSupported(true);
+      setWebGlFailed(false);
     }
-  }, [setWebGlSupported]);
+  }, [setWebGlSupported, setActivePortal]);
 
-  // Graceful fallback if WebGL is unavailable
-  if (webGlFailed || !isWebGlSupported) {
+  // Graceful fallback only if WebGL actually failed during this active mount
+  if (webGlFailed) {
     return <>{fallback || null}</>;
   }
 
@@ -64,6 +92,7 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
       <Canvas
         className="boundless-3d-canvas"
         ref={canvasRef}
+        frameloop="always"
         shadows={!isMobile}
         dpr={isMobile ? [1, 1.2] : [1, 1.75]}
         gl={{
@@ -74,12 +103,37 @@ export const BoundlessCanvasLoader: React.FC<BoundlessCanvasLoaderProps> = ({
         style={canvasStyle}
         onCreated={({ gl }) => {
           gl.setClearColor('#040207', 1);
-          gl.domElement.addEventListener('webglcontextlost', (e) => {
+          const dom = gl.domElement;
+
+          // Detach any prior listeners if onCreated runs more than once
+          if (glElementRef.current) {
+            if (contextLostHandlerRef.current) {
+              glElementRef.current.removeEventListener('webglcontextlost', contextLostHandlerRef.current);
+            }
+            if (contextRestoredHandlerRef.current) {
+              glElementRef.current.removeEventListener('webglcontextrestored', contextRestoredHandlerRef.current);
+            }
+          }
+
+          glElementRef.current = dom;
+
+          const handleContextLost = (e: Event) => {
+            // Ignore intentional context loss during route unmount or on detached canvases
+            if (isUnmountingRef.current || !dom.isConnected) return;
             e.preventDefault();
             console.warn('WebGL Context Lost. Switching to semantic fallback.');
-            setWebGlSupported(false);
             setWebGlFailed(true);
-          });
+          };
+
+          const handleContextRestored = () => {
+            if (isUnmountingRef.current || !dom.isConnected) return;
+            setWebGlFailed(false);
+          };
+
+          contextLostHandlerRef.current = handleContextLost;
+          contextRestoredHandlerRef.current = handleContextRestored;
+          dom.addEventListener('webglcontextlost', handleContextLost, false);
+          dom.addEventListener('webglcontextrestored', handleContextRestored, false);
         }}
       >
         <color attach="background" args={['#040207']} />
