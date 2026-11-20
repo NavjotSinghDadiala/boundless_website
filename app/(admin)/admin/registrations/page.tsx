@@ -80,6 +80,7 @@ export interface Registration {
   approvalEmailLastAttemptAt?: string;
   approvalEmailMessageId?: string;
   waitlistPosition?: number | null;
+  waitlistGender?: string | null;
   conversationHistory?: Array<{
     type: string;
     actor?: string;
@@ -798,7 +799,12 @@ export default function SubmissionsPage() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         if (data.waitlisted) {
-          toast.info(`ℹ Capacity full: Student placed on waiting list at position #${data.waitlistPosition || 1}.`);
+          const gLabel = data.waitlistGender === "male"
+            ? "Male Waiting List"
+            : data.waitlistGender === "female"
+            ? "Female Waiting List"
+            : "Waiting List";
+          toast.info(`ℹ Capacity full: Student placed on ${gLabel} at Position #${data.waitlistPosition || 1}.`);
         } else if (data.email?.sent) {
           toast.success("✓ Student approved & confirmation email sent!");
         } else if (data.email?.status === "already_sent") {
@@ -811,13 +817,18 @@ export default function SubmissionsPage() {
           toast.success("✓ Student approved successfully.");
         }
 
-        const nextStatus = data.registrationStatus || data.status || "mail_sent";
+        const nextStatus = data.registrationStatus || data.status || (data.waitlisted ? "waitlisted" : "mail_sent");
+        const nextWaitlistPos = data.waitlisted ? (data.waitlistPosition ?? null) : null;
+        const nextWaitlistGender = data.waitlisted ? (data.waitlistGender ?? null) : null;
+
         setRegistrations((prev) =>
           prev.map((r) =>
             r.id === reg.id
               ? {
                   ...r,
                   status: nextStatus,
+                  waitlistPosition: nextWaitlistPos,
+                  waitlistGender: nextWaitlistGender,
                   approvalEmailStatus: data.email?.status || r.approvalEmailStatus,
                   approvalEmailError: data.email?.error || r.approvalEmailError,
                 }
@@ -831,11 +842,17 @@ export default function SubmissionsPage() {
               ? {
                   ...prev,
                   status: nextStatus,
+                  waitlistPosition: nextWaitlistPos,
+                  waitlistGender: nextWaitlistGender,
                   approvalEmailStatus: data.email?.status || prev.approvalEmailStatus,
                   approvalEmailError: data.email?.error || prev.approvalEmailError,
                 }
               : null
           );
+        }
+        // Refresh full trip registrations when waitlist queue changed so recalculated positions stay in sync
+        if (reg.status === "waitlisted" || data.waitlisted) {
+          fetchTripData(selectedTripId);
         }
       } else {
         toast.error(data.error || "Failed to approve registration.");
@@ -919,7 +936,12 @@ export default function SubmissionsPage() {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success("Registration rejected.");
+        const wasWaitlisted = rejectConfirmReg.status === "waitlisted";
+        if (data.promotion?.promoted) {
+          toast.success("Registration rejected & next eligible waitlisted student promoted.");
+        } else {
+          toast.success("Registration rejected.");
+        }
         const regId = rejectConfirmReg.id;
         const reason = rejectReason.trim();
         setRegistrations((prev) =>
@@ -929,6 +951,8 @@ export default function SubmissionsPage() {
                   ...r,
                   status: "rejected",
                   issueText: reason,
+                  waitlistPosition: null,
+                  waitlistGender: null,
                 }
               : r
           )
@@ -936,7 +960,10 @@ export default function SubmissionsPage() {
         setRejectConfirmReg(null);
         setRejectReason("");
         if (activeProfileReg && activeProfileReg.id === regId) {
-          setActiveProfileReg((prev) => prev ? { ...prev, status: "rejected", issueText: reason } : null);
+          setActiveProfileReg((prev) => prev ? { ...prev, status: "rejected", issueText: reason, waitlistPosition: null, waitlistGender: null } : null);
+        }
+        if (data.promotion?.promoted || wasWaitlisted) {
+          fetchTripData(selectedTripId);
         }
       } else {
         toast.error(data.error || "Failed to reject registration.");
@@ -970,7 +997,11 @@ export default function SubmissionsPage() {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success("Approval revoked. Registration returned to pending review.");
+        if (data.promotion?.promoted) {
+          toast.success("Approval revoked & next eligible waitlisted student promoted.");
+        } else {
+          toast.success("Approval revoked. Registration returned to pending review.");
+        }
         const regId = revokeConfirmReg.id;
         const reason = revokeReason.trim();
         setRegistrations((prev) =>
@@ -988,6 +1019,9 @@ export default function SubmissionsPage() {
         setRevokeReason("");
         if (activeProfileReg && activeProfileReg.id === regId) {
           setActiveProfileReg((prev) => prev ? { ...prev, status: "registered", issueText: reason } : null);
+        }
+        if (data.promotion?.promoted) {
+          fetchTripData(selectedTripId);
         }
       } else {
         toast.error(data.error || "Failed to revoke approval.");
@@ -1026,7 +1060,12 @@ export default function SubmissionsPage() {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success("Correction request sent to student.");
+        const prevReg = registrations.find((r) => r.id === reuploadRegId);
+        if (data.promotion?.promoted) {
+          toast.success("Correction request sent & next eligible waitlisted student promoted.");
+        } else {
+          toast.success("Correction request sent to student.");
+        }
         const regId = reuploadRegId;
         const reason = reuploadIssueText.trim();
         const fields = [...reuploadFields];
@@ -1038,6 +1077,8 @@ export default function SubmissionsPage() {
                   status: "action_required",
                   issueText: reason,
                   actionRequiredFields: fields,
+                  waitlistPosition: null,
+                  waitlistGender: null,
                 }
               : r
           )
@@ -1045,6 +1086,9 @@ export default function SubmissionsPage() {
         setReuploadRegId(null);
         setReuploadIssueText("");
         setReuploadFields([]);
+        if (data.promotion?.promoted || prevReg?.status === "waitlisted") {
+          fetchTripData(selectedTripId);
+        }
         if (activeProfileReg && activeProfileReg.id === regId) {
           setActiveProfileReg((prev) => prev ? {
             ...prev,
@@ -1433,23 +1477,34 @@ export default function SubmissionsPage() {
         body: JSON.stringify({ registrationId: regId, status: nextStatus, issueText, actionRequiredFields }),
       });
 
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success(`Registration status set to: ${nextStatus}`);
+        const prevReg = registrations.find((r) => r.id === regId);
+        if (data.promotion?.promoted) {
+          toast.success(`Registration status set to: ${nextStatus} & next eligible waitlisted student promoted.`);
+        } else {
+          toast.success(`Registration status set to: ${nextStatus}`);
+        }
         setRegistrations((prev) =>
           prev.map((r) =>
             r.id === regId
               ? {
                   ...r,
-                  status: nextStatus,
+                  status: data.registrationStatus || data.status || nextStatus,
                   issueText: issueText !== undefined ? issueText : r.issueText,
                   actionRequiredFields: actionRequiredFields !== undefined ? actionRequiredFields : r.actionRequiredFields,
+                  ...(nextStatus === "withdrawn" || nextStatus === "declined" || nextStatus === "rejected"
+                    ? { waitlistPosition: null, waitlistGender: null }
+                    : {}),
                 }
               : r
           )
         );
+        if (data.promotion?.promoted || prevReg?.status === "waitlisted" || data.waitlisted) {
+          fetchTripData(selectedTripId);
+        }
       } else {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.error || "Failed to update status.");
+        toast.error(data.error || "Failed to update status.");
       }
     } catch (e: any) {
       console.error(e);
@@ -2234,12 +2289,25 @@ export default function SubmissionsPage() {
 
             const approvedFemales = femaleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
             const approvedMales = maleRegs.filter(r => r.status === "paid" || r.status === "approved_to_pay" || r.status === "mail_sent").length;
+            const waitlistedMales = waitlistRegs.filter(r => (r.waitlistGender || r.gender)?.toLowerCase() === "male").length;
+            const waitlistedFemales = waitlistRegs.filter(r => (r.waitlistGender || r.gender)?.toLowerCase() === "female").length;
+
+            const totalCap = selectedTrip?.totalSeats ?? 0;
+            const femaleCap = selectedTrip?.femaleReservedSeats ?? 0;
+            const maleCap = selectedTrip?.maleReservedSeats !== undefined ? selectedTrip.maleReservedSeats : Math.max(0, totalCap - femaleCap);
+            const totalRemainingSeats = Math.max(0, totalCap - approvedRegs.length);
+            const maleRemainingSeats = Math.min(totalRemainingSeats, Math.max(0, maleCap - approvedMales));
+            const femaleRemainingSeats = Math.min(totalRemainingSeats, Math.max(0, femaleCap - approvedFemales));
 
             // Filter by queue status tab
             let queueFiltered = registrations;
             if (queueTab === "pending") queueFiltered = pendingRegs;
             else if (queueTab === "approved") queueFiltered = approvedRegs;
-            else if (queueTab === "waitlisted") queueFiltered = waitlistRegs;
+            else if (queueTab === "waitlisted") {
+              queueFiltered = [...waitlistRegs].sort(
+                (a, b) => (Number(a.waitlistPosition) || 999999) - (Number(b.waitlistPosition) || 999999)
+              );
+            }
             else if (queueTab === "action_required") queueFiltered = actionRequiredRegs;
             else if (queueTab === "rejected") queueFiltered = rejectedRegs;
             else if (queueTab === "withdrawn") queueFiltered = withdrawnRegs;
@@ -2303,7 +2371,9 @@ export default function SubmissionsPage() {
                       <div className="text-3xl font-bold text-stone-900 tracking-tight">
                         {waitlistRegs.length}
                       </div>
-                      <span className="text-xs text-stone-500 font-medium">In waitlist queue</span>
+                      <span className="text-xs text-stone-500 font-medium">
+                        🚹 {waitlistedMales} M · 🚺 {waitlistedFemales} F
+                      </span>
                     </div>
                   </div>
 
@@ -2314,11 +2384,13 @@ export default function SubmissionsPage() {
                     </div>
                     <div className="mt-3">
                       <div className="text-base font-bold text-stone-900 tracking-tight flex items-center justify-between gap-1">
-                        <span className="text-sky-800">🚹 {approvedMales} / {selectedTrip?.maleReservedSeats !== undefined ? selectedTrip.maleReservedSeats : Math.max(0, (selectedTrip?.totalSeats || 0) - (selectedTrip?.femaleReservedSeats || 0))}</span>
+                        <span className={approvedMales > maleCap ? "text-red-700" : "text-sky-800"}>🚹 {approvedMales} / {maleCap}</span>
                         <span className="text-stone-300">|</span>
-                        <span className="text-rose-800">🚺 {approvedFemales} / {selectedTrip?.femaleReservedSeats ?? 0}</span>
+                        <span className={approvedFemales > femaleCap ? "text-red-700" : "text-rose-800"}>🚺 {approvedFemales} / {femaleCap}</span>
                       </div>
-                      <span className="text-xs text-stone-500 font-medium block mt-1">Approved / Allocated slots</span>
+                      <span className="text-xs text-stone-500 font-medium block mt-1">
+                        Eligible left: {maleRemainingSeats} M · {femaleRemainingSeats} F
+                      </span>
                     </div>
                   </div>
 
@@ -2331,7 +2403,9 @@ export default function SubmissionsPage() {
                       <div className="text-3xl font-bold text-stone-900 tracking-tight">
                         {registrations.length}
                       </div>
-                      <span className="text-xs text-stone-500 font-medium">Total submissions</span>
+                      <span className="text-xs text-stone-500 font-medium">
+                        {rejectedRegs.length} rej · {withdrawnRegs.length} w/d
+                      </span>
                     </div>
                   </div>
                 </div>

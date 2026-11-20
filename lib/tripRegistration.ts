@@ -118,6 +118,13 @@ export function serializeTripRegistration(id: string, data: Record<string, any>)
     ...(data.approvalEmailError !== undefined ? { approvalEmailError: data.approvalEmailError } : {}),
     ...(data.approvalEmailLastAttemptAt ? { approvalEmailLastAttemptAt: formatIsoTimestamp(data.approvalEmailLastAttemptAt) } : {}),
     ...(data.approvalEmailMessageId !== undefined ? { approvalEmailMessageId: data.approvalEmailMessageId } : {}),
+    ...(data.waitlistPosition !== undefined && data.waitlistPosition !== null ? { waitlistPosition: Number(data.waitlistPosition) } : {}),
+    ...(data.waitlistGender !== undefined ? { waitlistGender: data.waitlistGender } : {}),
+    ...(data.waitlistedAt ? { waitlistedAt: formatIsoTimestamp(data.waitlistedAt) } : {}),
+    ...(data.waitlistEmailSentAt ? { waitlistEmailSentAt: formatIsoTimestamp(data.waitlistEmailSentAt) } : {}),
+    ...(data.waitlistEmailStatus !== undefined ? { waitlistEmailStatus: data.waitlistEmailStatus } : {}),
+    ...(data.promotedFromWaitlist !== undefined ? { promotedFromWaitlist: Boolean(data.promotedFromWaitlist) } : {}),
+    ...(data.promotedAt ? { promotedAt: formatIsoTimestamp(data.promotedAt) } : {}),
     ...(data.externalRegistrationToken !== undefined ? { externalRegistrationToken: data.externalRegistrationToken } : {}),
     ...(Array.isArray(data.externalForms) ? { externalForms: data.externalForms } : {}),
     // Preserve historical / legacy fields

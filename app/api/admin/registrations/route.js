@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { sendApprovalEmail, sendCorrectionRequestEmail } from "@/lib/brevo";
+import { sendApprovalEmail, sendCorrectionRequestEmail, sendTripWaitlistEmail } from "@/lib/brevo";
 import { sendTripApprovalEmail } from "@/lib/email/mailer";
 import {
   getDeduplicatedRegistrationsForTrip,
@@ -309,6 +309,8 @@ export async function POST(req) {
 
     let auditEntry = null;
     let emailResultDetails = null;
+    let waitlistResultDetails = null;
+    let promotionResultDetails = null;
 
     // Helper to evaluate confirmed state
     const isConfirmedState = (s) => s === "approved_to_pay" || s === "paid" || s === "mail_sent";
@@ -417,8 +419,10 @@ export async function POST(req) {
       invalidateTripCache(tripId);
 
       if (allocationResult.allocated) {
-        // Allocated a seat: proceed to approval email flow
+        // Allocated a seat: proceed to approval email flow and clear any stale waitlist fields (including legacy mirror)
         updatePayload.status = "approved_to_pay";
+        updatePayload.waitlistPosition = FieldValue.delete();
+        updatePayload.waitlistGender = FieldValue.delete();
 
         const alreadySent = Boolean(
           regData.approvalEmailSentAt ||
@@ -493,32 +497,100 @@ export async function POST(req) {
           timestamp: new Date().toISOString(),
         };
       } else {
-        // No seats available: automatically assigned to waiting list
+        // No eligible seats available for this gender/total capacity -> assigned to gender-specific FIFO waiting list
         updatePayload.status = "waitlisted";
         updatePayload.waitlistPosition = allocationResult.waitlistPosition;
-        emailResultDetails = { waitlisted: true, position: allocationResult.waitlistPosition };
+        updatePayload.waitlistGender = allocationResult.waitlistGender;
+        waitlistResultDetails = {
+          waitlisted: true,
+          waitlistPosition: allocationResult.waitlistPosition,
+          waitlistGender: allocationResult.waitlistGender,
+        };
 
-        if (!tripData.emailsDisabled) {
+        const alreadyWaitlistEmailed = Boolean(
+          regData.waitlistEmailSentAt || regData.waitlistEmailStatus === "sent"
+        );
+        let waitlistEmailDispatched = false;
+
+        if (!alreadyWaitlistEmailed && !tripData.emailsDisabled && userEmail) {
+          const tripDatesStr = tripData.startDate
+            ? `${tripData.startDate}${tripData.endDate ? ` to ${tripData.endDate}` : ""}`
+            : "";
           try {
+            const wEmailResult = await sendTripWaitlistEmail({
+              toEmail: userEmail,
+              toName: userName,
+              tripName: tripData.name || "Expedition",
+              waitlistPosition: allocationResult.waitlistPosition,
+              waitlistGender: allocationResult.waitlistGender,
+              tripDates: tripDatesStr,
+              tripId,
+            });
+            updatePayload.waitlistEmailLastAttemptAt = FieldValue.serverTimestamp();
+            if (wEmailResult?.success) {
+              waitlistEmailDispatched = true;
+              updatePayload.waitlistEmailSentAt = FieldValue.serverTimestamp();
+              updatePayload.waitlistEmailStatus = "sent";
+              updatePayload.waitlistEmailMessageId = wEmailResult.messageId || "sent";
+              updatePayload.waitlistEmailError = null;
+              emailResultDetails = { waitlisted: true, sent: true, status: "sent", position: allocationResult.waitlistPosition };
+            } else {
+              updatePayload.waitlistEmailStatus = "failed";
+              updatePayload.waitlistEmailError = wEmailResult?.error || "Failed to send waitlist email";
+              emailResultDetails = { waitlisted: true, sent: false, status: "failed", position: allocationResult.waitlistPosition, error: wEmailResult?.error };
+              // Durable queue fallback on transient Brevo failure (never corrupts seat state)
+              await enqueueWaitlistNotificationEmail({
+                tripId,
+                uid: uid || regData.uid,
+                regDocId: canonicalDocId || registrationId,
+                email: userEmail,
+                studentName: userName,
+                tripName: tripData.name || "Expedition",
+                waitlistPosition: allocationResult.waitlistPosition,
+                waitlistGender: allocationResult.waitlistGender,
+                startDate: tripData.startDate,
+                endDate: tripData.endDate,
+              }).catch((wErr) => console.warn("Failed to enqueue waitlist email fallback:", wErr));
+            }
+          } catch (wErr) {
+            const safeErr = wErr?.message || "Exception dispatching waitlist email";
+            updatePayload.waitlistEmailStatus = "failed";
+            updatePayload.waitlistEmailError = safeErr;
+            updatePayload.waitlistEmailLastAttemptAt = FieldValue.serverTimestamp();
+            emailResultDetails = { waitlisted: true, sent: false, status: "failed", position: allocationResult.waitlistPosition, error: safeErr };
             await enqueueWaitlistNotificationEmail({
               tripId,
               uid: uid || regData.uid,
+              regDocId: canonicalDocId || registrationId,
               email: userEmail,
               studentName: userName,
               tripName: tripData.name || "Expedition",
               waitlistPosition: allocationResult.waitlistPosition,
+              waitlistGender: allocationResult.waitlistGender,
               startDate: tripData.startDate,
               endDate: tripData.endDate,
-            });
-          } catch (wErr) {
-            console.warn("Failed to enqueue waitlist email:", wErr);
+            }).catch(() => {});
           }
+        } else {
+          emailResultDetails = {
+            waitlisted: true,
+            sent: false,
+            status: alreadyWaitlistEmailed ? "already_sent" : "disabled",
+            skipped: true,
+            position: allocationResult.waitlistPosition,
+          };
         }
+
+        const queueName = allocationResult.waitlistGender === "male"
+          ? "male waiting list"
+          : allocationResult.waitlistGender === "female"
+          ? "female waiting list"
+          : "waiting list";
 
         auditEntry = {
           type: "waitlisted",
           actor: adminEmail,
-          message: `Trip capacity reached. Registration placed on waiting list at position #${allocationResult.waitlistPosition}.`,
+          message: `Category/trip capacity reached. Placed on ${queueName} at position #${allocationResult.waitlistPosition}${waitlistEmailDispatched ? " (waitlist email sent)" : ""}.`,
           timestamp: new Date().toISOString(),
         };
       }
@@ -593,16 +665,27 @@ export async function POST(req) {
         );
       }
 
-      await releaseSeatAndPromoteWaitlist({
+      const releaseRes = await releaseSeatAndPromoteWaitlist({
         tripId,
         regDocId: canonicalDocId || registrationId,
         newStatus: "rejected",
         reason: rejectReason,
         adminEmail,
       });
+      if (releaseRes?.promoted) {
+        promotionResultDetails = {
+          promoted: true,
+          promotedRegDocId: releaseRes.promotedRegDocId,
+          gender: releaseRes.promotedStudent?.gender,
+        };
+      }
 
       updatePayload.status = "rejected";
       updatePayload.issueText = rejectReason;
+      if (oldStatus === "waitlisted") {
+        updatePayload.waitlistPosition = FieldValue.delete();
+        updatePayload.waitlistGender = FieldValue.delete();
+      }
 
       auditEntry = {
         type: "rejected",
@@ -628,17 +711,28 @@ export async function POST(req) {
         );
       }
 
-      await releaseSeatAndPromoteWaitlist({
+      const releaseRes = await releaseSeatAndPromoteWaitlist({
         tripId,
         regDocId: canonicalDocId || registrationId,
         newStatus: "action_required",
         reason: correctionReason,
         adminEmail,
       });
+      if (releaseRes?.promoted) {
+        promotionResultDetails = {
+          promoted: true,
+          promotedRegDocId: releaseRes.promotedRegDocId,
+          gender: releaseRes.promotedStudent?.gender,
+        };
+      }
 
       updatePayload.status = "action_required";
       updatePayload.issueText = correctionReason;
       updatePayload.actionRequiredFields = fields;
+      if (oldStatus === "waitlisted") {
+        updatePayload.waitlistPosition = FieldValue.delete();
+        updatePayload.waitlistGender = FieldValue.delete();
+      }
 
       if (!tripData.emailsDisabled) {
         // Dispatch correction request email (non-blocking so admin mutation resolves immediately)
@@ -671,13 +765,20 @@ export async function POST(req) {
         );
       }
 
-      await releaseSeatAndPromoteWaitlist({
+      const releaseRes = await releaseSeatAndPromoteWaitlist({
         tripId,
         regDocId: canonicalDocId || registrationId,
         newStatus: "registered",
         reason: revokeReason,
         adminEmail,
       });
+      if (releaseRes?.promoted) {
+        promotionResultDetails = {
+          promoted: true,
+          promotedRegDocId: releaseRes.promotedRegDocId,
+          gender: releaseRes.promotedStudent?.gender,
+        };
+      }
 
       updatePayload.status = "registered";
       updatePayload.issueText = revokeReason;
@@ -690,15 +791,26 @@ export async function POST(req) {
         timestamp: new Date().toISOString(),
       };
     } else if (action === "withdrawn" || directStatus === "withdrawn") {
-      await releaseSeatAndPromoteWaitlist({
+      const releaseRes = await releaseSeatAndPromoteWaitlist({
         tripId,
         regDocId: canonicalDocId || registrationId,
         newStatus: "withdrawn",
         reason: reason || "Student withdrawn",
         adminEmail,
       });
+      if (releaseRes?.promoted) {
+        promotionResultDetails = {
+          promoted: true,
+          promotedRegDocId: releaseRes.promotedRegDocId,
+          gender: releaseRes.promotedStudent?.gender,
+        };
+      }
 
       updatePayload.status = "withdrawn";
+      if (oldStatus === "waitlisted") {
+        updatePayload.waitlistPosition = FieldValue.delete();
+        updatePayload.waitlistGender = FieldValue.delete();
+      }
 
       auditEntry = {
         type: "withdrawn",
@@ -707,15 +819,26 @@ export async function POST(req) {
         timestamp: new Date().toISOString(),
       };
     } else if (action === "declined" || directStatus === "declined") {
-      await releaseSeatAndPromoteWaitlist({
+      const releaseRes = await releaseSeatAndPromoteWaitlist({
         tripId,
         regDocId: canonicalDocId || registrationId,
         newStatus: "declined",
         reason: reason || "Student declined",
         adminEmail,
       });
+      if (releaseRes?.promoted) {
+        promotionResultDetails = {
+          promoted: true,
+          promotedRegDocId: releaseRes.promotedRegDocId,
+          gender: releaseRes.promotedStudent?.gender,
+        };
+      }
 
       updatePayload.status = "declined";
+      if (oldStatus === "waitlisted") {
+        updatePayload.waitlistPosition = FieldValue.delete();
+        updatePayload.waitlistGender = FieldValue.delete();
+      }
 
       auditEntry = {
         type: "declined",
@@ -724,6 +847,15 @@ export async function POST(req) {
         timestamp: new Date().toISOString(),
       };
     } else if (directStatus !== undefined) {
+      const normalizedDirect = String(directStatus).toLowerCase().trim();
+      if (normalizedDirect === "paid" || normalizedDirect === "waitlisted") {
+        return NextResponse.json(
+          {
+            error: `Direct status mutation to "${normalizedDirect}" is not permitted; use action: "approve" so gender-based capacity and waitlist transactions are enforced.`,
+          },
+          { status: 400 }
+        );
+      }
       updatePayload.status = directStatus;
       if (issueText !== undefined) updatePayload.issueText = issueText;
       if (actionRequiredFields !== undefined) updatePayload.actionRequiredFields = actionRequiredFields;
@@ -806,9 +938,17 @@ export async function POST(req) {
 
     return NextResponse.json({
       success: true,
-      message: "Registration updated successfully",
+      message: waitlistResultDetails?.waitlisted
+        ? `Registration placed on waiting list at position #${waitlistResultDetails.waitlistPosition}`
+        : "Registration updated successfully",
       status: updatePayload.status || regData.status,
       registrationStatus: updatePayload.status || regData.status,
+      ...(waitlistResultDetails ? {
+        waitlisted: true,
+        waitlistPosition: waitlistResultDetails.waitlistPosition,
+        waitlistGender: waitlistResultDetails.waitlistGender,
+      } : { waitlisted: false }),
+      ...(promotionResultDetails ? { promotion: promotionResultDetails } : {}),
       email: emailResultDetails || undefined,
     });
   } catch (error) {
@@ -871,6 +1011,8 @@ export async function PUT(req) {
       await adjustTripCapacity({
         tripId,
         newCapacity: Number(totalSeats),
+        ...(femaleReservedSeats !== undefined ? { femaleReservedSeats: Number(femaleReservedSeats) } : {}),
+        ...(maleReservedSeats !== undefined ? { maleReservedSeats: Number(maleReservedSeats) } : {}),
         adminContext: admin,
       });
     }

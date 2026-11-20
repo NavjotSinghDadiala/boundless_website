@@ -52,6 +52,19 @@ async function handleProcessQueue(request: Request) {
     try {
       if (job.jobType === "approval_email") {
         const payload = job.payload || {};
+        const regDocId = payload.regDocId || (payload.tripId && payload.uid ? `${payload.tripId}_${payload.uid}` : null);
+
+        // Idempotency guard: never send duplicate approval email if registration already recorded delivery
+        if (regDocId) {
+          const regSnap = await adminDb.collection("tripRegistrations").doc(regDocId).get();
+          const regData = regSnap.exists ? regSnap.data() || {} : null;
+          if (regData && (regData.approvalEmailSentAt || regData.approvalEmailStatus === "sent")) {
+            await completeDurableJob(job.id, { skipped: true, reason: "already_sent" });
+            results.push({ id: job.id, type: job.jobType, status: "completed" });
+            continue;
+          }
+        }
+
         const emailResult = await sendTripApprovalEmail({
           student: {
             name: payload.studentName || "Student",
@@ -65,6 +78,16 @@ async function handleProcessQueue(request: Request) {
         });
 
         if (emailResult.success) {
+          if (regDocId) {
+            await adminDb.collection("tripRegistrations").doc(regDocId).update({
+              status: "mail_sent",
+              approvalEmailSentAt: FieldValue.serverTimestamp(),
+              approvalEmailStatus: "sent",
+              approvalEmailMessageId: emailResult.messageId || "sent",
+              approvalEmailError: null,
+              updatedAt: FieldValue.serverTimestamp(),
+            }).catch(() => {});
+          }
           await completeDurableJob(job.id, { messageId: emailResult.messageId });
           results.push({ id: job.id, type: job.jobType, status: "completed" });
         } else {
@@ -90,16 +113,39 @@ async function handleProcessQueue(request: Request) {
         }
       } else if (job.jobType === "custom" && job.payload?.action === "send_waitlist_email") {
         const payload = job.payload || {};
+        const regDocId = payload.regDocId || (payload.tripId && payload.uid ? `${payload.tripId}_${payload.uid}` : null);
+
+        // Idempotency guard: skip if waitlist email already sent or student is no longer waitlisted
+        if (regDocId) {
+          const regSnap = await adminDb.collection("tripRegistrations").doc(regDocId).get();
+          const regData = regSnap.exists ? regSnap.data() || {} : null;
+          if (regData && (regData.waitlistEmailSentAt || regData.waitlistEmailStatus === "sent" || regData.status !== "waitlisted")) {
+            await completeDurableJob(job.id, { skipped: true, reason: "already_sent_or_status_changed" });
+            results.push({ id: job.id, type: job.jobType, status: "completed" });
+            continue;
+          }
+        }
+
         const emailResult = await sendTripWaitlistEmail({
           toEmail: payload.email || "",
           toName: payload.studentName || "Student",
           tripName: payload.tripName || "Trip",
           waitlistPosition: Number(payload.waitlistPosition || 1),
+          waitlistGender: payload.waitlistGender || "",
           tripDates: payload.startDate ? `${payload.startDate} to ${payload.endDate || ""}` : "",
           tripId: payload.tripId || "",
         });
 
         if (emailResult.success) {
+          if (regDocId) {
+            await adminDb.collection("tripRegistrations").doc(regDocId).update({
+              waitlistEmailSentAt: FieldValue.serverTimestamp(),
+              waitlistEmailStatus: "sent",
+              waitlistEmailMessageId: emailResult.messageId || "sent",
+              waitlistEmailError: null,
+              updatedAt: FieldValue.serverTimestamp(),
+            }).catch(() => {});
+          }
           await completeDurableJob(job.id, { messageId: emailResult.messageId });
           results.push({ id: job.id, type: job.jobType, status: "completed" });
         } else {

@@ -51,6 +51,7 @@ interface TripEntry {
   registrationLocation?: string | null;
   trip: TripMeta;
   waitlistPosition?: number | null;
+  waitlistGender?: string | null;
 }
 
 interface StudentProfile {
@@ -396,6 +397,29 @@ function UpcomingTripCard({
             )}
           </div>
         </div>
+
+        {/* Waiting List Banner — shows only this student's own position & clear explanation */}
+        {humanStatus === "Waitlisted" && (
+          <div className="bg-amber-950/35 border border-amber-400/40 rounded-2xl p-4 flex flex-col gap-1.5 shadow-[0_0_25px_rgba(245,158,11,0.12)]">
+            <div className="flex items-center justify-between gap-2 text-amber-300 font-mono font-bold text-xs uppercase tracking-wider">
+              <span>⏳ Waiting List</span>
+              {entry.waitlistPosition && (
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-200">
+                  Position #{entry.waitlistPosition}
+                </span>
+              )}
+            </div>
+            <p className="text-amber-100/85 text-xs leading-relaxed">
+              Your registration is currently on the{" "}
+              {entry.waitlistGender === "male"
+                ? "male waiting list"
+                : entry.waitlistGender === "female"
+                ? "female waiting list"
+                : "waiting list"}{" "}
+              and is not yet confirmed. If an approved participant withdraws and an eligible seat opens under the trip&apos;s allocation rules, you may be promoted in queue order and will receive an official approval email.
+            </p>
+          </div>
+        )}
 
         {/* Action Required Banner */}
         {humanStatus === "Action Required" && (

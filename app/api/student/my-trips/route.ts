@@ -284,6 +284,7 @@ export async function GET(request: Request) {
           null,
         trip: sanitizeTripForStudent(tripData, approved),
         waitlistPosition: reg.waitlistPosition ? Number(reg.waitlistPosition) : null,
+        waitlistGender: reg.waitlistGender || null,
       });
     }
 
