@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
+import { requireAdmin } from "@/lib/adminAuth";
 import { uploadImages } from "@/lib/cloudinary";
 
 // Force dynamic to prevent caching issues
-export const dynamic = "force-dynamic"; 
+export const dynamic = "force-dynamic";
 
 export async function POST(req) {
   try {
-    // Auth gate — admin session required
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Auth gate — verified 2FA admin session required (all callers are inside /admin/*)
+    try {
+      await requireAdmin(req);
+    } catch (authErr) {
+      return NextResponse.json(
+        { error: authErr.message || "Unauthorized" },
+        { status: authErr.status || 401 }
+      );
     }
 
     const formData = await req.json();
@@ -32,12 +36,11 @@ export async function POST(req) {
       sortOrder: index,
     }));
 
-    return NextResponse.json({ 
-      success: true, 
+    return NextResponse.json({
+      success: true,
       links: urls,
-      images: imageObjects
+      images: imageObjects,
     });
-
   } catch (error) {
     console.error("Upload API Error:", error);
     return NextResponse.json(
@@ -45,4 +48,4 @@ export async function POST(req) {
       { status: 500 }
     );
   }
-}
+}

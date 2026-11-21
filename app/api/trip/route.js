@@ -221,6 +221,9 @@ const tripSchema = yup.object().shape({
     .default([]),
   emailsDisabled: yup.boolean().optional().default(false),
   cityWhatsappSettings: yup.object().optional().default({}),
+  eventCategory: yup.string().oneOf(["trip", "city_meetup"]).optional().default("trip"),
+  meetupCampaignId: yup.string().trim().optional().nullable().default(null),
+  meetupCityName: yup.string().trim().optional().default(""),
 });
 
 export async function POST(request) {

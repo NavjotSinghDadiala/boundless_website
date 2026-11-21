@@ -48,9 +48,16 @@ export function TripCardAdmin({ trip }) {
 
           {/* Details */}
           <div className="p-4 sm:p-5 space-y-3">
-            <h3 className="font-bold text-base text-stone-900 line-clamp-1 group-hover:text-[#3B001B] transition-colors">
-              {trip.name}
-            </h3>
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="font-bold text-base text-stone-900 line-clamp-1 group-hover:text-[#3B001B] transition-colors">
+                {trip.name}
+              </h3>
+              {trip.eventCategory === "city_meetup" && (
+                <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-200">
+                  City Meetup
+                </span>
+              )}
+            </div>
 
             <div className="space-y-1.5 text-sm md:text-xs text-stone-600 md:text-stone-500">
               {trip.destination && (

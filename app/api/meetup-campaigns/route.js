@@ -1,131 +1,66 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  orderBy,
-  serverTimestamp,
-  doc,
-  getDoc,
-  updateDoc,
-  deleteDoc,
-  writeBatch,
-} from "firebase/firestore";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import {
+  CAMPAIGN_STATUSES,
+  normalizeCampaignDoc,
+  normalizeCityMeetupDoc,
+  parseNonNegativeInt,
+  sanitizeSafeUrl,
+  sortMeetupsMostRecentFirst,
+} from "@/lib/cityMeetups";
 
-// Cleaned hardcoded seed data with text descriptions instead of React elements
-const initialCampaigns = [
-  {
-    city: "TRI-COLOR TRAILS 3.0 ",
-    img: "/city-meet/tri_color.jpg",
-    title: "TRI-COLOR TRAILS 3.0 ",
-    description: "Boundless brings you the most celebrated and lived event of the year - Tri Color Trails 3.0, a New Year gift to make your year truly unforgettable ✨",
-    badge: "",
-    logo: "",
-  },
-  {
-    city: "Navrang 2.0",
-    img: "/city-meet/Navrang2.jpg",
-    title: "Navrang 2.0",
-    description: "Celebrate the spirit of Navratri with Navrang 2.0, a vibrant series of energetic garba nights to unforgettable festive vibes organized by IIT Madras Boundless Travel Society & Team. Hosted across 13+ cities, this colorful celebration brings together over 350+ attendees to enjoy music, dance, and culture.",
-    badge: "",
-    logo: "",
-  },
-  {
-    city: "Tricolor Trails 2.0",
-    img: "/city-meet/TricolorTrails2.jpg",
-    title: "Tricolor Trails 2.0",
-    description: "Each city meetup fosters travel spirit, collaboration, and patriotism — bringing young travelers together to rediscover India’s diverse beauty and shared identity under one tricolor. This year’s journey connects students from Delhi, Mumbai, Jaipur, Indore, Nagpur, Chennai, Bangalore, Kolkata, Patna, Gorakhpur, Bhubaneswar, and Jamshedpur.",
-    badge: "",
-    logo: "",
-  },
-  {
-    city: "Pandal Hopping",
-    img: "https://res.cloudinary.com/duuyaejwy/image/upload/v1761071424/Pandaal_jaex4i.jpg",
-    title: "Pandal Hopping",
-    description: "Durga Pandal Hopping across 10+ Cities! Boundless brought the Navratri spirit alive — from the dazzling lights of Delhi to the festive vibes of Kolkata, 1000+ members came together to celebrate the colors, culture, and joy of Durga Puja. Massive love to everyone who showed up and to our incredible city teams who made it all possible!",
-    badge: "",
-    logo: "",
-  },
-  {
-    city: "Republic Day",
-    img: "https://res.cloudinary.com/duuyaejwy/image/upload/v1761071425/Republic_ue8kvu.jpg",
-    title: "Republic Day Meetups",
-    description: "Tri-Color Meetups across 12 Cities! Boundless Society x Kanha House is all set to celebrate Republic Day with vibrant meetups in Lucknow, Jaipur, Nagpur, Delhi, Indore, Patna, Chennai, Bangalore, Gorakhpur, Jodhpur, Mumbai & Salem — let’s make it memorable together!",
-    badge: "",
-    logo: "",
-  },
-  {
-    city: "Summer",
-    img: "https://res.cloudinary.com/duuyaejwy/image/upload/v1761071426/Summer_wvuhlg.jpg",
-    title: "Summer Meetups",
-    description: "Summer Meetups Across 10 Cities – Wrapped! Boundless Travel Society successfully brought the summer vibes to Mumbai, Bhopal, Udaipur, Jaipur, Indore, Gwalior, Patna, Gaya, Tezpur & Kolkata this April & May — an unforgettable series of memories, bonds, and pure energy!",
-    badge: "",
-    logo: "",
-  },
-];
-
-// Function to seed Firestore if empty
-async function seedIfEmpty() {
-  try {
-    const campaignsRef = collection(db, "meetup_campaigns");
-    const qSnapshot = await getDocs(campaignsRef);
-    if (qSnapshot.empty) {
-      console.log("Meetup campaigns collection is empty. Seeding initial data...");
-      const batch = writeBatch(db);
-      initialCampaigns.forEach((c, idx) => {
-        const docRef = doc(collection(db, "meetup_campaigns"));
-        batch.set(docRef, {
-          city: c.city,
-          img: c.img || "",
-          title: c.title,
-          description: c.description,
-          badge: c.badge || "",
-          logo: c.logo || "",
-          sortOrder: idx,
-          createdAt: new Date(),
-        });
-      });
-      await batch.commit();
-      console.log("Successfully seeded meetup campaigns.");
-    }
-  } catch (error) {
-    console.error("Error seeding meetup campaigns:", error);
-  }
-}
-
-/* GET All Campaigns OR Single Campaign (if ?id= is passed) */
+/* GET -> All Flagship Campaigns OR Single Campaign (?id=, optional ?includeCities=true). Zero writes. */
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
+    const id = searchParams.get("id")?.trim();
+    const includeCities = searchParams.get("includeCities") === "true";
 
     if (id) {
-      const docRef = doc(db, "meetup_campaigns", id);
-      const docSnap = await getDoc(docRef);
-      if (!docSnap.exists()) {
+      const docSnap = await adminDb.collection("meetup_campaigns").doc(id).get();
+      if (!docSnap.exists) {
         return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
       }
-      return NextResponse.json({ campaign: { id: docSnap.id, ...docSnap.data() } }, { status: 200 });
+
+      const citiesSnap = await adminDb
+        .collection("city_meetups")
+        .where("campaignId", "==", id)
+        .get();
+
+      const cities = sortMeetupsMostRecentFirst(
+        citiesSnap.docs.map((c) => normalizeCityMeetupDoc(c.id, c.data() || {}))
+      );
+
+      const campaign = normalizeCampaignDoc(docSnap.id, docSnap.data() || {}, cities.length);
+      return NextResponse.json(
+        includeCities ? { campaign, cities } : { campaign },
+        { status: 200 }
+      );
     }
 
-    await seedIfEmpty();
+    const [campaignsSnap, linkedCitiesSnap] = await Promise.all([
+      adminDb.collection("meetup_campaigns").get(),
+      adminDb.collection("city_meetups").where("meetupType", "==", "campaign_city").get(),
+    ]);
 
-    const campaignsRef = collection(db, "meetup_campaigns");
-    const q = query(campaignsRef, orderBy("createdAt", "desc"));
-    const querySnapshot = await getDocs(q);
+    const cityCountMap = new Map();
+    linkedCitiesSnap.docs.forEach((doc) => {
+      const cId = doc.data()?.campaignId;
+      if (typeof cId === "string" && cId.trim()) {
+        cityCountMap.set(cId.trim(), (cityCountMap.get(cId.trim()) || 0) + 1);
+      }
+    });
 
-    const data = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const data = campaignsSnap.docs.map((doc) =>
+      normalizeCampaignDoc(doc.id, doc.data() || {}, cityCountMap.get(doc.id) || 0)
+    );
 
-    // Sort by createdAt desc in-memory
+    // Sort by createdAt desc (preserving existing slider ordering)
     data.sort((a, b) => {
-      const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
-      const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return timeB - timeA;
     });
 
@@ -136,39 +71,81 @@ export async function GET(req) {
   }
 }
 
-/* POST: Save new campaign */
+/* POST -> Create Flagship Campaign */
 export async function POST(req) {
   try {
     let admin = null;
     try {
       admin = await requireAdmin(req);
     } catch (authErr) {
-      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
+      return NextResponse.json(
+        { error: authErr.message || "Unauthorized" },
+        { status: authErr.status || 401 }
+      );
     }
 
-    const body = await req.json();
-    if (!body.city || !body.title || !body.img || !body.description) {
-      return NextResponse.json({ error: "City, title, description and image are required" }, { status: 400 });
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
+    }
+
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    const city =
+      typeof body.city === "string" && body.city.trim() ? body.city.trim() : title;
+    const description =
+      typeof body.description === "string" ? body.description.trim() : "";
+
+    if (!title || !description) {
+      return NextResponse.json(
+        { error: "Title and description are required." },
+        { status: 400 }
+      );
+    }
+
+    const imgCheck = sanitizeSafeUrl(body.img, "img", true);
+    if (!imgCheck.ok) {
+      return NextResponse.json({ error: imgCheck.error }, { status: 400 });
+    }
+
+    const logoCheck = sanitizeSafeUrl(body.logo, "logo", false);
+    if (!logoCheck.ok) {
+      return NextResponse.json({ error: logoCheck.error }, { status: 400 });
+    }
+
+    const status = body.status ? String(body.status).trim() : "published";
+    if (!CAMPAIGN_STATUSES.includes(status)) {
+      return NextResponse.json(
+        { error: `Invalid status. Expected one of: ${CAMPAIGN_STATUSES.join(", ")}.` },
+        { status: 400 }
+      );
+    }
+
+    const sortCheck = parseNonNegativeInt(body.sortOrder, "sortOrder", 0);
+    if (!sortCheck.ok) {
+      return NextResponse.json({ error: sortCheck.error }, { status: 400 });
     }
 
     const campaignData = {
-      city: body.city,
-      img: body.img,
-      title: body.title,
-      description: body.description,
-      badge: body.badge || "",
-      logo: body.logo || "",
-      createdAt: serverTimestamp(),
+      city,
+      title,
+      edition: typeof body.edition === "string" ? body.edition.trim() : "",
+      description,
+      img: imgCheck.value,
+      badge: typeof body.badge === "string" ? body.badge.trim() : "",
+      logo: logoCheck.value,
+      status,
+      sortOrder: sortCheck.value,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     };
-    if (body.sortOrder !== undefined) {
-      campaignData.sortOrder = typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0;
-    }
 
-    const docRef = await addDoc(collection(db, "meetup_campaigns"), campaignData);
+    const docRef = await adminDb.collection("meetup_campaigns").add(campaignData);
 
     await recordAuditLog(admin, "CREATE_MEETUP_CAMPAIGN", "meetup_campaign", docRef.id, "success", {
-      city: body.city,
-      title: body.title,
+      city,
+      title,
+      edition: campaignData.edition,
+      status,
     }).catch(() => {});
 
     return NextResponse.json({ message: "Campaign added", id: docRef.id }, { status: 201 });
@@ -178,41 +155,102 @@ export async function POST(req) {
   }
 }
 
-/* PUT: Update campaign */
+/* PUT -> Update Flagship Campaign (Campaign-level metadata only; never mutates child city events) */
 export async function PUT(req) {
   try {
     let admin = null;
     try {
       admin = await requireAdmin(req);
     } catch (authErr) {
-      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
+      return NextResponse.json(
+        { error: authErr.message || "Unauthorized" },
+        { status: authErr.status || 401 }
+      );
     }
 
-    const body = await req.json();
-    const { id, city, img, title, description, badge, logo, sortOrder } = body;
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
+    }
 
+    const id = typeof body.id === "string" ? body.id.trim() : "";
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    const updateData = {
-      city,
-      img: img || "",
-      title,
-      description,
-      badge: badge || "",
-      logo: logo || "",
-      updatedAt: serverTimestamp(),
-    };
-    if (sortOrder !== undefined) {
-      updateData.sortOrder = typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0;
+    const docRef = adminDb.collection("meetup_campaigns").doc(id);
+    const existingSnap = await docRef.get();
+    if (!existingSnap.exists) {
+      return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
     }
 
-    await updateDoc(doc(db, "meetup_campaigns", id), updateData);
+    const updateData = {};
+
+    if (body.title !== undefined) {
+      const cleanTitle = typeof body.title === "string" ? body.title.trim() : "";
+      if (!cleanTitle) {
+        return NextResponse.json({ error: "Title cannot be empty." }, { status: 400 });
+      }
+      updateData.title = cleanTitle;
+    }
+
+    if (body.city !== undefined) {
+      const cleanCity = typeof body.city === "string" ? body.city.trim() : "";
+      if (cleanCity) updateData.city = cleanCity;
+    }
+
+    if (body.description !== undefined) {
+      const cleanDesc = typeof body.description === "string" ? body.description.trim() : "";
+      if (!cleanDesc) {
+        return NextResponse.json({ error: "Description cannot be empty." }, { status: 400 });
+      }
+      updateData.description = cleanDesc;
+    }
+
+    if (body.edition !== undefined) {
+      updateData.edition = typeof body.edition === "string" ? body.edition.trim() : "";
+    }
+
+    if (body.badge !== undefined) {
+      updateData.badge = typeof body.badge === "string" ? body.badge.trim() : "";
+    }
+
+    if (body.img !== undefined) {
+      const imgCheck = sanitizeSafeUrl(body.img, "img", false);
+      if (!imgCheck.ok) return NextResponse.json({ error: imgCheck.error }, { status: 400 });
+      updateData.img = imgCheck.value;
+    }
+
+    if (body.logo !== undefined) {
+      const logoCheck = sanitizeSafeUrl(body.logo, "logo", false);
+      if (!logoCheck.ok) return NextResponse.json({ error: logoCheck.error }, { status: 400 });
+      updateData.logo = logoCheck.value;
+    }
+
+    if (body.status !== undefined) {
+      const nextStatus = String(body.status).trim();
+      if (!CAMPAIGN_STATUSES.includes(nextStatus)) {
+        return NextResponse.json(
+          { error: `Invalid status. Expected one of: ${CAMPAIGN_STATUSES.join(", ")}.` },
+          { status: 400 }
+        );
+      }
+      updateData.status = nextStatus;
+    }
+
+    if (body.sortOrder !== undefined) {
+      const sortCheck = parseNonNegativeInt(body.sortOrder, "sortOrder", 0);
+      if (!sortCheck.ok) return NextResponse.json({ error: sortCheck.error }, { status: 400 });
+      updateData.sortOrder = sortCheck.value;
+    }
+
+    updateData.updatedAt = FieldValue.serverTimestamp();
+
+    await docRef.update(updateData);
 
     await recordAuditLog(admin, "UPDATE_MEETUP_CAMPAIGN", "meetup_campaign", id, "success", {
-      city,
-      title,
+      city: updateData.city || existingSnap.data()?.city || "",
+      title: updateData.title || existingSnap.data()?.title || "",
     }).catch(() => {});
 
     return NextResponse.json({ success: true, message: "Campaign updated" }, { status: 200 });
@@ -222,26 +260,53 @@ export async function PUT(req) {
   }
 }
 
-/* DELETE: Remove campaign */
+/* DELETE -> Remove Flagship Campaign (Blocked with 409 if child city events exist) */
 export async function DELETE(req) {
   try {
     let admin = null;
     try {
       admin = await requireAdmin(req);
     } catch (authErr) {
-      return NextResponse.json({ error: authErr.message }, { status: authErr.status || 401 });
+      return NextResponse.json(
+        { error: authErr.message || "Unauthorized" },
+        { status: authErr.status || 401 }
+      );
     }
 
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
+    const id = searchParams.get("id")?.trim();
 
     if (!id) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    await deleteDoc(doc(db, "meetup_campaigns", id));
+    const docRef = adminDb.collection("meetup_campaigns").doc(id);
+    const existingSnap = await docRef.get();
+    if (!existingSnap.exists) {
+      return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+    }
 
-    await recordAuditLog(admin, "DELETE_MEETUP_CAMPAIGN", "meetup_campaign", id, "success").catch(() => {});
+    const childCitiesSnap = await adminDb
+      .collection("city_meetups")
+      .where("campaignId", "==", id)
+      .limit(1)
+      .get();
+
+    if (!childCitiesSnap.empty) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot delete a flagship campaign that still has linked city events. Remove or archive its city events first.",
+        },
+        { status: 409 }
+      );
+    }
+
+    await docRef.delete();
+
+    await recordAuditLog(admin, "DELETE_MEETUP_CAMPAIGN", "meetup_campaign", id, "success", {
+      title: existingSnap.data()?.title || "",
+    }).catch(() => {});
 
     return NextResponse.json({ success: true, message: "Campaign deleted" }, { status: 200 });
   } catch (error) {

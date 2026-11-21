@@ -6,34 +6,55 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { Loader2Icon, PlusIcon, TrashIcon } from "lucide-react";
+import {
+  Loader2Icon,
+  PlusIcon,
+  TrashIcon,
+  ChevronDownIcon,
+} from "lucide-react";
 import MediaFileUpload from "@/components/MediaFileUpload";
 import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
+import { AdminPageHeader, AdminLoadingState } from "@/components/admin";
+import CityLocationSelect from "@/components/admin/CityLocationSelect";
+import { MEETUP_STATUSES } from "@/lib/cityMeetups";
 
 export default function EditCityMeetupPage({ params }) {
   const router = useRouter();
   const resolvedParams = React.use(params);
-  const id = resolvedParams.id; 
-  
+  const id = resolvedParams.id;
+
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
-  
+  const [showArchiveSection, setShowArchiveSection] = useState(false);
+
+  const [campaigns, setCampaigns] = useState([]);
   const [sections, setSections] = useState([]);
   const [subSections, setSubSections] = useState([]);
-  const [formData, setFormData] = useState({ 
-    mainSection: "", 
-    subSection: "", 
-    cityName: "", 
-    color: "#FEFAE7", 
-    img: "",
+  const [formData, setFormData] = useState({
+    meetupType: "standalone",
+    campaignId: "",
+    cityName: "",
+    title: "",
+    eventDate: "",
+    startTime: "",
+    endTime: "",
     venue: "",
+    capacity: "",
+    registrationOpen: false,
+    registrationDeadline: "",
+    status: "published",
+    whatsappGroupLink: "",
+    mainSection: "",
+    subSection: "",
+    color: "#FEFAE7",
+    img: "",
     participants: "",
     summary: "",
     instagramHandle: "",
@@ -43,6 +64,112 @@ export default function EditCityMeetupPage({ params }) {
     videos: [],
     graphData: [],
   });
+
+  const [newImage, setNewImage] = useState({
+    file: null,
+    preview: null,
+    base64: null,
+  });
+
+  useEffect(() => {
+    if (!id || id === "undefined") return;
+    const fetchData = async () => {
+      try {
+        const [secRes, campRes, meetupRes] = await Promise.all([
+          fetch("/api/city-meetups/meetup-sections"),
+          fetch("/api/meetup-campaigns"),
+          fetch(`/api/city-meetups?id=${encodeURIComponent(id)}`),
+        ]);
+
+        const [secData, campData, meetupData] = await Promise.all([
+          secRes.json().catch(() => ({})),
+          campRes.json().catch(() => ({})),
+          meetupRes.json().catch(() => ({})),
+        ]);
+
+        if (secRes.ok) setSections(secData.sections || []);
+        if (campRes.ok) setCampaigns(campData.campaigns || []);
+
+        if (meetupRes.ok && meetupData.meetup) {
+          const m = meetupData.meetup;
+          if (m.recordOrigin === "legacy_archive") {
+            setShowArchiveSection(true);
+          }
+
+          setFormData({
+            meetupType: m.meetupType || "standalone",
+            campaignId: m.campaignId || "",
+            cityName: m.cityName || "",
+            title: m.title || "",
+            eventDate: m.eventDate || "",
+            startTime: m.startTime || "",
+            endTime: m.endTime || "",
+            venue: m.venue || "",
+            capacity:
+              m.capacity !== undefined && m.capacity !== null
+                ? String(m.capacity)
+                : "",
+            registrationOpen: Boolean(m.registrationOpen),
+            registrationDeadline: m.registrationDeadline || "",
+            status: m.status || "published",
+            whatsappGroupLink: m.whatsappGroupLink || "",
+            mainSection: m.mainSection || "",
+            subSection: m.subSection || "",
+            color: m.color || "#FEFAE7",
+            img: m.img || "",
+            participants:
+              m.participants !== undefined && m.participants !== null
+                ? String(m.participants)
+                : "",
+            summary: m.summary || "",
+            instagramHandle: m.instagramHandle || "",
+            link: m.link || "",
+            galleryLink: m.galleryLink || "",
+            photos: Array.isArray(m.photos) ? m.photos : [],
+            videos: Array.isArray(m.videos) ? m.videos : [],
+            graphData: Array.isArray(m.graphData) ? m.graphData : [],
+          });
+
+          const matched = (secData.sections || []).find(
+            (s) => s.name === (m.mainSection || "")
+          );
+          if (matched) {
+            const subRes = await fetch(
+              `/api/city-meetups/meetup-sub-sections?sectionId=${encodeURIComponent(matched.id)}`
+            );
+            const subData = await subRes.json().catch(() => ({}));
+            if (subRes.ok) setSubSections(subData.subSections || []);
+          }
+        } else {
+          toast.error(meetupData.error || "Meetup not found");
+          router.push("/admin/city-meetups");
+        }
+      } catch {
+        toast.error("Failed to load meetup data");
+      } finally {
+        setFetching(false);
+      }
+    };
+    fetchData();
+  }, [id, router]);
+
+  const handleMainSectionChange = async (val) => {
+    setFormData((f) => ({ ...f, mainSection: val }));
+    const matched = sections.find((s) => s.name === val);
+    if (!matched) {
+      setSubSections([]);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/city-meetups/meetup-sub-sections?sectionId=${encodeURIComponent(matched.id)}`
+      );
+      const data = await res.json();
+      if (res.ok) setSubSections(data.subSections || []);
+    } catch {
+      // ignore
+    }
+  };
 
   const handleGraphValueChange = (index, field, value) => {
     const updated = [...(formData.graphData || [])];
@@ -62,104 +189,27 @@ export default function EditCityMeetupPage({ params }) {
     updated.splice(index, 1);
     setFormData({ ...formData, graphData: updated });
   };
-  
-  const [newImage, setNewImage] = useState({ file: null, preview: null, base64: null });
-
-  useEffect(() => {
-    if (!id || id === "undefined") return;
-    const fetchData = async () => {
-      try {
-        const [secRes, meetupRes] = await Promise.all([
-          fetch("/api/city-meetups/meetup-sections"),
-          fetch(`/api/city-meetups?id=${id}`),
-        ]);
-
-        const secData = await secRes.json();
-        const meetupData = await meetupRes.json();
-
-        if (secRes.ok) setSections(secData.sections || []);
-
-        if (meetupRes.ok && meetupData.meetup) {
-          const mainName = meetupData.meetup.mainSection || "";
-          setFormData({
-            mainSection: mainName,
-            subSection: meetupData.meetup.subSection || "",
-            cityName: meetupData.meetup.cityName || "",
-            color: meetupData.meetup.color || "#FEFAE7",
-            img: meetupData.meetup.img || "",
-            venue: meetupData.meetup.venue || "",
-            participants: meetupData.meetup.participants !== undefined && meetupData.meetup.participants !== null ? String(meetupData.meetup.participants) : "",
-            summary: meetupData.meetup.summary || "",
-            instagramHandle: meetupData.meetup.instagramHandle || "",
-            link: meetupData.meetup.link || "",
-            galleryLink: meetupData.meetup.galleryLink || "",
-            photos: Array.isArray(meetupData.meetup.photos) ? meetupData.meetup.photos : [],
-            videos: Array.isArray(meetupData.meetup.videos) ? meetupData.meetup.videos : [],
-            graphData: Array.isArray(meetupData.meetup.graphData) ? meetupData.meetup.graphData : [],
-          });
-
-          // Find section id for the meetup's main section name and load sub-sections for it
-          const matched = (secData.sections || []).find((s) => s.name === mainName);
-          if (matched) {
-            try {
-              const subRes = await fetch(`/api/city-meetups/meetup-sub-sections?sectionId=${matched.id}`);
-              const subData = await subRes.json();
-              if (subRes.ok) setSubSections(subData.subSections || []);
-            } catch (err) {
-              console.warn("Failed to load sub-sections for section", matched.id);
-            }
-          }
-        }
-      } catch (error) { toast.error("Failed to load data"); } 
-      finally { setFetching(false); }
-    };
-    fetchData();
-  }, [id]);
-
-  // When user changes the selected main section, fetch sub-sections for it
-  useEffect(() => {
-    const loadForSelected = async () => {
-      if (!formData.mainSection || sections.length === 0) return;
-      const matched = sections.find((s) => s.name === formData.mainSection);
-      if (!matched) {
-        setSubSections([]);
-        setFormData((f) => ({ ...f, subSection: "" }));
-        return;
-      }
-
-      try {
-        const res = await fetch(`/api/city-meetups/meetup-sub-sections?sectionId=${matched.id}`);
-        const data = await res.json();
-        if (res.ok) {
-          setSubSections(data.subSections || []);
-          // If the current subSection name is not in the new list, clear it
-          if (!data.subSections?.some((ss) => ss.name === formData.subSection)) {
-            setFormData((f) => ({ ...f, subSection: "" }));
-          }
-        }
-      } catch (err) {
-        console.warn("Failed to load sub-sections for selected section", matched.id);
-      }
-    };
-
-    loadForSelected();
-  }, [formData.mainSection, sections]);
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = () =>
         setNewImage({ file, preview: reader.result, base64: reader.result });
-      };
       reader.readAsDataURL(file);
     }
   };
 
   const handleUpdate = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    if (!formData.cityName.trim()) {
+      return toast.error("City Name is required.");
+    }
+    if (formData.meetupType === "campaign_city" && !formData.campaignId) {
+      return toast.error("Please select a parent Flagship Campaign.");
+    }
 
+    setLoading(true);
     try {
       let imageUrl = formData.img;
 
@@ -167,265 +217,538 @@ export default function EditCityMeetupPage({ params }) {
         const uploadRes = await fetch("/api/upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ images: [newImage.base64], folder: "city_meetups" }),
+          body: JSON.stringify({
+            images: [newImage.base64],
+            folder: "city_meetups",
+          }),
         });
         const uploadData = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
         imageUrl = uploadData.links?.[0];
       }
 
-      const apiRes = await fetch(`/api/city-meetups`, {
+      const apiRes = await fetch("/api/city-meetups", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id,
           ...formData,
+          campaignId:
+            formData.meetupType === "campaign_city" ? formData.campaignId : null,
+          capacity: formData.capacity !== "" ? Number(formData.capacity) : 0,
+          participants:
+            formData.participants !== "" ? Number(formData.participants) : 0,
           photos: sanitizeMediaUrls(formData.photos),
           videos: sanitizeMediaUrls(formData.videos),
           img: imageUrl,
         }),
       });
 
-      if (!apiRes.ok) throw new Error("Failed to update meetup");
-      toast.success("City Meetup updated successfully!");
-      router.push("/admin/city-meetups");
+      const resData = await apiRes.json().catch(() => ({}));
+      if (!apiRes.ok) {
+        throw new Error(resData.error || "Failed to update meetup");
+      }
 
-    } catch (error) { toast.error(error.message); } 
-    finally { setLoading(false); }
+      toast.success("City meetup updated successfully!");
+      if (formData.meetupType === "campaign_city" && formData.campaignId) {
+        router.push(`/admin/city-meetups/campaigns/${formData.campaignId}`);
+      } else {
+        router.push("/admin/city-meetups");
+      }
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (fetching) return <div className="p-10 text-center">Loading meetup data...</div>;
+  if (fetching) {
+    return (
+      <div className="p-6 max-w-3xl mx-auto">
+        <AdminLoadingState text="Loading meetup details..." />
+      </div>
+    );
+  }
+
+  const parentCampaign = campaigns.find((c) => c.id === formData.campaignId);
 
   return (
-    <div className="max-w-2xl mx-auto p-6 bg-card text-card-foreground rounded-xl shadow-sm mt-10 border border-border">
-      <h1 className="text-2xl font-bold mb-6">Edit City Meetup</h1>
-      <form onSubmit={handleUpdate} className="space-y-6">
-        
-        {/* Main Section */}
-        <div className="space-y-2">
-          <Label>Main Section</Label>
-          <Select 
-            value={formData.mainSection} 
-            onValueChange={(val) => setFormData({ ...formData, mainSection: val })}
-          >
-            <SelectTrigger><SelectValue placeholder="Select a main section" /></SelectTrigger>
-            <SelectContent>
-              {sections.map((sec) => (
-                <SelectItem key={sec.id} value={sec.name}>{sec.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+    <div className="max-w-3xl mx-auto p-4 sm:p-6 lg:p-8 pb-[calc(2rem+env(safe-area-inset-bottom))]">
+      <AdminPageHeader
+        title={`Edit ${formData.cityName || "City Meetup"}`}
+        description="Update this city event independently. Changes here never affect sibling cities or parent campaign branding."
+        breadcrumbs={
+          formData.meetupType === "campaign_city" && formData.campaignId
+            ? [
+                { label: "Dashboard", href: "/admin" },
+                { label: "City Meetups", href: "/admin/city-meetups" },
+                {
+                  label: parentCampaign?.title || "Campaign",
+                  href: `/admin/city-meetups/campaigns/${formData.campaignId}`,
+                },
+                { label: formData.cityName || "Edit" },
+              ]
+            : [
+                { label: "Dashboard", href: "/admin" },
+                { label: "City Meetups", href: "/admin/city-meetups" },
+                { label: formData.cityName || "Edit" },
+              ]
+        }
+      />
 
-        {/* Sub Section */}
-        <div className="space-y-2">
-          <Label>Sub Section</Label>
-          <Select 
-            value={formData.subSection} 
-            onValueChange={(val) => setFormData({ ...formData, subSection: val })}
-          >
-            <SelectTrigger><SelectValue placeholder="Select a sub section" /></SelectTrigger>
-            <SelectContent>
-              {subSections.map((sec) => (
-                <SelectItem key={sec.id} value={sec.name}>{sec.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-5 sm:p-6">
+        <form onSubmit={handleUpdate} className="space-y-6">
+          {/* Type & Parent Campaign */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-stone-50 border border-stone-200/80">
+            <div className="space-y-1.5">
+              <Label htmlFor="meetupType">Meetup Classification</Label>
+              <select
+                id="meetupType"
+                value={formData.meetupType}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    meetupType: e.target.value,
+                    campaignId:
+                      e.target.value === "standalone" ? "" : formData.campaignId,
+                  })
+                }
+                className="w-full min-h-[48px] md:min-h-[40px] px-3 py-2 rounded-lg border border-input bg-white text-base md:text-sm"
+              >
+                <option value="standalone">Standalone City Meetup</option>
+                <option value="campaign_city">Flagship Campaign City</option>
+              </select>
+            </div>
 
-        {/* City Name */}
-        <div className="space-y-2">
-          <Label htmlFor="cityName">City Name</Label>
-          <Input
-            id="cityName"
-            required
-            value={formData.cityName}
-            onChange={(e) => setFormData({ ...formData, cityName: e.target.value })}
-          />
-        </div>
-
-        {/* Color Picker */}
-        <div className="space-y-2">
-          <Label htmlFor="color">Card Color</Label>
-          <div className="flex items-center gap-4">
-            <input
-              id="color"
-              type="color"
-              className="w-14 h-14 p-1 rounded cursor-pointer border-0"
-              value={formData.color}
-              onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-            />
-            <span className="text-sm text-muted-foreground uppercase">{formData.color}</span>
+            {formData.meetupType === "campaign_city" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="campaignId">Parent Flagship Campaign *</Label>
+                <select
+                  id="campaignId"
+                  required
+                  value={formData.campaignId}
+                  onChange={(e) =>
+                    setFormData({ ...formData, campaignId: e.target.value })
+                  }
+                  className="w-full min-h-[48px] md:min-h-[40px] px-3 py-2 rounded-lg border border-input bg-white text-base md:text-sm"
+                >
+                  <option value="">-- Select Campaign --</option>
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title || c.city}
+                      {c.edition ? ` (${c.edition})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
-        </div>
 
-        {/* Venue & Participants */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="venue">Venue / Location</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <CityLocationSelect
+              value={formData.cityName}
+              cityKey={formData.cityKey}
+              onSelect={({ cityName, cityKey, mapX, mapY }) =>
+                setFormData({
+                  ...formData,
+                  cityName,
+                  cityKey,
+                  mapX,
+                  mapY,
+                })
+              }
+            />
+
+            <div className="space-y-1.5">
+              <Label htmlFor="title">Event Title (Optional)</Label>
+              <Input
+                id="title"
+                className="text-base md:text-sm min-h-[48px] md:min-h-0"
+                value={formData.title}
+                onChange={(e) =>
+                  setFormData({ ...formData, title: e.target.value })
+                }
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="eventDate">Event Date</Label>
+              <Input
+                id="eventDate"
+                type="date"
+                className="text-base md:text-sm min-h-[48px] md:min-h-0"
+                value={formData.eventDate}
+                onChange={(e) =>
+                  setFormData({ ...formData, eventDate: e.target.value })
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="startTime">Start Time</Label>
+              <Input
+                id="startTime"
+                type="time"
+                className="text-base md:text-sm min-h-[48px] md:min-h-0"
+                value={formData.startTime}
+                onChange={(e) =>
+                  setFormData({ ...formData, startTime: e.target.value })
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="endTime">End Time</Label>
+              <Input
+                id="endTime"
+                type="time"
+                className="text-base md:text-sm min-h-[48px] md:min-h-0"
+                value={formData.endTime}
+                onChange={(e) =>
+                  setFormData({ ...formData, endTime: e.target.value })
+                }
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="venue">Venue / Meeting Point</Label>
             <Input
               id="venue"
-              placeholder="e.g. Connaught Place, Central Park, Delhi"
+              className="text-base md:text-sm min-h-[48px] md:min-h-0"
               value={formData.venue}
-              onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, venue: e.target.value })
+              }
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="participants">Total Participants</Label>
-            <Input
-              id="participants"
-              type="number"
-              placeholder="e.g. 35"
-              value={formData.participants}
-              onChange={(e) => setFormData({ ...formData, participants: e.target.value })}
-            />
-          </div>
-        </div>
 
-        {/* Social & Links */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="instagramHandle">Instagram Handle</Label>
-            <Input
-              id="instagramHandle"
-              placeholder="e.g. @boundless_iitm"
-              value={formData.instagramHandle}
-              onChange={(e) => setFormData({ ...formData, instagramHandle: e.target.value })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="link">Instagram / Action Post Link</Label>
-            <Input
-              id="link"
-              placeholder="e.g. https://instagram.com/p/..."
-              value={formData.link}
-              onChange={(e) => setFormData({ ...formData, link: e.target.value })}
-            />
-          </div>
-        </div>
-
-        {/* Gallery Link */}
-        <div className="space-y-2">
-          <Label htmlFor="galleryLink">Gallery Link (Optional)</Label>
-          <Input
-            id="galleryLink"
-            placeholder="e.g. /gallery/delhi or external album link"
-            value={formData.galleryLink}
-            onChange={(e) => setFormData({ ...formData, galleryLink: e.target.value })}
-          />
-        </div>
-
-        {/* Summary / Recap */}
-        <div className="space-y-2">
-          <Label htmlFor="summary">Summary / Description (Recap)</Label>
-          <textarea
-            id="summary"
-            className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            placeholder="Write meetup details, highlights, experiences..."
-            value={formData.summary}
-            onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
-          />
-        </div>
-
-        {/* Glimpses Gallery */}
-        <div className="p-4 border border-dashed rounded-lg space-y-6">
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Glimpses Gallery</h3>
-
-          <MediaFileUpload
-            label="Photos"
-            inputId="glimpses-photos"
-            urls={formData.photos}
-            onChange={(photos) => setFormData({ ...formData, photos })}
-            accept="image/*"
-            resourceType="image"
-            folder="city_meetups"
-          />
-
-          <MediaFileUpload
-            label="Videos"
-            inputId="glimpses-videos"
-            urls={formData.videos}
-            onChange={(videos) => setFormData({ ...formData, videos })}
-            accept="video/*"
-            resourceType="video"
-            folder="city_meetups"
-          />
-        </div>
-
-        {/* Graph Data */}
-        <div className="p-4 border border-dashed rounded-lg space-y-4">
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Meetup Statistics / Graph Data</h3>
-          
-          {(formData.graphData || []).map((entry, index) => (
-            <div key={index} className="flex items-end gap-4">
-              <div className="flex-1 space-y-1">
-                <Label htmlFor={`graph-x-${index}`}>Category / Label</Label>
-                <Input
-                  id={`graph-x-${index}`}
-                  placeholder="e.g. Foundation / Degree / Alumni"
-                  value={entry.x}
-                  onChange={(e) => handleGraphValueChange(index, "x", e.target.value)}
-                />
-              </div>
-              <div className="flex-1 space-y-1">
-                <Label htmlFor={`graph-y-${index}`}>Count / Value</Label>
-                <Input
-                  id={`graph-y-${index}`}
-                  type="number"
-                  placeholder="e.g. 15"
-                  value={entry.y}
-                  onChange={(e) => handleGraphValueChange(index, "y", e.target.value)}
-                />
-              </div>
-              <Button
-                type="button"
-                variant="destructive"
-                size="icon"
-                onClick={() => removeGraphEntry(index)}
-              >
-                <TrashIcon className="h-4 w-4" />
-              </Button>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="capacity">Capacity (0 = Unlimited)</Label>
+              <Input
+                id="capacity"
+                type="number"
+                min={0}
+                className="text-base md:text-sm min-h-[48px] md:min-h-0"
+                value={formData.capacity}
+                onChange={(e) =>
+                  setFormData({ ...formData, capacity: e.target.value })
+                }
+              />
             </div>
-          ))}
 
-          <Button
-            type="button"
-            variant="outline"
-            onClick={addGraphEntry}
-            className="w-full mt-2"
-          >
-            <PlusIcon className="mr-2 h-4 w-4" /> Add Graph Entry
-          </Button>
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="status">Event Status</Label>
+              <select
+                id="status"
+                value={formData.status}
+                onChange={(e) =>
+                  setFormData({ ...formData, status: e.target.value })
+                }
+                className="w-full min-h-[48px] md:min-h-[40px] px-3 py-2 rounded-md border border-input bg-background text-base md:text-sm"
+              >
+                {MEETUP_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-        {/* Image Preview & Upload */}
-        <div className="space-y-2">
-          <Label>Meetup Image</Label>
-          <div className="flex flex-col gap-2">
-            <img 
-              src={newImage.preview || formData.img} 
-              alt="Preview" 
-              className="h-48 w-full object-cover rounded-md border shadow-sm" 
-            />
-            <p className="text-xs text-muted-foreground">
-              {newImage.preview ? "New image selected" : "Current image"}
-            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="registrationDeadline">Registration Deadline</Label>
+              <Input
+                id="registrationDeadline"
+                type="datetime-local"
+                className="text-base md:text-sm min-h-[48px] md:min-h-0"
+                value={formData.registrationDeadline}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    registrationDeadline: e.target.value,
+                  })
+                }
+              />
+            </div>
           </div>
-          <Label htmlFor="image" className="mt-4 block">Replace Image (Optional)</Label>
-          <Input 
-            id="image" 
-            type="file" 
-            accept="image/*" 
-            onChange={handleFileChange} 
-            className="cursor-pointer" 
-          />
-        </div>
 
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? <Loader2Icon className="mr-2 size-4 animate-spin" /> : null}
-          {loading ? "Updating..." : "Update City Meetup"}
-        </Button>
-      </form>
+          <div className="flex items-center justify-between p-4 rounded-xl bg-stone-50 border border-stone-200/80">
+            <div>
+              <p className="text-sm font-semibold text-stone-900">
+                Registration Open
+              </p>
+              <p className="text-xs text-stone-500">
+                Allow students to register when status is Published.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={formData.registrationOpen}
+              onChange={(e) =>
+                setFormData({ ...formData, registrationOpen: e.target.checked })
+              }
+              className="size-5 accent-[#3B001B] cursor-pointer"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="whatsappGroupLink">
+                WhatsApp / Community Link
+              </Label>
+              <Input
+                id="whatsappGroupLink"
+                type="url"
+                className="text-base md:text-sm min-h-[48px] md:min-h-0"
+                value={formData.whatsappGroupLink}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    whatsappGroupLink: e.target.value,
+                  })
+                }
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Cover Image</Label>
+              {(newImage.preview || formData.img) && (
+                <img
+                  src={newImage.preview || formData.img}
+                  alt="Cover"
+                  className="h-28 w-full object-cover rounded-xl border mb-2"
+                />
+              )}
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="summary">Summary / Description</Label>
+            <textarea
+              id="summary"
+              rows={3}
+              value={formData.summary}
+              onChange={(e) =>
+                setFormData({ ...formData, summary: e.target.value })
+              }
+              className="w-full rounded-md border border-input bg-background px-3 py-2.5 text-base md:text-sm"
+            />
+          </div>
+
+          {/* COLLAPSIBLE ARCHIVE & MEDIA SECTION */}
+          <div className="border border-stone-200 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowArchiveSection((prev) => !prev)}
+              className="w-full min-h-[48px] px-4 py-3 bg-stone-50 flex items-center justify-between text-sm font-semibold text-stone-800 hover:bg-stone-100 transition-colors"
+            >
+              <span>Archive Sections, Media Gallery & Analytics</span>
+              <ChevronDownIcon
+                className={`size-4 transition-transform ${
+                  showArchiveSection ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {showArchiveSection && (
+              <div className="p-4 space-y-5 border-t border-stone-200">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>Main Section</Label>
+                    <Select
+                      value={formData.mainSection}
+                      onValueChange={handleMainSectionChange}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select main section" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sections.map((sec) => (
+                          <SelectItem key={sec.id} value={sec.name}>
+                            {sec.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Sub Section</Label>
+                    <Select
+                      value={formData.subSection}
+                      onValueChange={(val) =>
+                        setFormData({ ...formData, subSection: val })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select sub section" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {subSections.map((sec) => (
+                          <SelectItem key={sec.id} value={sec.name}>
+                            {sec.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="color">Card Color</Label>
+                    <input
+                      id="color"
+                      type="color"
+                      className="w-14 h-10 p-1 rounded border"
+                      value={formData.color}
+                      onChange={(e) =>
+                        setFormData({ ...formData, color: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="participants">Historical Participants</Label>
+                    <Input
+                      id="participants"
+                      type="number"
+                      min={0}
+                      value={formData.participants}
+                      onChange={(e) =>
+                        setFormData({ ...formData, participants: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="instagramHandle">Instagram Handle</Label>
+                    <Input
+                      id="instagramHandle"
+                      value={formData.instagramHandle}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          instagramHandle: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="link">Instagram / Recap Link</Label>
+                    <Input
+                      id="link"
+                      type="url"
+                      value={formData.link}
+                      onChange={(e) =>
+                        setFormData({ ...formData, link: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="galleryLink">External Gallery Link</Label>
+                    <Input
+                      id="galleryLink"
+                      type="url"
+                      value={formData.galleryLink}
+                      onChange={(e) =>
+                        setFormData({ ...formData, galleryLink: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <MediaFileUpload
+                  label="Glimpses Photos"
+                  mediaType="image"
+                  folder="city_meetups"
+                  urls={formData.photos}
+                  onChange={(urls) => setFormData({ ...formData, photos: urls })}
+                />
+                <MediaFileUpload
+                  label="Glimpses Videos"
+                  mediaType="video"
+                  folder="city_meetups"
+                  urls={formData.videos}
+                  onChange={(urls) => setFormData({ ...formData, videos: urls })}
+                />
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Archive Statistics (Pie Chart Data)</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addGraphEntry}
+                    >
+                      <PlusIcon className="size-3.5 mr-1" /> Add Row
+                    </Button>
+                  </div>
+                  {(formData.graphData || []).map((entry, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <Input
+                        placeholder="Label"
+                        value={entry.x}
+                        onChange={(e) =>
+                          handleGraphValueChange(idx, "x", e.target.value)
+                        }
+                      />
+                      <Input
+                        placeholder="Value"
+                        value={entry.y}
+                        onChange={(e) =>
+                          handleGraphValueChange(idx, "y", e.target.value)
+                        }
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeGraphEntry(idx)}
+                      >
+                        <TrashIcon className="size-4 text-rose-600" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col-reverse sm:flex-row gap-3 pt-3 border-t border-stone-100">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto min-h-[48px] md:min-h-0 text-base md:text-sm"
+              onClick={() =>
+                formData.meetupType === "campaign_city" && formData.campaignId
+                  ? router.push(
+                      `/admin/city-meetups/campaigns/${formData.campaignId}`
+                    )
+                  : router.push("/admin/city-meetups")
+              }
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={loading}
+              className="w-full sm:flex-1 min-h-[48px] md:min-h-0 bg-[#3B001B] hover:bg-[#46001D] text-white text-base md:text-sm font-semibold"
+            >
+              {loading && <Loader2Icon className="mr-2 size-4 animate-spin" />}
+              {loading ? "Saving..." : "Save City Meetup"}
+            </Button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

@@ -64,6 +64,7 @@ interface Trip {
   qrCodeUrl?: string;
   emailsDisabled?: boolean;
   cityWhatsappSettings?: Record<string, { whatsappLink: string, qrCodeUrl: string }>;
+  eventCategory?: "trip" | "city_meetup";
 }
 
 export interface Registration {
@@ -2369,8 +2370,15 @@ export default function SubmissionsPage() {
               }}
               className="md:hidden w-full min-h-[48px] flex items-center justify-between px-4 py-2.5 border border-stone-300 rounded-xl bg-white text-base font-semibold text-stone-900 active:bg-stone-50 shadow-2xs"
             >
-              <span className="truncate">
-                {trips.find((t) => t.id === selectedTripId)?.name || "Select trip"}
+              <span className="truncate flex items-center gap-2">
+                <span className="truncate">
+                  {trips.find((t) => t.id === selectedTripId)?.name || "Select trip"}
+                </span>
+                {trips.find((t) => t.id === selectedTripId)?.eventCategory === "city_meetup" && (
+                  <span className="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-200">
+                    City Meetup
+                  </span>
+                )}
               </span>
               <svg className="w-5 h-5 ml-2 text-stone-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
@@ -2426,7 +2434,20 @@ export default function SubmissionsPage() {
                           setMobileTripSheetOpen(false);
                         }}
                       >
-                        <span className="truncate">{t.name}</span>
+                        <span className="truncate flex items-center gap-2">
+                          <span className="truncate">{t.name}</span>
+                          {t.eventCategory === "city_meetup" && (
+                            <span
+                              className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                t.id === selectedTripId
+                                  ? "bg-amber-300/20 text-amber-200 border border-amber-300/40"
+                                  : "bg-amber-100 text-amber-900 border border-amber-200"
+                              }`}
+                            >
+                              City Meetup
+                            </span>
+                          )}
+                        </span>
                         {t.id === selectedTripId && <CheckIcon className="w-5 h-5 shrink-0" />}
                       </button>
                     ))}
@@ -2441,7 +2462,16 @@ export default function SubmissionsPage() {
                 onClick={() => setTripDropdownOpen((o) => !o)}
                 className="w-full flex items-center justify-between p-2 border border-border rounded bg-background text-sm font-semibold outline-none hover:border-primary/50 transition"
               >
-                <span className="truncate">{trips.find((t) => t.id === selectedTripId)?.name || "Select trip"}</span>
+                <span className="truncate flex items-center gap-1.5">
+                  <span className="truncate">
+                    {trips.find((t) => t.id === selectedTripId)?.name || "Select trip"}
+                  </span>
+                  {trips.find((t) => t.id === selectedTripId)?.eventCategory === "city_meetup" && (
+                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-200">
+                      Meetup
+                    </span>
+                  )}
+                </span>
                 <svg className="w-4 h-4 ml-2 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
               </button>
               {tripDropdownOpen && (
@@ -2463,7 +2493,7 @@ export default function SubmissionsPage() {
                         <button
                           key={t.id}
                           type="button"
-                          className={`w-full text-left px-3 py-2 text-sm font-semibold hover:bg-muted transition ${
+                          className={`w-full text-left px-3 py-2 text-sm font-semibold hover:bg-muted transition flex items-center justify-between gap-2 ${
                             t.id === selectedTripId ? "bg-primary/10 text-primary" : ""
                           }`}
                           onClick={() => {
@@ -2472,7 +2502,12 @@ export default function SubmissionsPage() {
                             setTripDropdownOpen(false);
                           }}
                         >
-                          {t.name}
+                          <span className="truncate">{t.name}</span>
+                          {t.eventCategory === "city_meetup" && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-200">
+                              City Meetup
+                            </span>
+                          )}
                         </button>
                       ))}
                     {trips.filter((t) => t.name.toLowerCase().includes(tripSearch.toLowerCase())).length === 0 && (

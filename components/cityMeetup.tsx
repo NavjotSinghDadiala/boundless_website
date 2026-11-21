@@ -1,7 +1,11 @@
 "use client"
 import { useEffect, useState } from "react"
 import { m, LazyMotion, domAnimation, AnimatePresence } from "framer-motion"
-import Image from "next/image";
+import Image from "next/image"
+import {
+  buildPublicHomepageMeetupSlides,
+  type HomepageMeetupSlide,
+} from "@/lib/cityMeetups"
 
 const variants = {
   initial: { opacity: 0, x: 40 },
@@ -11,35 +15,43 @@ const variants = {
 
 export default function CityMeetup() {
   const [active, setActive] = useState(0)
-  const [campaigns, setCampaigns] = useState<any[]>([])
+  const [slides, setSlides] = useState<HomepageMeetupSlide[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    async function fetchCampaigns() {
+    async function fetchCompletedShowcase() {
       try {
-        const res = await fetch("/api/meetup-campaigns");
-        if (res.ok) {
-          const data = await res.json();
-          setCampaigns(data.campaigns || []);
-        }
+        const [campRes, meetupsRes] = await Promise.all([
+          fetch("/api/meetup-campaigns"),
+          fetch("/api/city-meetups"),
+        ])
+        const [campData, meetupsData] = await Promise.all([
+          campRes.ok ? campRes.json() : { campaigns: [] },
+          meetupsRes.ok ? meetupsRes.json() : { meetups: [] },
+        ])
+        const synchronized = buildPublicHomepageMeetupSlides(
+          meetupsData.meetups || [],
+          campData.campaigns || []
+        )
+        setSlides(synchronized)
       } catch (error) {
-        console.error("Error fetching campaigns:", error);
+        console.error("Error fetching city meetups showcase:", error)
       } finally {
-        setLoading(false);
+        setLoading(false)
       }
     }
-    fetchCampaigns();
-  }, []);
+    fetchCompletedShowcase()
+  }, [])
 
   if (loading) {
-    return <div className="text-center py-10 font-bold text-amber-900">Loading meetups...</div>;
+    return <div className="text-center py-10 font-bold text-amber-900">Loading meetups...</div>
   }
 
-  if (campaigns.length === 0) return null;
+  if (slides.length === 0) return null
 
-  // Safe active check (incase a campaign was deleted)
-  const activeIndex = active >= campaigns.length ? 0 : active;
-  const activeItem = campaigns[activeIndex];
+  // Safe active check (in case a slide was removed)
+  const activeIndex = active >= slides.length ? 0 : active
+  const activeItem = slides[activeIndex]
 
   return (
     <LazyMotion features={domAnimation}>
@@ -50,8 +62,8 @@ export default function CityMeetup() {
               {/* Left: Steps & Content */}
               <div className="flex-1 w-full">
                 {/* Steps */}
-                <div className="flex space-x-2 mb-4 justify-center md:justify-start">
-                  {campaigns.map((mItem, idx) => (
+                <div className="flex flex-wrap gap-2 mb-4 justify-center md:justify-start">
+                  {slides.map((mItem, idx) => (
                     <button
                       key={mItem.id || idx}
                       onClick={() => setActive(idx)}

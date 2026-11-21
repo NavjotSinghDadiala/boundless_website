@@ -23,6 +23,13 @@ import {
 } from "lucide-react"
 import IndiaMap from "@/components/IndiaMap"
 import MeetupSection from "@/components/MeetupSection"
+import UpcomingMeetupsSection from "@/components/UpcomingMeetupsSection"
+import { resolveCanonicalCityLocation } from "@/lib/cityMapLocations"
+import {
+  isCompletedPublicMeetup,
+  sortMeetupsMostRecentFirst,
+  getMeetupSortTimestamp,
+} from "@/lib/cityMeetups"
 import { Sheet, SheetContent } from "@/components/ui/sheet"
 import GlimpsesGallery from "@/components/GlimpsesGallery"
 import {
@@ -74,100 +81,18 @@ interface Meetup {
 
 interface CityGroup {
   cityName: string
+  cityKey: string | null
   x: number
   y: number
+  labelDy: number
   meetups: Meetup[]
-}
-
-// Coordinates mapping for major Indian cities on the viewBox="0 0 612 696" SVG scale
-const CITY_COORDINATES: Record<string, { x: number; y: number }> = {
-  "delhi": { x: 210, y: 205 },
-  "ncr": { x: 210, y: 205 },
-  "new delhi": { x: 210, y: 205 },
-  "mumbai": { x: 120, y: 435 },
-  "bombay": { x: 120, y: 435 },
-  "bangalore": { x: 205, y: 555 },
-  "bengaluru": { x: 205, y: 555 },
-  "chennai": { x: 245, y: 580 },
-  "madras": { x: 245, y: 580 },
-  "kolkata": { x: 420, y: 340 },
-  "calcutta": { x: 420, y: 340 },
-  "jaipur": { x: 175, y: 250 },
-  "indore": { x: 200, y: 345 },
-  "nagpur": { x: 260, y: 375 },
-  "patna": { x: 380, y: 260 },
-  "gorakhpur": { x: 335, y: 240 },
-  "bhubaneswar": { x: 390, y: 410 },
-  "jamshedpur": { x: 395, y: 325 },
-  "madurai": { x: 215, y: 635 },
-  "bhopal": { x: 225, y: 340 },
-  "udaipur": { x: 130, y: 290 },
-  "gwalior": { x: 215, y: 275 },
-  "gaya": { x: 375, y: 270 },
-  "tezpur": { x: 525, y: 230 },
-  "lucknow": { x: 280, y: 240 },
-  "jodhpur": { x: 120, y: 250 },
-  "salem": { x: 220, y: 600 },
-  "hyderabad": { x: 235, y: 480 },
-  "pune": { x: 130, y: 455 },
-  "ahmedabad": { x: 110, y: 335 },
-  "goa": { x: 125, y: 515 },
-  "coimbatore": { x: 195, y: 615 },
-  "guwahati": { x: 500, y: 240 },
-  "ranchi": { x: 375, y: 320 },
-  "dehradun": { x: 230, y: 170 },
-  "shimla": { x: 215, y: 150 },
-  "srinagar": { x: 170, y: 90 },
-  "jammu": { x: 170, y: 110 },
-  "trivandrum": { x: 190, y: 670 },
-  "thiruvananthapuram": { x: 190, y: 670 },
-  "kochi": { x: 185, y: 640 },
-  "cochin": { x: 185, y: 640 },
-  "visakhapatnam": { x: 305, y: 470 },
-  "vizag": { x: 305, y: 470 },
-  "vijayawada": { x: 265, y: 500 },
-  "chandigarh": { x: 205, y: 170 },
-  "amritsar": { x: 180, y: 155 },
-  "varanasi": { x: 330, y: 270 },
-  "prayagraj": { x: 310, y: 275 },
-  "allahabad": { x: 310, y: 275 },
-  "kanpur": { x: 280, y: 260 },
-  "surat": { x: 105, y: 390 },
-  "vadodara": { x: 115, y: 365 },
-  "baroda": { x: 115, y: 365 },
-  "nashik": { x: 135, y: 415 },
-  "nasik": { x: 135, y: 415 },
-  "aurangabad": { x: 170, y: 420 },
-  "rajkot": { x: 75, y: 350 },
-  "jabalpur": { x: 265, y: 340 },
-  "raipur": { x: 310, y: 385 },
-  "gandhinagar": { x: 110, y: 325 },
-  "kano": { x: 250, y: 350 }
-}
-
-function getCityCoordinates(cityName: string): { x: number; y: number } {
-  const cleanName = cityName.trim().toLowerCase()
-  if (CITY_COORDINATES[cleanName]) {
-    return CITY_COORDINATES[cleanName]
-  }
-
-  // Try substring matching
-  for (const [key, coords] of Object.entries(CITY_COORDINATES)) {
-    if (cleanName.includes(key) || key.includes(cleanName)) {
-      return coords
-    }
-  }
-
-  // Generate a reproducible pseudo-random coordinate in Central India for unmapped cities
-  const hash = cleanName.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0)
-  const offsetX = (hash % 60) - 30
-  const offsetY = ((hash >> 2) % 60) - 30
-  return { x: 250 + offsetX, y: 350 + offsetY }
 }
 
 export default function CityMeetupsPage() {
   const [meetups, setMeetups] = useState<Meetup[]>([])
+  const [campaignsById, setCampaignsById] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<"map" | "grid">("map")
   const [activeFilter, setActiveFilter] = useState<string>("All")
   const [searchQuery, setSearchQuery] = useState("")
@@ -194,13 +119,49 @@ export default function CityMeetupsPage() {
   useEffect(() => {
     const fetchMeetups = async () => {
       try {
-        const res = await fetch("/api/city-meetups")
-        const data = await res.json()
+        setFetchError(null)
+        const [res, campRes] = await Promise.all([
+          fetch("/api/city-meetups"),
+          fetch("/api/meetup-campaigns"),
+        ])
+        const [data, campData] = await Promise.all([
+          res.json().catch(() => ({})),
+          campRes.json().catch(() => ({})),
+        ])
+
+        const campMap: Record<string, any> = {}
+        if (campRes.ok && Array.isArray(campData.campaigns)) {
+          campData.campaigns.forEach((c: any) => {
+            if (c?.id) campMap[c.id] = c
+          })
+        }
+        setCampaignsById(campMap)
+
         if (res.ok && data.meetups) {
-          setMeetups(data.meetups)
+          // Only completed meetups (standalone + completed flagship child cities + legacy archive), newest first
+          const completed = sortMeetupsMostRecentFirst(
+            data.meetups.filter((m: any) => isCompletedPublicMeetup(m))
+          ).map((m: any) => {
+            const parentCamp = m.campaignId ? campMap[m.campaignId] : null
+            const effectiveSubSection =
+              m.subSection ||
+              (parentCamp ? parentCamp.title || parentCamp.city : "") ||
+              (m.meetupType === "standalone" ? "Standalone Meetups" : "")
+            return {
+              ...m,
+              campaignTitle: parentCamp ? parentCamp.title || parentCamp.city : null,
+              subSection: effectiveSubSection,
+              mainSection: m.mainSection || (parentCamp ? parentCamp.title : "City Meetups"),
+              img: m.img || parentCamp?.img || "/city-meet/Navrang2.jpg",
+            }
+          })
+          setMeetups(completed)
+        } else {
+          setFetchError(data?.error || "Unable to load city meetups right now.")
         }
       } catch (error) {
         console.error("Failed to fetch meetups:", error)
+        setFetchError("Network error while loading city meetups.")
       } finally {
         setLoading(false)
       }
@@ -261,26 +222,42 @@ export default function CityMeetupsPage() {
     })
   }, [meetups, activeFilter, searchQuery])
 
-  // Group filtered meetups by city to plot on map
+  // Group filtered completed meetups by canonical city to plot on map (no duplicate markers; no invented coords)
   const cityGroups = useMemo<CityGroup[]>(() => {
-    const groups: Record<string, Meetup[]> = {}
+    const groups: Record<string, CityGroup> = {}
+
     filteredMeetups.forEach((meetup) => {
-      const city = meetup.cityName || "Unknown City"
-      if (!groups[city]) {
-        groups[city] = []
+      const loc = resolveCanonicalCityLocation({
+        cityKey: meetup.cityKey,
+        cityName: meetup.canonicalCityName || meetup.cityName,
+        mapX: typeof meetup.mapX === "number" ? meetup.mapX : null,
+        mapY: typeof meetup.mapY === "number" ? meetup.mapY : null,
+      })
+      if (!loc.matched || loc.x === null || loc.y === null) {
+        // Unmatched legacy city: do not invent fake map coordinates; remains visible in Classic Cards
+        return
       }
-      groups[city].push(meetup)
+
+      const groupKey = loc.key || loc.canonicalName.toLowerCase()
+      const existing = groups[groupKey]
+      if (existing) {
+        existing.meetups.push(meetup)
+      } else {
+        groups[groupKey] = {
+          cityName: loc.canonicalName,
+          cityKey: loc.key,
+          x: loc.x,
+          y: loc.y,
+          labelDy: loc.labelDy,
+          meetups: [meetup],
+        }
+      }
     })
 
-    return Object.keys(groups).map((city) => {
-      const coords = getCityCoordinates(city)
-      return {
-        cityName: city,
-        x: coords.x,
-        y: coords.y,
-        meetups: groups[city],
-      }
-    })
+    return Object.values(groups).map((g) => ({
+      ...g,
+      meetups: sortMeetupsMostRecentFirst(g.meetups),
+    }))
   }, [filteredMeetups])
 
   // Get details for currently selected city
@@ -289,28 +266,35 @@ export default function CityMeetupsPage() {
     return cityGroups.find((g) => g.cityName === selectedCityName) || null
   }, [selectedCityName, cityGroups])
 
-  // Map data to the classic MeetupSection structure for standard grid view
+  // Map data to the classic MeetupSection structure for standard grid view (sections & cards sorted newest-first)
   const groupedSectionsForGrid = useMemo(() => {
-    const grouped = filteredMeetups.reduce((acc: any, meetup) => {
+    const grouped: Record<string, any[]> = {}
+    filteredMeetups.forEach((meetup) => {
       const heading = meetup.subSection || "Other Meetups"
-      if (!acc[heading]) {
-        acc[heading] = []
+      if (!grouped[heading]) {
+        grouped[heading] = []
       }
-      acc[heading].push({
+      grouped[heading].push({
         ...meetup,
-        city: meetup.cityName || "Unknown City",
+        city: meetup.canonicalCityName || meetup.cityName || "Unknown City",
         img: meetup.img,
         caption: meetup.caption || meetup.cityName || "",
         color: meetup.color || "#FEFAE7",
         galleryLink: meetup.galleryLink || "#",
       })
-      return acc
-    }, {})
+    })
 
-    return Object.keys(grouped).map((key) => ({
-      sectionTitle: key,
-      cards: grouped[key],
-    }))
+    return Object.keys(grouped)
+      .map((key) => {
+        const cards = sortMeetupsMostRecentFirst(grouped[key])
+        const newestTs = cards.length > 0 ? getMeetupSortTimestamp(cards[0]) : 0
+        return {
+          sectionTitle: key,
+          cards,
+          newestTs,
+        }
+      })
+      .sort((a, b) => b.newestTs - a.newestTs)
   }, [filteredMeetups])
 
   // Click on a filter toggles it (if already active, deselected back to "All")
@@ -365,6 +349,9 @@ export default function CityMeetupsPage() {
           WebkitMaskImage: "linear-gradient(to top, black 30%, transparent)"
         }}
       />
+
+      {/* Upcoming City Meetups & Student My Meetups (Phase 7C) */}
+      <UpcomingMeetupsSection />
 
       <div className="relative z-10 max-w-7xl mx-auto">
         {/* Header */}
@@ -492,6 +479,20 @@ export default function CityMeetupsPage() {
           </AnimatePresence>
         </div>
 
+        {/* Fetch Error Notice */}
+        {fetchError && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm font-medium text-red-900 flex items-center justify-between gap-3">
+            <span>{fetchError}</span>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="px-3 py-1 rounded-lg bg-red-100 hover:bg-red-200 text-red-900 text-xs font-bold shrink-0"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Dashboard Area */}
         <AnimatePresence mode="wait">
           {viewMode === "map" ? (
@@ -552,10 +553,10 @@ export default function CityMeetupsPage() {
                             className="transition-all duration-300 hover:scale-125"
                           />
 
-                          {/* Quick Text Label */}
+                          {/* Quick Text Label (uses per-city labelDy to prevent Gaya/Patna overlap) */}
                           <text
                             x={group.x}
-                            y={group.y - 10}
+                            y={group.y + group.labelDy}
                             textAnchor="middle"
                             className={`text-[8px] font-black select-none pointer-events-none fill-amber-950 drop-shadow-md transition-all duration-300 ${isSelected ? "text-[10px] font-black scale-105" : "opacity-80"
                               }`}
@@ -898,7 +899,7 @@ export default function CityMeetupsPage() {
                                   Meetup Summary
                                 </h3>
                                 <div className="text-gray-700 text-sm leading-relaxed space-y-4 font-normal max-h-[350px] overflow-y-auto pr-1">
-                                  {(selectedMeetup.summary || selectedMeetup.caption).split("\n").map((para: string, idx: number) => (
+                                  {(selectedMeetup.summary || selectedMeetup.caption || "").split("\n").map((para: string, idx: number) => (
                                     para.trim() && <p key={idx}>{para.trim()}</p>
                                   ))}
                                 </div>

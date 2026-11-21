@@ -697,6 +697,7 @@ export default function AddTripPage() {
   const [formData, setFormData] = React.useState({
     name: "",
     destination: "",
+    eventCategory: "trip",
     description: "",
     startDate: "",
     endDate: "",
@@ -1258,6 +1259,22 @@ export default function AddTripPage() {
                     onChange={(e) => updateField("destination", e.target.value)}
                   />
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="eventCategory">Event Category</Label>
+                <select
+                  id="eventCategory"
+                  value={formData.eventCategory}
+                  onChange={(e) => updateField("eventCategory", e.target.value)}
+                  className="flex h-10 w-full sm:max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <option value="trip">Regular Trip / Expedition</option>
+                  <option value="city_meetup">City Meetup</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Tagging an upcoming City Meetup here lets L2 admins manage its seats, deadlines, and registrations in the unified Registrations console.
+                </p>
               </div>
 
               <div className="space-y-2">
