@@ -37,6 +37,8 @@ import {
   AdminTableCell,
   AdminTableHeaderCell,
   AdminFilterBar,
+  AdminMobileCardList,
+  AdminMobileCard,
 } from "@/components/admin";
 import { StudentDirectoryItem } from "@/lib/studentDirectory";
 
@@ -148,8 +150,14 @@ export default function StudentsDirectoryPage() {
     }
   };
 
+  const activeFilterCount =
+    (verificationFilter !== "all" ? 1 : 0) +
+    (tripFilter !== "all" ? 1 : 0) +
+    (genderFilter !== "all" ? 1 : 0) +
+    (sortBy !== "createdAt" || sortOrder !== "desc" ? 1 : 0);
+
   return (
-    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+    <div className="space-y-5 md:space-y-6 p-4 sm:p-6 lg:p-8 pb-[calc(2rem+env(safe-area-inset-bottom))] max-w-7xl mx-auto">
       {/* Page Header */}
       <AdminPageHeader
         title="Student Directory & Trip History"
@@ -202,6 +210,7 @@ export default function StudentsDirectoryPage() {
           value={stats.studentsWithCompletedTrips}
           icon={CheckCircle2}
           variant="maroon"
+          className="col-span-2 lg:col-span-1"
         />
       </div>
 
@@ -212,6 +221,7 @@ export default function StudentsDirectoryPage() {
         searchPlaceholder="Search by student name, roll number, or @iitm.ac.in email..."
         totalCount={pagination.total}
         totalLabel="students matched"
+        activeFilterCount={activeFilterCount}
         onReset={handleResetFilters}
       >
         {/* Verification Filter */}
@@ -302,9 +312,121 @@ export default function StudentsDirectoryPage() {
             }
           />
         ) : (
-          <div className="overflow-x-auto">
-            <AdminTable>
-              <AdminTableHead>
+          <AdminTable
+            mobileContent={
+              <div className="p-3.5">
+                <AdminMobileCardList>
+                  {students.map((student) => {
+                    const initial = (student.name || "S").charAt(0).toUpperCase();
+                    const location = [student.cityDistrict, student.state]
+                      .filter(Boolean)
+                      .join(", ");
+                    return (
+                      <AdminMobileCard
+                        key={student.uid}
+                        onClick={() => router.push(`/admin/students/${student.uid}`)}
+                        leading={
+                          <div className="size-10 rounded-full bg-[#3B001B]/10 text-[#3B001B] flex items-center justify-center font-bold text-base border border-[#3B001B]/20">
+                            {initial}
+                          </div>
+                        }
+                        title={student.name}
+                        subtitle={
+                          <span className="text-sm text-stone-600 break-all">
+                            {student.email}
+                          </span>
+                        }
+                        badge={
+                          student.studentIdVerified ? (
+                            <AdminBadge variant="success" size="sm">
+                              <CheckCircle2 className="size-3 mr-1" />
+                              VERIFIED
+                            </AdminBadge>
+                          ) : (
+                            <AdminBadge variant="warning" size="sm">
+                              <Clock className="size-3 mr-1" />
+                              PENDING
+                            </AdminBadge>
+                          )
+                        }
+                        fields={[
+                          {
+                            label: "Roll No",
+                            value: (
+                              <span className="font-mono font-semibold">
+                                {student.studentId || "—"}
+                              </span>
+                            ),
+                          },
+                          {
+                            label: "Trips",
+                            value: `${student.tripCount} ${
+                              student.tripCount === 1 ? "Trip" : "Trips"
+                            }`,
+                          },
+                          {
+                            label: "Gender",
+                            value: student.gender
+                              ? student.gender.charAt(0).toUpperCase() +
+                                student.gender.slice(1)
+                              : "—",
+                          },
+                          {
+                            label: "Location",
+                            value: location || "—",
+                          },
+                        ]}
+                        detailsLabel="More details"
+                        details={
+                          <div className="space-y-1.5 text-sm text-stone-700">
+                            <p>
+                              <strong className="text-stone-900">Last Expedition:</strong>{" "}
+                              {student.lastTrip ? student.lastTrip.tripName : "None yet"}
+                            </p>
+                            <p>
+                              <strong className="text-stone-900">Joined:</strong>{" "}
+                              {formatDate(student.createdAt)}
+                            </p>
+                            <p className="font-mono text-xs text-stone-500 break-all">
+                              UID: {student.uid}
+                            </p>
+                          </div>
+                        }
+                        actions={
+                          <div className="grid grid-cols-2 gap-2.5 w-full">
+                            {student.studentIdUrl ? (
+                              <a
+                                href={student.studentIdUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="min-h-[48px] px-3 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 text-sm font-semibold flex items-center justify-center gap-1.5"
+                              >
+                                <FileText className="size-4 text-[#3B001B]" />
+                                <span>View ID</span>
+                              </a>
+                            ) : (
+                              <span className="min-h-[48px] px-3 py-2.5 rounded-xl bg-stone-50 border border-stone-100 text-stone-400 text-sm font-medium flex items-center justify-center gap-1.5">
+                                <FileText className="size-4" />
+                                <span>No ID</span>
+                              </span>
+                            )}
+                            <Link
+                              href={`/admin/students/${student.uid}`}
+                              className="min-h-[48px] px-3 py-2.5 rounded-xl bg-[#3B001B] text-white text-sm font-semibold flex items-center justify-center gap-1.5 shadow-2xs"
+                            >
+                              <span>Profile</span>
+                              <ExternalLink className="size-3.5" />
+                            </Link>
+                          </div>
+                        }
+                      />
+                    );
+                  })}
+                </AdminMobileCardList>
+              </div>
+            }
+          >
+            <AdminTableHead>
                 <AdminTableRow>
                   <AdminTableHeaderCell>Student</AdminTableHeaderCell>
                   <AdminTableHeaderCell>Student ID / Roll</AdminTableHeaderCell>
@@ -469,12 +591,11 @@ export default function StudentsDirectoryPage() {
                 })}
               </AdminTableBody>
             </AdminTable>
-          </div>
         )}
 
         {/* Pagination Footer */}
         {!loading && students.length > 0 && (
-          <div className="p-4 border-t border-stone-100 bg-stone-50/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-stone-600">
+          <div className="p-4 border-t border-stone-100 bg-stone-50/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm md:text-xs text-stone-600">
             <div>
               Showing <span className="font-semibold text-stone-900">{(pagination.page - 1) * pagination.limit + 1}</span> to{" "}
               <span className="font-semibold text-stone-900">
@@ -483,14 +604,14 @@ export default function StudentsDirectoryPage() {
               of <span className="font-semibold text-stone-900">{pagination.total}</span> students
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
               <button
                 type="button"
                 onClick={() => setPagination((prev) => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
                 disabled={pagination.page <= 1}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                className="min-h-[44px] md:min-h-0 inline-flex items-center gap-1 px-4 md:px-3 py-2 md:py-1.5 rounded-xl md:rounded-lg border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 disabled:opacity-40 disabled:pointer-events-none transition-colors font-semibold md:font-normal"
               >
-                <ChevronLeft className="size-3.5" />
+                <ChevronLeft className="size-4 md:size-3.5" />
                 <span>Previous</span>
               </button>
 
@@ -502,10 +623,10 @@ export default function StudentsDirectoryPage() {
                 type="button"
                 onClick={() => setPagination((prev) => ({ ...prev, page: Math.min(prev.totalPages, prev.page + 1) }))}
                 disabled={pagination.page >= pagination.totalPages}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                className="min-h-[44px] md:min-h-0 inline-flex items-center gap-1 px-4 md:px-3 py-2 md:py-1.5 rounded-xl md:rounded-lg border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 disabled:opacity-40 disabled:pointer-events-none transition-colors font-semibold md:font-normal"
               >
                 <span>Next</span>
-                <ChevronRight className="size-3.5" />
+                <ChevronRight className="size-4 md:size-3.5" />
               </button>
             </div>
           </div>

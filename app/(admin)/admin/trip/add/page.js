@@ -1188,7 +1188,7 @@ export default function AddTripPage() {
       </div>
 
       <div className="flex-1 overflow-auto bg-[#FAF9F6]">
-        <div className="mx-auto max-w-5xl p-4 sm:p-6 lg:p-8 space-y-8">
+        <div className="mx-auto max-w-5xl p-4 sm:p-6 lg:p-8 pb-[calc(2rem+env(safe-area-inset-bottom))] space-y-6 md:space-y-8 [&_input:not([type='checkbox']):not([type='radio']):not([type='file'])]:text-base md:[&_input:not([type='checkbox']):not([type='radio']):not([type='file'])]:text-sm [&_input:not([type='checkbox']):not([type='radio']):not([type='file'])]:min-h-[48px] md:[&_input:not([type='checkbox']):not([type='radio']):not([type='file'])]:min-h-0 [&_select]:text-base md:[&_select]:text-sm [&_select]:min-h-[48px] md:[&_select]:min-h-0 [&_textarea]:text-base md:[&_textarea]:text-sm">
 
           {/* Validation Summary Banner */}
           {validationSummary.length > 0 && (

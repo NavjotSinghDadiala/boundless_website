@@ -26,11 +26,21 @@ import {
   FileTextIcon,
   DownloadIcon,
   MailIcon,
-  AlertCircleIcon
+  AlertCircleIcon,
+  SlidersHorizontalIcon,
 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import { AdminMobileCardList, AdminMobileCard } from "@/components/admin";
 import SubmissionsTable from "./SubmissionsTable";
 
 interface Trip {
@@ -248,6 +258,8 @@ export default function SubmissionsPage() {
 
   const [tripSearch, setTripSearch] = useState("");
   const [tripDropdownOpen, setTripDropdownOpen] = useState(false);
+  const [mobileTripSheetOpen, setMobileTripSheetOpen] = useState(false);
+  const [mobileFilterSheetOpen, setMobileFilterSheetOpen] = useState(false);
 
   // Fetch trips list
   useEffect(() => {
@@ -1758,8 +1770,262 @@ export default function SubmissionsPage() {
     );
 
     return (
-      <div className="border border-stone-200/80 rounded-xl overflow-hidden shadow-xs bg-white">
-        <Table>
+      <>
+        {/* Mobile Registration Cards (< md) */}
+        <div className="md:hidden">
+          <AdminMobileCardList>
+            {filteredRegs.map((reg) => {
+              const studentName = getStudentName(reg);
+              const studentId = getStudentId(reg);
+              const studentIdDoc = getStudentIdDocUrl(reg);
+              const approvable = isApprovable(reg);
+              const isPending = reg.status === "registered";
+              const isApproved =
+                reg.status === "approved_to_pay" ||
+                reg.status === "mail_sent" ||
+                reg.status === "paid";
+              const isActionRequired = reg.status === "action_required";
+              const isRejected = reg.status === "rejected";
+
+              const formattedDate = reg.submittedAt
+                ? new Date(reg.submittedAt).toLocaleString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "—";
+
+              const statusLabel =
+                reg.status === "waitlisted"
+                  ? `WAITLIST #${reg.waitlistPosition || ""}`
+                  : reg.status === "withdrawn"
+                  ? "Withdrawn"
+                  : reg.status === "declined"
+                  ? "Declined"
+                  : reg.status === "mail_sent"
+                  ? "Approved (Mail Sent)"
+                  : reg.status === "approved_to_pay"
+                  ? "Approved"
+                  : reg.status === "paid"
+                  ? "Paid"
+                  : reg.status === "action_required"
+                  ? "Reupload Needed"
+                  : isPending
+                  ? approvable
+                    ? "Ready"
+                    : "Pending"
+                  : reg.status;
+
+              const statusBadgeClass = isApproved
+                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                : isActionRequired
+                ? "bg-amber-100 text-amber-800 border-amber-300"
+                : reg.status === "waitlisted"
+                ? "bg-amber-100 text-amber-900 border-amber-400"
+                : reg.status === "withdrawn" || reg.status === "declined"
+                ? "bg-zinc-100 text-zinc-700 border-zinc-300"
+                : isRejected
+                ? "bg-red-100 text-red-800 border-red-300"
+                : approvable
+                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                : "bg-amber-50 text-amber-800 border-amber-200";
+
+              return (
+                <AdminMobileCard
+                  key={reg.id}
+                  onClick={() => setActiveProfileReg(reg)}
+                  title={studentName}
+                  subtitle={
+                    <span className="font-mono text-sm text-stone-600 break-all">
+                      {reg.email}
+                    </span>
+                  }
+                  badge={
+                    <div className="flex flex-col items-end gap-1">
+                      <span
+                        className={`text-xs font-bold uppercase px-2.5 py-1 rounded-full border whitespace-nowrap ${statusBadgeClass}`}
+                      >
+                        {statusLabel}
+                      </span>
+                      {reg.approvalEmailStatus === "failed" && (
+                        <span className="text-xs text-rose-700 font-semibold flex items-center gap-1">
+                          <AlertCircleIcon className="w-3.5 h-3.5" /> Mail Failed
+                        </span>
+                      )}
+                    </div>
+                  }
+                  fields={[
+                    {
+                      label: "Student ID",
+                      value: (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-sm font-semibold text-stone-900">
+                            {studentId}
+                          </span>
+                          {studentIdDoc && (
+                            <a
+                              href={studentIdDoc}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-[#3B001B]/10 text-[#3B001B]"
+                            >
+                              ID <ExternalLinkIcon className="size-3" />
+                            </a>
+                          )}
+                        </div>
+                      ),
+                    },
+                    {
+                      label: "Gender",
+                      value: (
+                        <span className="capitalize">
+                          {reg.gender || "—"}
+                        </span>
+                      ),
+                    },
+                    {
+                      label: "Verification",
+                      value: (
+                        <span
+                          className={`text-xs font-bold ${
+                            reg.studentIdVerified
+                              ? "text-emerald-700"
+                              : "text-rose-700"
+                          }`}
+                        >
+                          ID: {reg.studentIdVerified ? "Verified" : "Missing"}
+                          {hasTripConsents
+                            ? ` · Consent: ${
+                                reg.consentFormVerified ? "Verified" : "Missing"
+                              }`
+                            : ""}
+                        </span>
+                      ),
+                    },
+                    {
+                      label: "Submitted",
+                      value: formattedDate,
+                    },
+                  ]}
+                  actions={
+                    <div className="w-full space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveProfileReg(reg)}
+                        className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-[#3B001B] active:bg-[#46001D] text-white text-sm font-semibold flex items-center justify-center gap-2 shadow-2xs"
+                      >
+                        Review & Verify Profile
+                      </button>
+
+                      {isPending && !selectedTrip?.isCompleted && (
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            disabled={!approvable || submitting}
+                            onClick={() => setApproveConfirmReg(reg)}
+                            className="min-h-[44px] px-2 py-2 rounded-xl bg-emerald-600 active:bg-emerald-700 text-white disabled:bg-stone-100 disabled:text-stone-400 text-xs font-bold flex items-center justify-center gap-1"
+                          >
+                            <CheckCircle2Icon className="w-4 h-4 shrink-0" />
+                            <span>Approve</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReuploadRegId(reg.id);
+                              setReuploadIssueText("");
+                              setReuploadFields([]);
+                            }}
+                            className="min-h-[44px] px-2 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold flex items-center justify-center gap-1"
+                          >
+                            <FileWarning className="w-4 h-4 shrink-0" />
+                            <span>Re-upload</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRejectConfirmReg(reg);
+                              setRejectReason("");
+                            }}
+                            className="min-h-[44px] px-2 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-bold flex items-center justify-center gap-1"
+                          >
+                            <XCircleIcon className="w-4 h-4 shrink-0" />
+                            <span>Reject</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {isApproved && !selectedTrip?.isCompleted && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={submitting}
+                            onClick={() => handleResendApprovalEmail(reg)}
+                            className="min-h-[44px] px-3 py-2 rounded-xl bg-stone-50 border border-stone-300 text-stone-800 text-xs font-bold flex items-center justify-center gap-1.5"
+                          >
+                            <MailIcon className="w-4 h-4 shrink-0" />
+                            <span>Resend Mail</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRevokeConfirmReg(reg);
+                              setRevokeReason("");
+                            }}
+                            className="min-h-[44px] px-3 py-2 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold flex items-center justify-center gap-1.5"
+                          >
+                            <RotateCcwIcon className="w-4 h-4 shrink-0" />
+                            <span>Revoke</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {reg.status === "waitlisted" && !selectedTrip?.isCompleted && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={!approvable || submitting}
+                            onClick={() => setApproveConfirmReg(reg)}
+                            className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-600 text-white disabled:bg-stone-100 disabled:text-stone-400 text-xs font-bold flex items-center justify-center gap-1.5"
+                          >
+                            <CheckCircle2Icon className="w-4 h-4 shrink-0" />
+                            <span>Promote</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRejectConfirmReg(reg);
+                              setRejectReason("");
+                            }}
+                            className="min-h-[44px] px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-bold flex items-center justify-center gap-1.5"
+                          >
+                            <XCircleIcon className="w-4 h-4 shrink-0" />
+                            <span>Reject</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {isRejected && !selectedTrip?.isCompleted && (
+                        <button
+                          type="button"
+                          onClick={() => handleStatusChange(reg.id, "registered")}
+                          className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-stone-100 border border-stone-300 text-stone-800 text-sm font-bold flex items-center justify-center"
+                        >
+                          Restore to Pending
+                        </button>
+                      )}
+                    </div>
+                  }
+                />
+              );
+            })}
+          </AdminMobileCardList>
+        </div>
+
+        {/* Desktop 7-Column Queue Table (>= md — Preserved) */}
+        <div className="hidden md:block border border-stone-200/80 rounded-xl overflow-hidden shadow-xs bg-white">
+          <Table>
           <TableHeader>
             <TableRow className="bg-stone-50/70 border-b border-stone-200/80">
               <TableHead className="font-semibold text-stone-600 text-xs uppercase tracking-wider">Student Name</TableHead>
@@ -2068,32 +2334,108 @@ export default function SubmissionsPage() {
           </TableBody>
         </Table>
       </div>
+      </>
     );
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 pb-[calc(2rem+env(safe-area-inset-bottom))] max-w-7xl mx-auto space-y-5 md:space-y-6">
       
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-stone-200/80">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 md:pb-6 border-b border-stone-200/80">
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-stone-900">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-[24px] leading-tight sm:text-3xl font-bold tracking-tight text-stone-900">
               Registrations Console
             </h1>
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#3B001B]/10 text-[#3B001B] border border-[#3B001B]/20">
               Operations
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-stone-600 max-w-2xl">
+          <p className="text-sm text-stone-600 max-w-2xl">
             Review and verify student registrations, inspect credential documents, and manage approval queues.
           </p>
         </div>
 
         {/* Trip Searchable Dropdown & Link Copier */}
         {trips.length > 0 && activeTab !== "create-event" && (
-          <div className="flex items-center gap-2">
-            <div className="relative w-72">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2.5 md:gap-2 w-full md:w-auto">
+            {/* Mobile Trip Picker Trigger (< md) */}
+            <button
+              type="button"
+              onClick={() => {
+                setTripSearch("");
+                setMobileTripSheetOpen(true);
+              }}
+              className="md:hidden w-full min-h-[48px] flex items-center justify-between px-4 py-2.5 border border-stone-300 rounded-xl bg-white text-base font-semibold text-stone-900 active:bg-stone-50 shadow-2xs"
+            >
+              <span className="truncate">
+                {trips.find((t) => t.id === selectedTripId)?.name || "Select trip"}
+              </span>
+              <svg className="w-5 h-5 ml-2 text-stone-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+
+            {/* Mobile Trip Picker Bottom Sheet */}
+            <Drawer open={mobileTripSheetOpen} onOpenChange={setMobileTripSheetOpen}>
+              <DrawerContent className="max-h-[85dvh] rounded-t-3xl bg-white border-stone-200 pb-[env(safe-area-inset-bottom)]">
+                <DrawerHeader className="text-left pb-3 border-b border-stone-100">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <DrawerTitle className="text-lg font-bold text-stone-900">
+                        Select Expedition
+                      </DrawerTitle>
+                      <DrawerDescription className="text-sm text-stone-500">
+                        Choose a trip to manage its registrations
+                      </DrawerDescription>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMobileTripSheetOpen(false)}
+                      aria-label="Close trip selector"
+                      className="w-11 h-11 rounded-full flex items-center justify-center text-stone-500 active:bg-stone-100"
+                    >
+                      <XIcon className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="relative mt-3">
+                    <SearchIcon className="w-5 h-5 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Search trip..."
+                      value={tripSearch}
+                      onChange={(e) => setTripSearch(e.target.value)}
+                      className="w-full min-h-[48px] pl-11 pr-4 py-2.5 text-base border border-stone-200 rounded-xl bg-stone-50/50 focus:outline-none focus:ring-2 focus:ring-[#3B001B]/20 focus:border-[#3B001B]"
+                    />
+                  </div>
+                </DrawerHeader>
+                <div className="overflow-y-auto p-3 space-y-1.5">
+                  {trips
+                    .filter((t) => t.name.toLowerCase().includes(tripSearch.toLowerCase()))
+                    .map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={`w-full min-h-[52px] text-left px-4 py-3 rounded-xl text-base font-semibold transition flex items-center justify-between gap-2 ${
+                          t.id === selectedTripId
+                            ? "bg-[#3B001B] text-white"
+                            : "bg-white text-stone-800 border border-stone-200/80 active:bg-stone-50"
+                        }`}
+                        onClick={() => {
+                          setSelectedTripId(t.id);
+                          setTripSearch("");
+                          setMobileTripSheetOpen(false);
+                        }}
+                      >
+                        <span className="truncate">{t.name}</span>
+                        {t.id === selectedTripId && <CheckIcon className="w-5 h-5 shrink-0" />}
+                      </button>
+                    ))}
+                </div>
+              </DrawerContent>
+            </Drawer>
+
+            {/* Desktop Trip Dropdown (>= md — Preserved) */}
+            <div className="hidden md:block relative w-72">
               <button
                 type="button"
                 onClick={() => setTripDropdownOpen((o) => !o)}
@@ -2140,61 +2482,70 @@ export default function SubmissionsPage() {
                 </div>
               )}
             </div>
-            <Button
-              onClick={handleCopyRegistrationLink}
-              variant="outline"
-              size="sm"
-              className="font-bold flex items-center gap-1.5 text-xs h-[38px] px-3"
-              title="Copy student registration link for this event"
-            >
-              🔗 Copy Link
-            </Button>
 
-            <Button
-              onClick={() => {
-                const url = selectedTripId
-                  ? `/api/admin/email-preview?tripId=${encodeURIComponent(selectedTripId)}&dev=true`
-                  : "/api/admin/email-preview?dev=true";
-                window.open(url, "_blank");
-              }}
-              variant="outline"
-              size="sm"
-              className="font-bold flex items-center gap-1.5 text-xs h-[38px] px-3 bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-300"
-              title="Preview approval confirmation email template"
-            >
-              <MailIcon className="w-3.5 h-3.5 text-stone-600" />
-              <span>Preview Email</span>
-            </Button>
+            <div className="grid grid-cols-2 md:flex items-center gap-2">
+              <Button
+                onClick={handleCopyRegistrationLink}
+                variant="outline"
+                size="sm"
+                className="font-bold flex items-center justify-center gap-1.5 text-sm md:text-xs min-h-[48px] md:min-h-0 md:h-[38px] px-3 rounded-xl md:rounded-md"
+                title="Copy student registration link for this event"
+              >
+                🔗 Copy Link
+              </Button>
+
+              <Button
+                onClick={() => {
+                  const url = selectedTripId
+                    ? `/api/admin/email-preview?tripId=${encodeURIComponent(selectedTripId)}&dev=true`
+                    : "/api/admin/email-preview?dev=true";
+                  window.open(url, "_blank");
+                }}
+                variant="outline"
+                size="sm"
+                className="font-bold flex items-center justify-center gap-1.5 text-sm md:text-xs min-h-[48px] md:min-h-0 md:h-[38px] px-3 bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-300 rounded-xl md:rounded-md"
+                title="Preview approval confirmation email template"
+              >
+                <MailIcon className="w-4 h-4 md:w-3.5 md:h-3.5 text-stone-600" />
+                <span>Preview Email</span>
+              </Button>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Tab Navigation */}
-      <div className="flex gap-2 sm:gap-4 border-b border-border pb-px overflow-x-auto">
+      {/* Tab Navigation: 2x2 grid on mobile (zero horizontal scroll), underline bar on desktop */}
+      <div className="grid grid-cols-2 gap-2 md:flex md:gap-4 md:border-b md:border-border md:pb-px">
         <button
           onClick={() => setActiveTab("students")}
-          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
+          className={`min-h-[48px] md:min-h-0 px-3 md:px-0 py-2.5 md:py-0 md:pb-2 text-sm font-bold rounded-xl md:rounded-none border md:border-0 md:border-b-2 transition flex items-center justify-center md:justify-start gap-1.5 ${
             activeTab === "students" 
-              ? "border-primary text-primary" 
-              : "border-transparent text-muted-foreground hover:text-foreground"
+              ? "bg-[#3B001B] text-white border-[#3B001B] md:bg-transparent md:border-primary md:text-primary" 
+              : "bg-white text-stone-700 border-stone-200 md:bg-transparent md:border-transparent md:text-muted-foreground hover:text-foreground"
           }`}
         >
-          <UsersIcon className="w-4 h-4" /> Students List (Pending & Approved)
+          <UsersIcon className="w-4 h-4 shrink-0" />
+          <span className="truncate">Students</span>
           {registrations.length > 0 && (
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 font-mono">
+            <span className={`text-xs md:text-[11px] px-2 py-0.5 rounded-full font-mono ${
+              activeTab === "students"
+                ? "bg-white/20 text-white md:bg-stone-100 md:text-stone-700"
+                : "bg-stone-100 text-stone-700"
+            }`}>
               {registrations.length}
             </span>
           )}
         </button>
         <button
           onClick={() => setActiveTab("controls")}
-          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
+          className={`min-h-[48px] md:min-h-0 px-3 md:px-0 py-2.5 md:py-0 md:pb-2 text-sm font-bold rounded-xl md:rounded-none border md:border-0 md:border-b-2 transition flex items-center justify-center md:justify-start gap-1.5 ${
             activeTab === "controls" 
-              ? "border-primary text-primary" 
-              : "border-transparent text-muted-foreground hover:text-foreground"
+              ? "bg-[#3B001B] text-white border-[#3B001B] md:bg-transparent md:border-primary md:text-primary" 
+              : "bg-white text-stone-700 border-stone-200 md:bg-transparent md:border-transparent md:text-muted-foreground hover:text-foreground"
           }`}
         >
-          <SettingsIcon className="w-4 h-4" /> Registration & Controls
+          <SettingsIcon className="w-4 h-4 shrink-0" />
+          <span className="truncate">Controls</span>
         </button>
         <button
           onClick={() => {
@@ -2225,15 +2576,16 @@ export default function SubmissionsPage() {
             setActiveTab("edit-event");
           }}
           disabled={!selectedTripId}
-          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
+          className={`min-h-[48px] md:min-h-0 px-3 md:px-0 py-2.5 md:py-0 md:pb-2 text-sm font-bold rounded-xl md:rounded-none border md:border-0 md:border-b-2 transition flex items-center justify-center md:justify-start gap-1.5 ${
             !selectedTripId ? "opacity-50 cursor-not-allowed" : ""
           } ${
             activeTab === "edit-event" 
-              ? "border-primary text-primary" 
-              : "border-transparent text-muted-foreground hover:text-foreground"
+              ? "bg-[#3B001B] text-white border-[#3B001B] md:bg-transparent md:border-primary md:text-primary" 
+              : "bg-white text-stone-700 border-stone-200 md:bg-transparent md:border-transparent md:text-muted-foreground hover:text-foreground"
           }`}
         >
-          <EditIcon className="w-4 h-4" /> Edit Selected Event & Form
+          <EditIcon className="w-4 h-4 shrink-0" />
+          <span className="truncate">Edit Form</span>
         </button>
         <button
           onClick={() => {
@@ -2255,13 +2607,14 @@ export default function SubmissionsPage() {
             setCreateCityWhatsapp({});
             setActiveTab("create-event");
           }}
-          className={`pb-2 text-sm font-bold border-b-2 transition flex items-center gap-1.5 whitespace-nowrap ${
+          className={`min-h-[48px] md:min-h-0 px-3 md:px-0 py-2.5 md:py-0 md:pb-2 text-sm font-bold rounded-xl md:rounded-none border md:border-0 md:border-b-2 transition flex items-center justify-center md:justify-start gap-1.5 ${
             activeTab === "create-event" 
-              ? "border-primary text-primary" 
-              : "border-transparent text-muted-foreground hover:text-foreground"
+              ? "bg-[#3B001B] text-white border-[#3B001B] md:bg-transparent md:border-primary md:text-primary" 
+              : "bg-white text-stone-700 border-stone-200 md:bg-transparent md:border-transparent md:text-muted-foreground hover:text-foreground"
           }`}
         >
-          <PlusCircleIcon className="w-4 h-4" /> Create New Event
+          <PlusCircleIcon className="w-4 h-4 shrink-0" />
+          <span className="truncate">Create Event</span>
         </button>
       </div>
 
@@ -2335,43 +2688,43 @@ export default function SubmissionsPage() {
             return (
               <>
                 {/* Dynamic Counters Card Grid */}
-                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
                   <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-amber-700">Pending</span>
+                      <span className="text-sm md:text-[10px] md:uppercase font-bold md:tracking-wider text-amber-700">Pending</span>
                       <span className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center text-sm">⏳</span>
                     </div>
-                    <div className="mt-3">
-                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                    <div className="mt-2.5 md:mt-3">
+                      <div className="text-2xl md:text-3xl font-bold text-stone-900 tracking-tight">
                         {pendingRegs.length}
                       </div>
-                      <span className="text-xs text-stone-500 font-medium">Awaiting review</span>
+                      <span className="text-sm md:text-xs text-stone-500 font-medium">Awaiting review</span>
                     </div>
                   </div>
 
                   <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-700">Approved</span>
+                      <span className="text-sm md:text-[10px] md:uppercase font-bold md:tracking-wider text-emerald-700">Approved</span>
                       <span className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm">✅</span>
                     </div>
-                    <div className="mt-3">
-                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                    <div className="mt-2.5 md:mt-3">
+                      <div className="text-2xl md:text-3xl font-bold text-stone-900 tracking-tight">
                         {approvedRegs.length}
                       </div>
-                      <span className="text-xs text-stone-500 font-medium">Confirmed / Mail sent</span>
+                      <span className="text-sm md:text-xs text-stone-500 font-medium">Confirmed / Mail</span>
                     </div>
                   </div>
 
                   <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-amber-900">Waitlisted</span>
+                      <span className="text-sm md:text-[10px] md:uppercase font-bold md:tracking-wider text-amber-900">Waitlisted</span>
                       <span className="w-7 h-7 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center text-sm">🕒</span>
                     </div>
-                    <div className="mt-3">
-                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                    <div className="mt-2.5 md:mt-3">
+                      <div className="text-2xl md:text-3xl font-bold text-stone-900 tracking-tight">
                         {waitlistRegs.length}
                       </div>
-                      <span className="text-xs text-stone-500 font-medium">
+                      <span className="text-sm md:text-xs text-stone-500 font-medium">
                         🚹 {waitlistedMales} M · 🚺 {waitlistedFemales} F
                       </span>
                     </div>
@@ -2379,39 +2732,307 @@ export default function SubmissionsPage() {
 
                   <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-700">Gender Slots</span>
+                      <span className="text-sm md:text-[10px] md:uppercase font-bold md:tracking-wider text-indigo-700">Gender Slots</span>
                       <span className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm">👥</span>
                     </div>
-                    <div className="mt-3">
-                      <div className="text-base font-bold text-stone-900 tracking-tight flex items-center justify-between gap-1">
-                        <span className={approvedMales > maleCap ? "text-red-700" : "text-sky-800"}>🚹 {approvedMales} / {maleCap}</span>
+                    <div className="mt-2.5 md:mt-3">
+                      <div className="text-sm md:text-base font-bold text-stone-900 tracking-tight flex items-center justify-between gap-1">
+                        <span className={approvedMales > maleCap ? "text-red-700" : "text-sky-800"}>🚹 {approvedMales}/{maleCap}</span>
                         <span className="text-stone-300">|</span>
-                        <span className={approvedFemales > femaleCap ? "text-red-700" : "text-rose-800"}>🚺 {approvedFemales} / {femaleCap}</span>
+                        <span className={approvedFemales > femaleCap ? "text-red-700" : "text-rose-800"}>🚺 {approvedFemales}/{femaleCap}</span>
                       </div>
-                      <span className="text-xs text-stone-500 font-medium block mt-1">
-                        Eligible left: {maleRemainingSeats} M · {femaleRemainingSeats} F
+                      <span className="text-sm md:text-xs text-stone-500 font-medium block mt-1">
+                        Left: {maleRemainingSeats}M · {femaleRemainingSeats}F
                       </span>
                     </div>
                   </div>
 
-                  <div className="bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] uppercase font-bold tracking-wider text-stone-600">Total</span>
-                      <span className="w-7 h-7 rounded-lg bg-stone-100 text-stone-600 flex items-center justify-center text-sm">📋</span>
+                  <div className="col-span-2 lg:col-span-1 bg-white border border-stone-200/90 rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-row lg:flex-col items-center lg:items-stretch justify-between">
+                    <div className="flex items-center gap-2 lg:justify-between">
+                      <span className="w-7 h-7 rounded-lg bg-stone-100 text-stone-600 flex items-center justify-center text-sm lg:order-2">📋</span>
+                      <span className="text-sm md:text-[10px] md:uppercase font-bold md:tracking-wider text-stone-600">Total Submissions</span>
                     </div>
-                    <div className="mt-3">
-                      <div className="text-3xl font-bold text-stone-900 tracking-tight">
+                    <div className="text-right lg:text-left lg:mt-3">
+                      <div className="text-2xl md:text-3xl font-bold text-stone-900 tracking-tight">
                         {registrations.length}
                       </div>
-                      <span className="text-xs text-stone-500 font-medium">
+                      <span className="text-sm md:text-xs text-stone-500 font-medium">
                         {rejectedRegs.length} rej · {withdrawnRegs.length} w/d
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Stage 4: Admin Registration Queue Filter Tabs */}
-                <div className="flex flex-col gap-3 pt-1">
+                {/* Mobile Search + Filter Sheet Bar (< md) */}
+                <div className="md:hidden space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1 min-w-0">
+                      <SearchIcon className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Search name, roll no, or email..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full min-h-[48px] pl-11 pr-10 py-2.5 text-base rounded-xl border border-stone-200 bg-white placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-[#3B001B]/20 focus:border-[#3B001B]"
+                      />
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery("")}
+                          aria-label="Clear search"
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-stone-400"
+                        >
+                          <XIcon className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMobileFilterSheetOpen(true)}
+                      className="min-h-[48px] px-3.5 rounded-xl bg-white border border-stone-200 text-stone-800 text-sm font-semibold flex items-center gap-2 shrink-0 active:bg-stone-50 shadow-2xs"
+                    >
+                      <SlidersHorizontalIcon className="w-4 h-4 text-[#3B001B]" />
+                      <span>Filters</span>
+                    </button>
+                  </div>
+
+                  {/* Quick Status Selector Chips (3 primary statuses + active indicator) */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQueueTab("pending")}
+                      className={`min-h-[44px] px-2 py-2 rounded-xl text-sm font-semibold border transition ${
+                        queueTab === "pending"
+                          ? "bg-[#3B001B] text-white border-[#3B001B]"
+                          : "bg-white text-stone-700 border-stone-200"
+                      }`}
+                    >
+                      Pending ({pendingRegs.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueueTab("approved")}
+                      className={`min-h-[44px] px-2 py-2 rounded-xl text-sm font-semibold border transition ${
+                        queueTab === "approved"
+                          ? "bg-[#3B001B] text-white border-[#3B001B]"
+                          : "bg-white text-stone-700 border-stone-200"
+                      }`}
+                    >
+                      Approved ({approvedRegs.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueueTab("waitlisted")}
+                      className={`min-h-[44px] px-2 py-2 rounded-xl text-sm font-semibold border transition ${
+                        queueTab === "waitlisted"
+                          ? "bg-[#3B001B] text-white border-[#3B001B]"
+                          : "bg-white text-stone-700 border-stone-200"
+                      }`}
+                    >
+                      Waitlist ({waitlistRegs.length})
+                    </button>
+                  </div>
+
+                  {/* Active Filter Summary Strip */}
+                  <div className="flex items-center justify-between text-sm text-stone-600 px-0.5">
+                    <span>
+                      Showing <strong className="text-stone-900">{queueFiltered.length}</strong> ·{" "}
+                      <span className="capitalize">{queueTab.replace("_", " ")}</span>
+                      {subTab !== "all" ? ` · ${subTab}` : ""}
+                      {tableViewMode === "responses" ? " · Form Responses" : ""}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMobileFilterSheetOpen(true)}
+                      className="text-[#3B001B] font-semibold underline"
+                    >
+                      Change
+                    </button>
+                  </div>
+
+                  {/* Mobile Registrations Filter & View Bottom Sheet */}
+                  <Drawer open={mobileFilterSheetOpen} onOpenChange={setMobileFilterSheetOpen}>
+                    <DrawerContent className="max-h-[88dvh] rounded-t-3xl bg-white border-stone-200 pb-[env(safe-area-inset-bottom)]">
+                      <DrawerHeader className="text-left pb-3 border-b border-stone-100">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <DrawerTitle className="text-lg font-bold text-stone-900">
+                              Queue Filters & View
+                            </DrawerTitle>
+                            <DrawerDescription className="text-sm text-stone-500">
+                              Filter by status, gender, or switch view mode
+                            </DrawerDescription>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setMobileFilterSheetOpen(false)}
+                            aria-label="Close filters"
+                            className="w-11 h-11 rounded-full flex items-center justify-center text-stone-500 active:bg-stone-100"
+                          >
+                            <XIcon className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </DrawerHeader>
+
+                      <div className="overflow-y-auto p-4 space-y-5">
+                        {/* Status Queue */}
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                            Registration Status
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              { id: "pending", label: `Pending (${pendingRegs.length})` },
+                              { id: "approved", label: `Approved (${approvedRegs.length})` },
+                              { id: "waitlisted", label: `Waitlisted (${waitlistRegs.length})` },
+                              { id: "action_required", label: `Reupload (${actionRequiredRegs.length})` },
+                              { id: "rejected", label: `Rejected (${rejectedRegs.length})` },
+                              { id: "withdrawn", label: `Withdrawn (${withdrawnRegs.length})` },
+                              { id: "all", label: `All (${registrations.length})` },
+                            ].map((opt) => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => setQueueTab(opt.id as any)}
+                                className={`min-h-[48px] px-3 py-2 rounded-xl text-sm font-semibold border text-left ${
+                                  queueTab === opt.id
+                                    ? "bg-[#3B001B] text-white border-[#3B001B]"
+                                    : "bg-stone-50 text-stone-800 border-stone-200"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Gender Filter */}
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                            Gender Filter
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSubTab("all")}
+                              className={`min-h-[48px] px-3 py-2 rounded-xl text-sm font-semibold border ${
+                                subTab === "all"
+                                  ? "bg-[#3B001B] text-white border-[#3B001B]"
+                                  : "bg-stone-50 text-stone-800 border-stone-200"
+                              }`}
+                            >
+                              All Genders
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSubTab("female")}
+                              className={`min-h-[48px] px-3 py-2 rounded-xl text-sm font-semibold border ${
+                                subTab === "female"
+                                  ? "bg-rose-700 text-white border-rose-700"
+                                  : "bg-stone-50 text-stone-800 border-stone-200"
+                              }`}
+                            >
+                              🚺 Female ({femaleRegs.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSubTab("male")}
+                              className={`min-h-[48px] px-3 py-2 rounded-xl text-sm font-semibold border ${
+                                subTab === "male"
+                                  ? "bg-sky-700 text-white border-sky-700"
+                                  : "bg-stone-50 text-stone-800 border-stone-200"
+                              }`}
+                            >
+                              🚹 Male ({maleRegs.length})
+                            </button>
+                            {otherRegs.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSubTab("other")}
+                                className={`min-h-[48px] px-3 py-2 rounded-xl text-sm font-semibold border ${
+                                  subTab === "other"
+                                    ? "bg-stone-900 text-white border-stone-900"
+                                    : "bg-stone-50 text-stone-800 border-stone-200"
+                                }`}
+                              >
+                                👤 Other ({otherRegs.length})
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* View Mode + CSV */}
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                            Display & Export
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setTableViewMode("queue")}
+                              className={`min-h-[48px] px-3 py-2 rounded-xl text-sm font-semibold border ${
+                                tableViewMode === "queue"
+                                  ? "bg-[#3B001B] text-white border-[#3B001B]"
+                                  : "bg-stone-50 text-stone-800 border-stone-200"
+                              }`}
+                            >
+                              Review Queue
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTableViewMode("responses")}
+                              className={`min-h-[48px] px-3 py-2 rounded-xl text-sm font-semibold border ${
+                                tableViewMode === "responses"
+                                  ? "bg-[#3B001B] text-white border-[#3B001B]"
+                                  : "bg-stone-50 text-stone-800 border-stone-200"
+                              }`}
+                            >
+                              All Responses
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={registrations.length === 0}
+                            onClick={() => {
+                              handleDownloadCSV();
+                              setMobileFilterSheetOpen(false);
+                            }}
+                            className="w-full min-h-[48px] px-4 py-2.5 rounded-xl border border-stone-300 bg-white text-stone-800 text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                          >
+                            <DownloadIcon className="w-4 h-4" />
+                            <span>Download CSV Export</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <DrawerFooter className="border-t border-stone-100 pt-3 flex-row gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQueueTab("pending");
+                            setSubTab("all");
+                            setTableViewMode("queue");
+                            setSearchQuery("");
+                            setMobileFilterSheetOpen(false);
+                          }}
+                          className="flex-1 min-h-[48px] rounded-xl border border-stone-200 bg-white text-stone-700 text-base font-semibold"
+                        >
+                          Reset
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMobileFilterSheetOpen(false)}
+                          className="flex-1 min-h-[48px] rounded-xl bg-[#3B001B] text-white text-base font-semibold"
+                        >
+                          Apply
+                        </button>
+                      </DrawerFooter>
+                    </DrawerContent>
+                  </Drawer>
+                </div>
+
+                {/* Desktop Registration Queue Filter Tabs (>= md — Preserved) */}
+                <div className="hidden md:flex flex-col gap-3 pt-1">
                   <div className="flex justify-between items-center flex-wrap gap-2">
                     {/* Status Queue Tabs - Segmented control */}
                     <div className="flex items-center gap-1 overflow-x-auto bg-stone-100/90 p-1 rounded-xl border border-stone-200/70">
@@ -4064,13 +4685,13 @@ export default function SubmissionsPage() {
         </div>
       )}
 
-      {/* Stage 4: Detailed Admin Review Modal */}
+      {/* Stage 4: Detailed Admin Review Modal (Full-Height Bottom Sheet on Mobile) */}
       {activeProfileReg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
-          <div className="bg-white border border-stone-200/90 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl relative text-stone-900 text-left max-h-[92vh] flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border border-stone-200/90 rounded-t-3xl md:rounded-2xl max-w-2xl w-full p-4 md:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-6 space-y-4 shadow-2xl relative text-stone-900 text-left max-h-[94dvh] md:max-h-[92vh] flex flex-col">
             <button
               onClick={() => setActiveProfileReg(null)}
-              className="absolute top-4 right-4 text-stone-400 hover:text-stone-800 p-1 rounded-full hover:bg-stone-100 z-10 transition-colors"
+              className="absolute top-3.5 right-3.5 md:top-4 md:right-4 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center text-stone-500 md:text-stone-400 hover:text-stone-800 md:p-1 rounded-full hover:bg-stone-100 z-10 transition-colors"
               aria-label="Close modal"
             >
               <XIcon className="w-5 h-5" />
@@ -4603,16 +5224,16 @@ export default function SubmissionsPage() {
 
       {/* Stage 4: Approve Confirmation Dialog */}
       {approveConfirmReg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
-          <div className="bg-white border-2 border-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border-t-2 md:border-2 border-zinc-900 rounded-t-3xl md:rounded-2xl max-w-md w-full p-5 md:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] md:pb-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-2 text-emerald-700">
-              <CheckCircle2Icon className="w-6 h-6" />
+              <CheckCircle2Icon className="w-6 h-6 shrink-0" />
               <h3 className="font-bold text-lg text-zinc-900">Approve this student's registration?</h3>
             </div>
-            <p className="text-sm text-zinc-600 leading-relaxed">
+            <p className="text-base md:text-sm text-zinc-600 leading-relaxed">
               Are you sure you want to approve registration for <strong>{getStudentName(approveConfirmReg)}</strong> ({approveConfirmReg.email})?
             </p>
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 space-y-1">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm md:text-xs text-emerald-900 space-y-1">
               <p className="font-bold">✉️ What happens upon approval:</p>
               <ul className="list-disc list-inside space-y-0.5 text-emerald-800">
                 <li>Confirmation email will be dispatched to their canonical IITM email.</li>
@@ -4620,12 +5241,12 @@ export default function SubmissionsPage() {
                 <li>Confirms trip seat and updates confirmed seat counter.</li>
               </ul>
             </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setApproveConfirmReg(null)} disabled={submitting}>
+            <div className="flex flex-col-reverse md:flex-row md:justify-end gap-2.5 md:gap-2 pt-2">
+              <Button variant="outline" className="min-h-[48px] md:min-h-0 text-base md:text-sm" onClick={() => setApproveConfirmReg(null)} disabled={submitting}>
                 Cancel
               </Button>
               <Button
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                className="min-h-[48px] md:min-h-0 text-base md:text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
                 disabled={submitting}
                 onClick={() => handleApproveRegistration(approveConfirmReg)}
               >
@@ -4638,17 +5259,17 @@ export default function SubmissionsPage() {
 
       {/* Stage 4: Reject Confirmation Dialog */}
       {rejectConfirmReg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
-          <div className="bg-white border-2 border-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border-t-2 md:border-2 border-zinc-900 rounded-t-3xl md:rounded-2xl max-w-md w-full p-5 md:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] md:pb-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-2 text-red-700">
-              <XCircleIcon className="w-6 h-6" />
+              <XCircleIcon className="w-6 h-6 shrink-0" />
               <h3 className="font-bold text-lg text-zinc-900">Reject Registration</h3>
             </div>
-            <p className="text-sm text-zinc-600">
+            <p className="text-base md:text-sm text-zinc-600">
               Rejecting registration for <strong>{getStudentName(rejectConfirmReg)}</strong> ({rejectConfirmReg.email}).
             </p>
             <div>
-              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
+              <label className="block text-sm md:text-xs font-bold text-zinc-700 uppercase mb-1.5 md:mb-1">
                 Rejection Reason <span className="text-red-500">* (Mandatory)</span>
               </label>
               <textarea
@@ -4657,15 +5278,15 @@ export default function SubmissionsPage() {
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
                 placeholder="Explain why this registration is rejected..."
-                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-sm focus:border-red-500 focus:outline-none resize-none"
+                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-base md:text-sm focus:border-red-500 focus:outline-none resize-none"
               />
             </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => { setRejectConfirmReg(null); setRejectReason(""); }} disabled={submitting}>
+            <div className="flex flex-col-reverse md:flex-row md:justify-end gap-2.5 md:gap-2 pt-2">
+              <Button variant="outline" className="min-h-[48px] md:min-h-0 text-base md:text-sm" onClick={() => { setRejectConfirmReg(null); setRejectReason(""); }} disabled={submitting}>
                 Cancel
               </Button>
               <Button
-                className="bg-red-600 hover:bg-red-700 text-white font-bold"
+                className="min-h-[48px] md:min-h-0 text-base md:text-sm bg-red-600 hover:bg-red-700 text-white font-bold"
                 disabled={submitting || !rejectReason.trim()}
                 onClick={handleRejectRegistration}
               >
@@ -4678,16 +5299,16 @@ export default function SubmissionsPage() {
 
       {/* Stage 4: Revoke Approval Confirmation Dialog */}
       {revokeConfirmReg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" data-lenis-prevent>
-          <div className="bg-white border-2 border-zinc-900 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4 backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white border-t-2 md:border-2 border-zinc-900 rounded-t-3xl md:rounded-2xl max-w-md w-full p-5 md:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] md:pb-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-2 text-amber-600">
-              <AlertTriangleIcon className="w-6 h-6" />
+              <AlertTriangleIcon className="w-6 h-6 shrink-0" />
               <h3 className="font-bold text-lg text-zinc-900">Revoke Registration Approval</h3>
             </div>
-            <p className="text-sm text-zinc-600">
+            <p className="text-base md:text-sm text-zinc-600">
               Are you sure you want to revoke approval for <strong>{getStudentName(revokeConfirmReg)}</strong> ({revokeConfirmReg.email})?
             </p>
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm md:text-xs text-amber-900 space-y-1">
               <p className="font-bold">⚠️ Revocation Actions:</p>
               <ul className="list-disc list-inside space-y-0.5 text-amber-800">
                 <li>Registration returns to <strong>Pending Review</strong> status.</li>
@@ -4697,7 +5318,7 @@ export default function SubmissionsPage() {
               </ul>
             </div>
             <div>
-              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1">
+              <label className="block text-sm md:text-xs font-bold text-zinc-700 uppercase mb-1.5 md:mb-1">
                 Revocation Reason <span className="text-red-500">* (Mandatory)</span>
               </label>
               <textarea
@@ -4706,15 +5327,15 @@ export default function SubmissionsPage() {
                 value={revokeReason}
                 onChange={(e) => setRevokeReason(e.target.value)}
                 placeholder="State why approval is being revoked..."
-                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-sm focus:border-amber-500 focus:outline-none resize-none"
+                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-base md:text-sm focus:border-amber-500 focus:outline-none resize-none"
               />
             </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => { setRevokeConfirmReg(null); setRevokeReason(""); }} disabled={submitting}>
+            <div className="flex flex-col-reverse md:flex-row md:justify-end gap-2.5 md:gap-2 pt-2">
+              <Button variant="outline" className="min-h-[48px] md:min-h-0 text-base md:text-sm" onClick={() => { setRevokeConfirmReg(null); setRevokeReason(""); }} disabled={submitting}>
                 Cancel
               </Button>
               <Button
-                className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                className="min-h-[48px] md:min-h-0 text-base md:text-sm bg-amber-600 hover:bg-amber-700 text-white font-bold"
                 disabled={submitting || !revokeReason.trim()}
                 onClick={handleRevokeApproval}
               >
@@ -4727,22 +5348,23 @@ export default function SubmissionsPage() {
 
       {/* Stage 4: Request Re-Upload / Correction Modal */}
       {reuploadRegId && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-4 flex items-center justify-center backdrop-blur-sm" data-lenis-prevent>
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto space-y-4">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 p-0 md:p-4 flex items-end md:items-center justify-center backdrop-blur-sm" data-lenis-prevent>
+          <div className="bg-white rounded-t-3xl md:rounded-2xl max-w-lg w-full p-5 md:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] md:pb-6 shadow-2xl relative max-h-[92dvh] md:max-h-[90vh] overflow-y-auto space-y-4">
             <button
               onClick={() => { setReuploadRegId(null); setReuploadIssueText(""); setReuploadFields([]); }}
-              className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-800 transition-colors"
+              className="absolute top-3.5 right-3.5 md:top-4 md:right-4 w-11 h-11 md:w-auto md:h-auto flex items-center justify-center text-zinc-500 md:text-zinc-400 hover:text-zinc-800 transition-colors"
+              aria-label="Close re-upload dialog"
             >
               <XIcon className="w-5 h-5" />
             </button>
-            <h3 className="font-oswald font-bold text-xl text-[#3E1126] uppercase">Request Re-Upload / Correction</h3>
-            <p className="text-sm text-zinc-600">
+            <h3 className="font-oswald font-bold text-xl text-[#3E1126] uppercase pr-8">Request Re-Upload / Correction</h3>
+            <p className="text-base md:text-sm text-zinc-600">
               Select which fields or documents need correction, and provide a mandatory explanation for the student.
             </p>
 
             {/* Checkboxes for fields */}
             <div>
-              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1.5">
+              <label className="block text-sm md:text-xs font-bold text-zinc-700 uppercase mb-1.5">
                 Select Fields / Documents Needing Correction <span className="text-red-500">*</span>
               </label>
               <div className="space-y-2 border-2 border-zinc-100 rounded-xl p-3 max-h-48 overflow-y-auto bg-zinc-50">
@@ -4753,10 +5375,10 @@ export default function SubmissionsPage() {
                     : (selectedTrip?.consentFormTemplateUrl ? ["Completed Consent Form"] : [])),
                   ...(selectedTrip?.form?.fields?.map(f => f.name) || []),
                 ].map(fieldName => (
-                  <label key={fieldName} className="flex items-center gap-2 text-sm font-semibold text-zinc-700 cursor-pointer">
+                  <label key={fieldName} className="flex items-center gap-3 min-h-[40px] md:min-h-0 text-base md:text-sm font-semibold text-zinc-700 cursor-pointer">
                     <input 
                       type="checkbox"
-                      className="rounded text-[#3E1126] focus:ring-[#3E1126]"
+                      className="w-5 h-5 md:w-4 md:h-4 rounded text-[#3E1126] focus:ring-[#3E1126]"
                       checked={reuploadFields.includes(fieldName)}
                       onChange={(e) => {
                         if (e.target.checked) setReuploadFields([...reuploadFields, fieldName]);
@@ -4770,27 +5392,28 @@ export default function SubmissionsPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-zinc-700 uppercase mb-1.5">
+              <label className="block text-sm md:text-xs font-bold text-zinc-700 uppercase mb-1.5">
                 Correction Reason / Instructions <span className="text-red-500">* (Mandatory)</span>
               </label>
               <textarea
-                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-sm focus:border-[#3E1126]/40 focus:outline-none min-h-[100px] resize-none"
+                className="w-full border-2 border-zinc-200 rounded-xl p-3 text-base md:text-sm focus:border-[#3E1126]/40 focus:outline-none min-h-[100px] resize-none"
                 placeholder="Describe what needs to be fixed or re-uploaded (mandatory)..."
                 value={reuploadIssueText}
                 onChange={(e) => setReuploadIssueText(e.target.value)}
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse md:flex-row md:justify-end gap-2.5 md:gap-2 pt-2">
               <Button 
                 variant="outline" 
+                className="min-h-[48px] md:min-h-0 text-base md:text-sm"
                 onClick={() => { setReuploadRegId(null); setReuploadIssueText(""); setReuploadFields([]); }}
                 disabled={submitting}
               >
                 Cancel
               </Button>
               <Button 
-                className="bg-amber-500 hover:bg-amber-600 text-white font-bold"
+                className="min-h-[48px] md:min-h-0 text-base md:text-sm bg-amber-500 hover:bg-amber-600 text-white font-bold"
                 disabled={submitting || !reuploadIssueText.trim() || reuploadFields.length === 0}
                 onClick={handleSendReuploadRequest}
               >

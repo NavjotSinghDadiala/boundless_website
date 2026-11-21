@@ -52,23 +52,23 @@ export function TripCardAdmin({ trip }) {
               {trip.name}
             </h3>
 
-            <div className="space-y-1.5 text-xs text-stone-500">
+            <div className="space-y-1.5 text-sm md:text-xs text-stone-600 md:text-stone-500">
               {trip.destination && (
                 <div className="flex items-center gap-1.5 font-medium text-stone-700">
-                  <MapPinIcon className="size-3.5 text-[#3B001B] shrink-0" />
+                  <MapPinIcon className="size-4 md:size-3.5 text-[#3B001B] shrink-0" />
                   <span className="truncate">{trip.destination}</span>
                 </div>
               )}
               {formattedDates && (
                 <div className="flex items-center gap-1.5 font-medium text-stone-600">
-                  <CalendarIcon className="size-3.5 text-stone-400 shrink-0" />
+                  <CalendarIcon className="size-4 md:size-3.5 text-stone-400 shrink-0" />
                   <span>{formattedDates}</span>
                 </div>
               )}
             </div>
 
             {trip.description && (
-              <p className="line-clamp-2 text-xs text-stone-500 leading-relaxed pt-1">
+              <p className="line-clamp-2 text-sm md:text-xs text-stone-600 md:text-stone-500 leading-relaxed pt-1">
                 {trip.description}
               </p>
             )}
@@ -77,22 +77,22 @@ export function TripCardAdmin({ trip }) {
 
         {/* Footer with Seats */}
         <div className="p-4 sm:p-5 pt-0 border-t border-stone-100 mt-2">
-          <div className="flex items-center justify-between text-xs pt-3">
+          <div className="flex items-center justify-between text-sm md:text-xs pt-3">
             <div className="flex items-center gap-1.5 text-stone-600">
-              <UsersIcon className="size-3.5 text-stone-400" />
+              <UsersIcon className="size-4 md:size-3.5 text-stone-400" />
               <span className="font-semibold text-stone-900">{totalJoined}</span>
-              <span className="text-stone-400">/ {totalSeats || "∞"} joined</span>
+              <span className="text-stone-500 md:text-stone-400">/ {totalSeats || "∞"} joined</span>
             </div>
 
             {totalSeats && (
-              <span className="text-[11px] font-semibold text-stone-500">
+              <span className="text-xs md:text-[11px] font-semibold text-stone-600 md:text-stone-500">
                 {percentage}%
               </span>
             )}
           </div>
 
           {totalSeats ? (
-            <div className="w-full h-1.5 bg-stone-100 rounded-full mt-2 overflow-hidden">
+            <div className="w-full h-2 md:h-1.5 bg-stone-100 rounded-full mt-2 overflow-hidden">
               <div
                 className="h-full bg-[#3B001B] rounded-full transition-all duration-300"
                 style={{ width: `${percentage}%` }}
@@ -102,19 +102,19 @@ export function TripCardAdmin({ trip }) {
 
           {/* Gender Quota Breakdown on Card */}
           {(femaleReservedSeats > 0 || maleReservedSeats > 0) && (
-            <div className="flex items-center justify-between text-[11px] font-medium pt-2 mt-2 border-t border-dashed border-stone-100">
-              <span className="text-sky-800 bg-sky-50 px-2 py-0.5 rounded border border-sky-200/60 font-semibold flex items-center gap-1">
-                <span>🚹</span> Male: {maleReservedSeats} slots
+            <div className="grid grid-cols-2 gap-2 text-xs md:text-[11px] font-medium pt-2.5 mt-2.5 border-t border-dashed border-stone-100">
+              <span className="text-sky-800 bg-sky-50 px-2.5 py-1 md:px-2 md:py-0.5 rounded-lg md:rounded border border-sky-200/60 font-semibold flex items-center justify-center gap-1">
+                <span>🚹</span> Male: {maleReservedSeats}
               </span>
-              <span className="text-rose-800 bg-rose-50 px-2 py-0.5 rounded border border-rose-200/60 font-semibold flex items-center gap-1">
-                <span>🚺</span> Female: {femaleReservedSeats} slots
+              <span className="text-rose-800 bg-rose-50 px-2.5 py-1 md:px-2 md:py-0.5 rounded-lg md:rounded border border-rose-200/60 font-semibold flex items-center justify-center gap-1">
+                <span>🚺</span> Female: {femaleReservedSeats}
               </span>
             </div>
           )}
 
-          <div className="mt-3 flex items-center justify-between text-xs text-stone-400 group-hover:text-[#3B001B] font-medium transition-colors">
+          <div className="mt-3 pt-1 flex items-center justify-between text-sm md:text-xs text-[#3B001B] md:text-stone-400 group-hover:text-[#3B001B] font-semibold md:font-medium transition-colors">
             <span>Manage expedition</span>
-            <ChevronRightIcon className="size-3.5 transition-transform group-hover:translate-x-1" />
+            <ChevronRightIcon className="size-4 md:size-3.5 transition-transform group-hover:translate-x-1" />
           </div>
         </div>
       </div>

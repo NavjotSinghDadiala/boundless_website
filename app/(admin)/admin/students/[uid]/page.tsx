@@ -157,38 +157,39 @@ export default function StudentDetailPage() {
       : trips;
 
   return (
-    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+    <div className="space-y-5 md:space-y-6 p-4 sm:p-6 lg:p-8 pb-[calc(2rem+env(safe-area-inset-bottom))] max-w-7xl mx-auto">
       {/* Back Button & Breadcrumbs */}
       <div className="flex items-center justify-between gap-4">
         <Link
           href="/admin/students"
-          className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium text-stone-500 hover:text-stone-900 transition-colors"
+          className="inline-flex items-center gap-1.5 min-h-[44px] md:min-h-0 text-sm font-medium text-stone-600 hover:text-stone-900 transition-colors"
         >
           <ArrowLeft className="size-4" />
-          <span>Back to Students Directory</span>
+          <span>Back to Students</span>
         </Link>
 
         <button
           onClick={fetchProfile}
-          className="p-2 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 transition-colors"
+          className="w-11 h-11 md:w-auto md:h-auto md:p-2 rounded-xl md:rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 transition-colors flex items-center justify-center"
           title="Refresh Data"
+          aria-label="Refresh student profile"
         >
           <RefreshCw className="size-4" />
         </button>
       </div>
 
       {/* Header Profile Hero Card */}
-      <div className="bg-white rounded-2xl border border-stone-200/90 shadow-sm p-6 sm:p-8">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="bg-white rounded-2xl border border-stone-200/90 shadow-sm p-5 sm:p-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 md:gap-6">
           {/* Avatar & Key Details */}
-          <div className="flex items-start sm:items-center gap-5">
-            <div className="size-16 sm:size-20 rounded-2xl bg-[#3B001B] text-amber-200 font-bold text-2xl sm:text-3xl flex items-center justify-center shrink-0 shadow-sm border-2 border-amber-400/30">
+          <div className="flex items-start sm:items-center gap-4 sm:gap-5">
+            <div className="size-14 sm:size-20 rounded-2xl bg-[#3B001B] text-amber-200 font-bold text-2xl sm:text-3xl flex items-center justify-center shrink-0 shadow-sm border-2 border-amber-400/30">
               {initial}
             </div>
 
-            <div className="space-y-1.5 min-w-0">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="text-xl sm:text-2xl font-bold text-stone-900 tracking-tight">
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-bold text-stone-900 tracking-tight break-words">
                   {student.name}
                 </h1>
                 {student.studentIdVerified ? (
@@ -204,15 +205,15 @@ export default function StudentDetailPage() {
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm text-stone-600">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-stone-600">
                 <span className="font-mono font-medium text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
                   {student.studentId || "No Roll Number"}
                 </span>
-                <span className="flex items-center gap-1 text-stone-500">
-                  <Mail className="size-3.5 text-stone-400" />
+                <span className="flex items-center gap-1 text-stone-600 break-all">
+                  <Mail className="size-3.5 text-stone-400 shrink-0" />
                   {student.email}
                 </span>
-                <span className="font-mono text-[11px] text-stone-400">
+                <span className="font-mono text-xs md:text-[11px] text-stone-400 break-all">
                   UID: {student.uid}
                 </span>
               </div>
@@ -220,13 +221,13 @@ export default function StudentDetailPage() {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3">
             {student.studentIdUrl && (
               <a
                 href={student.studentIdUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 hover:bg-stone-50 text-xs sm:text-sm font-semibold transition-all shadow-sm"
+                className="w-full sm:w-auto min-h-[48px] md:min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-800 hover:bg-stone-50 text-base md:text-sm font-semibold transition-all shadow-sm"
               >
                 <FileText className="size-4 text-[#3B001B]" />
                 <span>View Student ID Card</span>
@@ -237,7 +238,7 @@ export default function StudentDetailPage() {
             <button
               onClick={handleToggleVerification}
               disabled={updatingVerification}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all shadow-sm ${
+              className={`w-full sm:w-auto min-h-[48px] md:min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-base md:text-sm font-semibold transition-all shadow-sm ${
                 student.studentIdVerified
                   ? "bg-stone-100 hover:bg-rose-50 text-stone-700 hover:text-rose-700 border border-stone-200"
                   : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/10"

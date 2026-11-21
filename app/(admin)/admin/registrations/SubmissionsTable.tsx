@@ -3,6 +3,7 @@
 import React from "react";
 import { ExternalLinkIcon } from "lucide-react";
 import { Registration } from "./page";
+import { AdminMobileCardList, AdminMobileCard } from "@/components/admin";
 
 type Props = {
   submissions: Registration[];
@@ -51,12 +52,12 @@ function ViewButton({ url, label = "View" }: { url: string; label?: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#3B001B]/5 hover:bg-[#3B001B] text-[#3B001B] hover:text-white border border-[#3B001B]/15 hover:border-[#3B001B] transition-all shadow-xs cursor-pointer select-none group"
+      className="inline-flex items-center gap-1.5 min-h-[40px] md:min-h-0 px-3 md:px-2.5 py-1.5 md:py-1 rounded-lg md:rounded-md text-sm md:text-xs font-medium bg-[#3B001B]/5 hover:bg-[#3B001B] text-[#3B001B] hover:text-white border border-[#3B001B]/15 hover:border-[#3B001B] transition-all shadow-xs cursor-pointer select-none group"
       title={isDrive ? `Open Google Drive link in new tab` : `Open link in new tab`}
       onClick={(e) => e.stopPropagation()}
     >
       <span>{label}</span>
-      <ExternalLinkIcon className="size-3 opacity-70 group-hover:opacity-100 transition-opacity" />
+      <ExternalLinkIcon className="size-3.5 md:size-3 opacity-70 group-hover:opacity-100 transition-opacity" />
     </a>
   );
 }
@@ -110,84 +111,142 @@ export default function SubmissionsTable({ submissions }: Props) {
 
   if (submissions.length === 0) {
     return (
-      <div className="w-full rounded-xl border border-stone-200/80 bg-white p-8 text-center text-stone-500 text-sm shadow-sm">
+      <div className="w-full rounded-xl border border-stone-200/80 bg-white p-8 text-center text-stone-500 text-base md:text-sm shadow-sm">
         No registration submissions found in this category.
       </div>
     );
   }
 
   return (
-    <div className="w-full rounded-xl border border-stone-200/80 bg-white shadow-sm overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs sm:text-sm text-stone-700">
-          <thead className="border-b border-stone-200/80 bg-stone-50/70 text-[11px] font-semibold uppercase tracking-wider text-stone-500">
-            <tr>
-              {columns.map((col, i) => (
-                <th
-                  key={col}
-                  className={`px-4 py-3.5 whitespace-nowrap font-semibold text-stone-600 ${
-                    i === 0 ? "sticky left-0 z-20 bg-stone-50" : ""
-                  }`}
-                >
-                  {col}
-                </th>
-              ))}
-            </tr>
-          </thead>
-
-          <tbody className="divide-y divide-stone-100 bg-white">
-            {submissions.map((row, idx) => (
-              <tr
-                key={row.id}
-                className="hover:bg-stone-50/80 transition-colors"
-              >
-                {/* Row number — sticky left */}
-                <td className="px-4 py-3 sticky left-0 bg-white hover:bg-stone-50 font-medium text-stone-500 z-10 whitespace-nowrap">
-                  {idx + 1}
-                </td>
-
-                {/* Student Name */}
-                <td className="px-4 py-3 font-semibold text-xs text-stone-900 whitespace-nowrap">
-                  {row.name || row.studentName || "—"}
-                </td>
-
-                {/* Email */}
-                <td className="px-4 py-3 font-mono text-xs text-[#3B001B] font-medium whitespace-nowrap">
+    <>
+      {/* Mobile Expandable Response Cards (< md) */}
+      <div className="md:hidden">
+        <AdminMobileCardList>
+          {submissions.map((row, idx) => (
+            <AdminMobileCard
+              key={row.id}
+              title={row.name || row.studentName || "—"}
+              subtitle={
+                <span className="font-mono text-sm text-[#3B001B] break-all">
                   {row.email}
-                </td>
-
-                {/* UID */}
-                <td className="px-4 py-3 font-mono text-xs text-stone-400 whitespace-nowrap">
-                  {row.uid}
-                </td>
-
-                {/* Submitted At */}
-                <td className="px-4 py-3 text-stone-500 whitespace-nowrap">
-                  {formatDate(row.submittedAt)}
-                </td>
-
-                {/* Dynamic formData columns */}
-                {formDataKeys.map((key) => {
-                  const val = row.formData?.[key];
-                  const hasLink = isUrlOrDriveLink(val);
-
-                  return (
-                    <td
-                      key={key}
-                      className={`px-4 py-3 whitespace-nowrap text-stone-800 ${
-                        hasLink ? "" : "max-w-[240px] truncate"
-                      }`}
-                    >
-                      {renderCellContent(val)}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </span>
+              }
+              badge={
+                <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-full bg-stone-100 text-stone-600">
+                  #{idx + 1}
+                </span>
+              }
+              fields={[
+                { label: "Submitted", value: formatDate(row.submittedAt) },
+                {
+                  label: "UID",
+                  value: (
+                    <span className="font-mono text-xs text-stone-500 break-all">
+                      {row.uid}
+                    </span>
+                  ),
+                },
+              ]}
+              detailsLabel={`View form answers (${formDataKeys.length})`}
+              details={
+                formDataKeys.length > 0 ? (
+                  <div className="space-y-2.5 pt-1">
+                    {formDataKeys.map((key) => (
+                      <div
+                        key={key}
+                        className="border-b border-stone-100 pb-2 last:border-0 last:pb-0"
+                      >
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          {key}
+                        </p>
+                        <div className="text-sm font-medium text-stone-900 mt-1 break-words">
+                          {renderCellContent(row.formData?.[key])}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-stone-500">No form fields recorded.</p>
+                )
+              }
+            />
+          ))}
+        </AdminMobileCardList>
       </div>
-    </div>
+
+      {/* Desktop Wide Table (>= md — Preserved) */}
+      <div className="hidden md:block w-full rounded-xl border border-stone-200/80 bg-white shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs sm:text-sm text-stone-700">
+            <thead className="border-b border-stone-200/80 bg-stone-50/70 text-[11px] font-semibold uppercase tracking-wider text-stone-500">
+              <tr>
+                {columns.map((col, i) => (
+                  <th
+                    key={col}
+                    className={`px-4 py-3.5 whitespace-nowrap font-semibold text-stone-600 ${
+                      i === 0 ? "sticky left-0 z-20 bg-stone-50" : ""
+                    }`}
+                  >
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-stone-100 bg-white">
+              {submissions.map((row, idx) => (
+                <tr
+                  key={row.id}
+                  className="hover:bg-stone-50/80 transition-colors"
+                >
+                  {/* Row number — sticky left */}
+                  <td className="px-4 py-3 sticky left-0 bg-white hover:bg-stone-50 font-medium text-stone-500 z-10 whitespace-nowrap">
+                    {idx + 1}
+                  </td>
+
+                  {/* Student Name */}
+                  <td className="px-4 py-3 font-semibold text-xs text-stone-900 whitespace-nowrap">
+                    {row.name || row.studentName || "—"}
+                  </td>
+
+                  {/* Email */}
+                  <td className="px-4 py-3 font-mono text-xs text-[#3B001B] font-medium whitespace-nowrap">
+                    {row.email}
+                  </td>
+
+                  {/* UID */}
+                  <td className="px-4 py-3 font-mono text-xs text-stone-400 whitespace-nowrap">
+                    {row.uid}
+                  </td>
+
+                  {/* Submitted At */}
+                  <td className="px-4 py-3 text-stone-500 whitespace-nowrap">
+                    {formatDate(row.submittedAt)}
+                  </td>
+
+                  {/* Dynamic formData columns */}
+                  {formDataKeys.map((key) => {
+                    const val = row.formData?.[key];
+                    const hasLink = isUrlOrDriveLink(val);
+
+                    return (
+                      <td
+                        key={key}
+                        className={`px-4 py-3 whitespace-nowrap text-stone-800 ${
+                          hasLink ? "" : "max-w-[240px] truncate"
+                        }`}
+                      >
+                        {renderCellContent(val)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
   );
 }
 

@@ -41,6 +41,8 @@ import {
   AdminTableRow,
   AdminTableCell,
   AdminTableHeaderCell,
+  AdminMobileCardList,
+  AdminMobileCard,
 } from "@/components/admin";
 import { formatTripDates, formatRegistrationDeadline } from "@/lib/tripDateUtils";
 
@@ -560,7 +562,40 @@ export default function TripViewPage() {
             />
           </div>
         ) : (
-          <AdminTable>
+          <AdminTable
+            mobileContent={
+              <div className="p-3.5">
+                <AdminMobileCardList>
+                  {registrations.map((reg) => {
+                    const nameKey = Object.keys(reg.formData || {}).find(
+                      (k) =>
+                        k.toLowerCase().includes("name") ||
+                        k.toLowerCase().includes("fullname")
+                    );
+                    const studentName = nameKey ? reg.formData[nameKey] : "Student";
+                    return (
+                      <AdminMobileCard
+                        key={reg.id}
+                        title={studentName}
+                        subtitle={
+                          <span className="font-mono text-sm text-stone-600 break-all">
+                            {reg.email}
+                          </span>
+                        }
+                        badge={<AdminBadge status={reg.status || "registered"} size="sm" />}
+                        fields={[
+                          { label: "Gender", value: <span className="capitalize">{reg.gender || "—"}</span> },
+                          { label: "Registered", value: reg.submittedAt ? new Date(reg.submittedAt).toLocaleDateString() : "—" },
+                          { label: "Student ID", value: reg.studentIdVerified ? "Verified" : "Pending" },
+                          { label: "Consent", value: reg.consentFormVerified ? "Verified" : "Pending" },
+                        ]}
+                      />
+                    );
+                  })}
+                </AdminMobileCardList>
+              </div>
+            }
+          >
             <AdminTableHead>
               <tr>
                 <AdminTableHeaderCell>Attendee</AdminTableHeaderCell>
@@ -647,7 +682,62 @@ export default function TripViewPage() {
             />
           </div>
         ) : (
-          <AdminTable>
+          <AdminTable
+            mobileContent={
+              <div className="p-3.5">
+                <AdminMobileCardList>
+                  {waitlistedList.map((reg, index) => {
+                    const sName = getStudentName(reg);
+                    const sId = getStudentId(reg);
+                    const pos = reg.waitlistPosition || index + 1;
+                    const uid = reg.uid || (reg.id ? reg.id.split("_")[1] : "");
+                    return (
+                      <AdminMobileCard
+                        key={reg.id || index}
+                        title={sName}
+                        subtitle={
+                          <span className="font-mono text-sm text-stone-600 break-all">
+                            {reg.email}
+                          </span>
+                        }
+                        badge={
+                          <AdminBadge status="waitlisted" size="sm">
+                            WAITLISTED #{pos}
+                          </AdminBadge>
+                        }
+                        fields={[
+                          { label: "Student ID", value: <span className="font-mono">{sId}</span> },
+                          {
+                            label: "Registered",
+                            value: reg.submittedAt ? new Date(reg.submittedAt).toLocaleDateString("en-IN") : "—",
+                          },
+                        ]}
+                        actions={
+                          <div className="grid grid-cols-2 gap-2.5 w-full">
+                            {uid ? (
+                              <Link
+                                href={`/admin/students/${uid}`}
+                                className="min-h-[48px] px-3 py-2.5 rounded-xl border border-stone-200 bg-white text-[#3B001B] text-sm font-semibold flex items-center justify-center gap-1.5"
+                              >
+                                <span>Inspect</span>
+                                <ExternalLinkIcon className="size-3.5" />
+                              </Link>
+                            ) : <div />}
+                            <Link
+                              href={`/admin/registrations?tripId=${trip.id}`}
+                              className="min-h-[48px] px-3 py-2.5 rounded-xl bg-[#3B001B] text-white text-sm font-semibold flex items-center justify-center"
+                            >
+                              Review
+                            </Link>
+                          </div>
+                        }
+                      />
+                    );
+                  })}
+                </AdminMobileCardList>
+              </div>
+            }
+          >
             <AdminTableHead>
               <tr>
                 <AdminTableHeaderCell>Position</AdminTableHeaderCell>

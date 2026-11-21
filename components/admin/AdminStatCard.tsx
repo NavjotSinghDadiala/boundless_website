@@ -50,45 +50,72 @@ export function AdminStatCard({
 
   const content = (
     <div
-      className={`group relative bg-white rounded-xl border border-stone-200/80 p-5 shadow-sm transition-all duration-200 hover:shadow-md ${variantStyles.accent} ${className}`}
+      className={`group relative bg-white rounded-2xl sm:rounded-xl border border-stone-200/80 p-4 sm:p-5 shadow-sm transition-all duration-200 hover:shadow-md h-full flex flex-col justify-between ${variantStyles.accent} ${className}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-stone-500">
+      <div className="flex items-start justify-between gap-2.5 sm:gap-3">
+        <div className="space-y-1 min-w-0">
+          <p className="text-sm sm:text-xs font-semibold sm:uppercase sm:tracking-wider text-stone-600 sm:text-stone-500 leading-snug">
             {title}
           </p>
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-2xl sm:text-3xl font-bold tracking-tight text-stone-900">
               {value}
             </span>
             {badge && (
-              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
+              <span className="text-xs sm:text-[11px] font-medium px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
                 {badge}
               </span>
             )}
           </div>
           {subtitle && (
-            <p className="text-xs text-stone-500 pt-0.5">{subtitle}</p>
+            <p className="text-sm sm:text-xs text-stone-500 pt-0.5 leading-snug">
+              {subtitle}
+            </p>
           )}
         </div>
 
-        <div className={`p-3 rounded-xl ${variantStyles.iconBg} shrink-0`}>
+        <div
+          className={`p-2.5 sm:p-3 rounded-xl ${variantStyles.iconBg} shrink-0`}
+        >
           <Icon className="size-5" />
         </div>
       </div>
 
       {href && (
-        <div className="mt-3 pt-3 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500 group-hover:text-stone-900 transition-colors">
+        <div className="mt-3 pt-2.5 sm:pt-3 border-t border-stone-100 flex items-center justify-between text-sm sm:text-xs text-stone-600 sm:text-stone-500 group-hover:text-stone-900 font-medium transition-colors">
           <span>View details</span>
-          <ArrowUpRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+          <ArrowUpRightIcon className="size-4 sm:size-3.5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
         </div>
       )}
     </div>
   );
 
   if (href) {
-    return <Link href={href}>{content}</Link>;
+    return (
+      <Link href={href} className="block h-full">
+        {content}
+      </Link>
+    );
   }
 
   return content;
+}
+
+/**
+ * Reusable responsive stat grid: 2 columns on mobile, 4 columns on desktop.
+ */
+export function AdminStatGrid({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 ${className}`}
+    >
+      {children}
+    </div>
+  );
 }

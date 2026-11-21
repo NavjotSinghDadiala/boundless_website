@@ -105,7 +105,7 @@ export default function AdminUploadForm() {
   };
 
   return (
-    <div className="space-y-6 p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto">
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8 pb-[calc(2rem+env(safe-area-inset-bottom))] max-w-4xl mx-auto [&_input:not([type='file'])]:text-base md:[&_input:not([type='file'])]:text-sm [&_input:not([type='file'])]:min-h-[48px] md:[&_input:not([type='file'])]:min-h-0 [&_textarea]:text-base md:[&_textarea]:text-sm [&_button[type='submit']]:min-h-[48px] md:[&_button[type='submit']]:min-h-0 [&_button[type='submit']]:text-base md:[&_button[type='submit']]:text-sm">
       <AdminPageHeader
         title="Add Upcoming Trip Flyer"
         description="Configure a new promotional showcase flyer for the Boundless homepage."

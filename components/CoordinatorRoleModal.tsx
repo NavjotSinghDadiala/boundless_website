@@ -84,16 +84,16 @@ export default function CoordinatorRoleModal({
                 <h3 className="font-oswald text-lg font-bold text-[#3B001B] uppercase tracking-wide group-hover:text-[#46001D]">
                   Traveller
                 </h3>
-                <p className="text-xs text-[#3B001B]/70 font-semibold uppercase tracking-wider mb-2">
+                <p className="text-sm sm:text-xs text-[#3B001B]/70 font-semibold uppercase tracking-wider mb-2">
                   Student Experience
                 </p>
-                <p className="text-xs text-[#3B001B]/80 leading-relaxed">
+                <p className="text-sm sm:text-xs text-[#3B001B]/80 leading-relaxed">
                   Register for upcoming trips, view trip itineraries, submit corrections, and manage your booked Boundless journeys.
                 </p>
               </div>
 
               <div className="mt-5 pt-3 border-t border-[#3B001B]/10">
-                <span className="inline-flex items-center text-xs font-bold font-oswald uppercase tracking-wider text-[#3B001B] group-hover:translate-x-1 transition-transform">
+                <span className="inline-flex items-center text-sm sm:text-xs font-bold font-oswald uppercase tracking-wider text-[#3B001B] group-hover:translate-x-1 transition-transform">
                   Continue as Traveller →
                 </span>
               </div>
@@ -120,16 +120,16 @@ export default function CoordinatorRoleModal({
                 <h3 className="font-oswald text-lg font-bold text-[#FFE878] uppercase tracking-wide">
                   Coordinator
                 </h3>
-                <p className="text-xs text-[#FFE878]/80 font-semibold uppercase tracking-wider mb-2">
+                <p className="text-sm sm:text-xs text-[#FFE878]/80 font-semibold uppercase tracking-wider mb-2">
                   Trip Management
                 </p>
-                <p className="text-xs text-[#FFE878]/90 leading-relaxed">
+                <p className="text-sm sm:text-xs text-[#FFE878]/90 leading-relaxed">
                   Manage your assigned trips, coordinate on-ground travel, view approved student travellers, and update trip briefings.
                 </p>
               </div>
 
               <div className="mt-5 pt-3 border-t border-[#FFE878]/20">
-                <span className="inline-flex items-center text-xs font-bold font-oswald uppercase tracking-wider text-[#FFE878] group-hover:translate-x-1 transition-transform">
+                <span className="inline-flex items-center text-sm sm:text-xs font-bold font-oswald uppercase tracking-wider text-[#FFE878] group-hover:translate-x-1 transition-transform">
                   Enter Coordinator Dashboard →
                 </span>
               </div>
@@ -138,7 +138,7 @@ export default function CoordinatorRoleModal({
 
           {/* Footer Note */}
           <div className="mt-6 pt-4 border-t border-[#3B001B]/10 text-center">
-            <p className="text-xs text-[#3B001B]/60">
+            <p className="text-sm sm:text-xs text-[#3B001B]/65">
               You can switch between Traveller and Coordinator mode at any time via the navigation menu.
             </p>
           </div>

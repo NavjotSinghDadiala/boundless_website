@@ -142,12 +142,12 @@ export default function UpcomingTripsAdminPage() {
                   </div>
                 )}
 
-                <div className="p-5 space-y-2">
+                <div className="p-4 sm:p-5 space-y-2">
                   <h3 className="text-lg font-bold text-stone-900 tracking-tight">
                     {trip.title}
                   </h3>
                   {trip.details && (
-                    <p className="text-xs text-stone-600 leading-relaxed whitespace-pre-line">
+                    <p className="text-sm md:text-xs text-stone-600 leading-relaxed whitespace-pre-line">
                       {trip.details}
                     </p>
                   )}
@@ -155,27 +155,27 @@ export default function UpcomingTripsAdminPage() {
               </div>
 
               {/* Action Bar */}
-              <div className="p-5 pt-0 border-t border-stone-100 mt-3 flex items-center justify-between gap-2">
+              <div className="p-4 sm:p-5 pt-3 border-t border-stone-100 mt-3 flex items-center justify-between gap-2">
                 {trip.registrationLink ? (
                   <a
                     href={trip.registrationLink}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs text-[#3B001B] hover:underline font-semibold"
+                    className="inline-flex items-center gap-1.5 min-h-[44px] md:min-h-0 text-sm md:text-xs text-[#3B001B] hover:underline font-semibold"
                   >
                     <span>Registration Link</span>
-                    <ExternalLinkIcon className="size-3" />
+                    <ExternalLinkIcon className="size-4 md:size-3" />
                   </a>
                 ) : (
-                  <span className="text-xs text-stone-400">No link set</span>
+                  <span className="text-sm md:text-xs text-stone-400">No link set</span>
                 )}
 
                 <button
                   type="button"
                   onClick={() => setDeleteId(trip.id)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-stone-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 text-xs font-medium transition-colors"
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] md:min-h-0 px-3.5 md:px-2.5 py-2 md:py-1.5 rounded-xl md:rounded-lg border border-stone-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300 text-sm md:text-xs font-semibold md:font-medium transition-colors"
                 >
-                  <Trash2Icon className="size-3.5" />
+                  <Trash2Icon className="size-4 md:size-3.5" />
                   <span>Delete</span>
                 </button>
               </div>

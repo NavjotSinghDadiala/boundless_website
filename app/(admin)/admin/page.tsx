@@ -18,15 +18,15 @@ import {
   SettingsIcon,
   UserCheckIcon,
   ArrowRightIcon,
-  AlertCircleIcon,
   ChevronRightIcon,
-  ExternalLinkIcon,
+  ChevronDownIcon,
   GraduationCap,
 } from "lucide-react";
 
 import {
   AdminPageHeader,
   AdminStatCard,
+  AdminStatGrid,
   AdminCard,
   AdminBadge,
   AdminEmptyState,
@@ -37,6 +37,8 @@ import {
   AdminTableRow,
   AdminTableCell,
   AdminTableHeaderCell,
+  AdminMobileCardList,
+  AdminMobileCard,
 } from "@/components/admin";
 import { formatTripDates } from "@/lib/tripDateUtils";
 
@@ -163,6 +165,7 @@ export default function AdminDashboardPage() {
   const [approvedCount, setApprovedCount] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [showAllModules, setShowAllModules] = useState(false);
 
   // Authoritative real-time aggregation metrics
   const [dashboardStats, setDashboardStats] = useState({
@@ -251,16 +254,79 @@ export default function AdminDashboardPage() {
   const upcomingTrips = trips.filter((t) => !t.isCompleted);
   const openTrips = trips.filter((t) => t.registrationOpen && !t.isCompleted);
 
+  const mobilePriorityModuleUrls = new Set([
+    "/admin/registrations",
+    "/admin/trip",
+    "/admin/trip/upcoming",
+    "/admin/students",
+  ]);
+  const mobileVisibleModules = showAllModules
+    ? adminModules
+    : adminModules.filter((m) => mobilePriorityModuleUrls.has(m.url));
+
+  const renderUpcomingMobileCards = () => (
+    <AdminMobileCardList>
+      {upcomingTrips.slice(0, 5).map((trip) => (
+        <AdminMobileCard
+          key={trip.id}
+          title={trip.name}
+          subtitle={
+            trip.destination ? (
+              <span className="inline-flex items-center gap-1.5 text-sm text-stone-600">
+                <MapPinIcon className="size-4 text-stone-400 shrink-0" />
+                <span>{trip.destination}</span>
+              </span>
+            ) : undefined
+          }
+          badge={
+            <AdminBadge status={trip.registrationOpen ? "open" : "closed"} />
+          }
+          fields={[
+            {
+              label: "Dates",
+              value: formatTripDates(trip.startDate, trip.endDate) || "Dates TBA",
+            },
+            {
+              label: "Capacity",
+              value: (
+                <span>
+                  <strong className="text-stone-900">{trip.totalJoined || 0}</strong>{" "}
+                  <span className="text-stone-500">/ {trip.totalSeats || "∞"}</span>
+                </span>
+              ),
+            },
+          ]}
+          actions={
+            <div className="grid grid-cols-2 gap-2.5 w-full">
+              <Link
+                href={`/admin/trip/view/${trip.id}`}
+                className="min-h-[48px] px-3 py-2.5 rounded-xl border border-stone-200 bg-white active:bg-stone-50 text-stone-800 text-sm font-semibold flex items-center justify-center transition-colors"
+              >
+                Overview
+              </Link>
+              <Link
+                href={`/admin/registrations?tripId=${trip.id}`}
+                className="min-h-[48px] px-3 py-2.5 rounded-xl bg-[#3B001B] active:bg-[#46001D] text-white text-sm font-semibold flex items-center justify-center shadow-2xs transition-colors"
+              >
+                Queue
+              </Link>
+            </div>
+          }
+        />
+      ))}
+    </AdminMobileCardList>
+  );
+
   return (
-    <div className="space-y-8 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+    <div className="space-y-6 md:space-y-8 p-4 sm:p-6 lg:p-8 pb-[calc(2rem+env(safe-area-inset-bottom))] max-w-7xl mx-auto">
       {/* Page Header */}
       <AdminPageHeader
         title="Operations Dashboard"
-        description="Welcome to the Boundless Society administration console. Monitor live registration pipelines, active expedition logistics, and community resources."
+        description="Monitor live registration pipelines, active expedition logistics, and community resources."
         primaryAction={
           <Link
             href="/admin/trip/add"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#3B001B] text-white text-xs sm:text-sm font-semibold hover:bg-[#46001D] shadow-sm transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#3B001B] text-white text-sm font-semibold hover:bg-[#46001D] shadow-sm transition-all"
           >
             <span>+ Create Expedition</span>
           </Link>
@@ -268,7 +334,7 @@ export default function AdminDashboardPage() {
         secondaryActions={
           <Link
             href="/admin/registrations"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-700 text-xs sm:text-sm font-semibold hover:bg-stone-50 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-stone-200 bg-white text-stone-700 text-sm font-semibold hover:bg-stone-50 transition-colors"
           >
             <span>Review Registrations</span>
           </Link>
@@ -280,12 +346,12 @@ export default function AdminDashboardPage() {
         <AdminLoadingState type="cards" cards={4} />
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <AdminStatGrid>
             <AdminStatCard
               title="Total Students"
               value={dashboardStats.totalStudents}
               icon={GraduationCap}
-              subtitle="Canonical Boundless directory"
+              subtitle="Canonical directory"
               variant="maroon"
               href="/admin/students"
             />
@@ -293,30 +359,68 @@ export default function AdminDashboardPage() {
               title="Verified Students"
               value={dashboardStats.verifiedStudents}
               icon={UserCheckIcon}
-              subtitle={`${dashboardStats.unverifiedStudents} awaiting verification`}
+              subtitle={`${dashboardStats.unverifiedStudents} awaiting`}
               variant="emerald"
               href="/admin/students?verification=verified"
             />
             <AdminStatCard
-              title="Completed Expeditions"
+              title="Completed Trips"
               value={dashboardStats.completedTrips}
               icon={Award}
-              subtitle="Indexed in permanent history"
+              subtitle="Permanent history"
               variant="blue"
               href="/admin/previous-trips"
             />
             <AdminStatCard
-              title="Approved Participations"
+              title="Approved Seats"
               value={dashboardStats.totalApprovedParticipations || approvedCount}
               icon={CheckCircle2Icon}
-              subtitle="Confirmed attendees across trips"
+              subtitle="Confirmed attendees"
               variant="amber"
               href="/admin/registrations"
             />
+          </AdminStatGrid>
+
+          {/* Quick Operational Sub-Bar: Flat divider list on mobile, 3-col strip on desktop */}
+          <div className="md:hidden bg-white rounded-2xl border border-stone-200/80 divide-y divide-stone-100 shadow-xs">
+            <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <CalendarIcon className="size-4 text-stone-500 shrink-0" />
+                <span className="text-sm text-stone-700 font-medium">Upcoming Expeditions</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="font-bold text-stone-900 text-base">{upcomingTrips.length}</span>
+                <span className="text-sm text-stone-500">({openTrips.length} open)</span>
+              </div>
+            </div>
+
+            <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <ClockIcon className="size-4 text-amber-600 shrink-0" />
+                <span className="text-sm text-stone-700 font-medium">Pending Registrations</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-bold text-amber-700 text-base">{pendingCount}</span>
+                {pendingCount > 0 && (
+                  <span className="text-xs uppercase font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-full">
+                    Action
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="px-4 py-3.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <CompassIcon className="size-4 text-stone-500 shrink-0" />
+                <span className="text-sm text-stone-700 font-medium">Students With Trips</span>
+              </div>
+              <span className="font-bold text-stone-900 text-base shrink-0">
+                {dashboardStats.studentsWithTrips}
+              </span>
+            </div>
           </div>
 
-          {/* Quick Operational Sub-Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="hidden md:grid md:grid-cols-3 gap-3">
             <div className="bg-stone-50 rounded-xl border border-stone-200/80 p-3.5 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <CalendarIcon className="size-4 text-stone-500" />
@@ -359,35 +463,38 @@ export default function AdminDashboardPage() {
       {/* TWO COLUMN OPERATIONAL VIEW */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT 2 COLUMNS: RECENT / UPCOMING TRIPS */}
-        <div className="lg:col-span-2 space-y-6">
-          <AdminCard
-            title="Upcoming & Active Expeditions"
-            subtitle="Overview of scheduled trips and current seat capacities"
-            icon={CompassIcon}
-            headerActions={
+        <div className="lg:col-span-2 space-y-4 md:space-y-6">
+          {/* Mobile Flat Section Header (avoids nested cards) */}
+          <div className="md:hidden space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold text-stone-900 tracking-tight">
+                  Upcoming Expeditions
+                </h2>
+                <p className="text-sm text-stone-600">
+                  Scheduled trips and seat capacities
+                </p>
+              </div>
               <Link
                 href="/admin/trip"
-                className="text-xs text-[#3B001B] hover:underline font-semibold flex items-center gap-1"
+                className="min-h-[44px] px-2.5 text-sm text-[#3B001B] font-semibold inline-flex items-center gap-1 shrink-0"
               >
                 <span>View all</span>
-                <ChevronRightIcon className="size-3" />
+                <ChevronRightIcon className="size-4" />
               </Link>
-            }
-            noPadding
-          >
+            </div>
+
             {loading ? (
-              <div className="p-6">
-                <AdminLoadingState text="Loading expeditions..." />
-              </div>
+              <AdminLoadingState text="Loading expeditions..." />
             ) : upcomingTrips.length === 0 ? (
-              <div className="p-6">
+              <div className="bg-white rounded-2xl border border-stone-200/80 p-5">
                 <AdminEmptyState
                   title="No Upcoming Expeditions"
                   description="There are currently no active or upcoming trips scheduled in the database."
                   action={
                     <Link
                       href="/admin/trip/add"
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#3B001B] text-white text-xs font-semibold"
+                      className="inline-flex items-center justify-center gap-2 min-h-[48px] px-5 py-2.5 rounded-xl bg-[#3B001B] text-white text-base font-semibold"
                     >
                       + Add New Trip
                     </Link>
@@ -396,76 +503,119 @@ export default function AdminDashboardPage() {
                 />
               </div>
             ) : (
-              <AdminTable>
-                <AdminTableHead>
-                  <tr>
-                    <AdminTableHeaderCell>Expedition</AdminTableHeaderCell>
-                    <AdminTableHeaderCell>Dates</AdminTableHeaderCell>
-                    <AdminTableHeaderCell>Status</AdminTableHeaderCell>
-                    <AdminTableHeaderCell>Capacity</AdminTableHeaderCell>
-                    <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
-                  </tr>
-                </AdminTableHead>
-                <AdminTableBody>
-                  {upcomingTrips.slice(0, 5).map((trip) => (
-                    <AdminTableRow key={trip.id}>
-                      <AdminTableCell>
-                        <div className="font-semibold text-stone-900 line-clamp-1">
-                          {trip.name}
-                        </div>
-                        {trip.destination && (
-                          <div className="text-xs text-stone-500 flex items-center gap-1 mt-0.5">
-                            <MapPinIcon className="size-3 text-stone-400 shrink-0" />
-                            <span className="truncate max-w-[180px]">
-                              {trip.destination}
+              renderUpcomingMobileCards()
+            )}
+          </div>
+
+          {/* Desktop Card + Table (Preserved) */}
+          <div className="hidden md:block">
+            <AdminCard
+              title="Upcoming & Active Expeditions"
+              subtitle="Overview of scheduled trips and current seat capacities"
+              icon={CompassIcon}
+              headerActions={
+                <Link
+                  href="/admin/trip"
+                  className="text-xs text-[#3B001B] hover:underline font-semibold flex items-center gap-1"
+                >
+                  <span>View all</span>
+                  <ChevronRightIcon className="size-3" />
+                </Link>
+              }
+              noPadding
+            >
+              {loading ? (
+                <div className="p-6">
+                  <AdminLoadingState text="Loading expeditions..." />
+                </div>
+              ) : upcomingTrips.length === 0 ? (
+                <div className="p-6">
+                  <AdminEmptyState
+                    title="No Upcoming Expeditions"
+                    description="There are currently no active or upcoming trips scheduled in the database."
+                    action={
+                      <Link
+                        href="/admin/trip/add"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#3B001B] text-white text-xs font-semibold"
+                      >
+                        + Add New Trip
+                      </Link>
+                    }
+                    compact
+                  />
+                </div>
+              ) : (
+                <AdminTable>
+                  <AdminTableHead>
+                    <tr>
+                      <AdminTableHeaderCell>Expedition</AdminTableHeaderCell>
+                      <AdminTableHeaderCell>Dates</AdminTableHeaderCell>
+                      <AdminTableHeaderCell>Status</AdminTableHeaderCell>
+                      <AdminTableHeaderCell>Capacity</AdminTableHeaderCell>
+                      <AdminTableHeaderCell className="text-right">Actions</AdminTableHeaderCell>
+                    </tr>
+                  </AdminTableHead>
+                  <AdminTableBody>
+                    {upcomingTrips.slice(0, 5).map((trip) => (
+                      <AdminTableRow key={trip.id}>
+                        <AdminTableCell>
+                          <div className="font-semibold text-stone-900 line-clamp-1">
+                            {trip.name}
+                          </div>
+                          {trip.destination && (
+                            <div className="text-xs text-stone-500 flex items-center gap-1 mt-0.5">
+                              <MapPinIcon className="size-3 text-stone-400 shrink-0" />
+                              <span className="truncate max-w-[180px]">
+                                {trip.destination}
+                              </span>
+                            </div>
+                          )}
+                        </AdminTableCell>
+                        <AdminTableCell className="text-stone-600 whitespace-nowrap">
+                          {formatTripDates(trip.startDate, trip.endDate) || "Dates TBA"}
+                        </AdminTableCell>
+                        <AdminTableCell>
+                          <AdminBadge
+                            status={trip.registrationOpen ? "open" : "closed"}
+                          />
+                        </AdminTableCell>
+                        <AdminTableCell className="whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-stone-900">
+                              {trip.totalJoined || 0}
+                            </span>
+                            <span className="text-xs text-stone-400">
+                              / {trip.totalSeats || "∞"}
                             </span>
                           </div>
-                        )}
-                      </AdminTableCell>
-                      <AdminTableCell className="text-stone-600 whitespace-nowrap">
-                        {formatTripDates(trip.startDate, trip.endDate) || "Dates TBA"}
-                      </AdminTableCell>
-                      <AdminTableCell>
-                        <AdminBadge
-                          status={trip.registrationOpen ? "open" : "closed"}
-                        />
-                      </AdminTableCell>
-                      <AdminTableCell className="whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-stone-900">
-                            {trip.totalJoined || 0}
-                          </span>
-                          <span className="text-xs text-stone-400">
-                            / {trip.totalSeats || "∞"}
-                          </span>
-                        </div>
-                      </AdminTableCell>
-                      <AdminTableCell className="text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Link
-                            href={`/admin/trip/view/${trip.id}`}
-                            className="px-2.5 py-1 text-xs rounded-md border border-stone-200 hover:bg-stone-100 text-stone-700 font-medium transition-colors"
-                          >
-                            Overview
-                          </Link>
-                          <Link
-                            href={`/admin/registrations?tripId=${trip.id}`}
-                            className="px-2.5 py-1 text-xs rounded-md bg-[#3B001B]/10 hover:bg-[#3B001B]/20 text-[#3B001B] font-semibold transition-colors"
-                          >
-                            Queue
-                          </Link>
-                        </div>
-                      </AdminTableCell>
-                    </AdminTableRow>
-                  ))}
-                </AdminTableBody>
-              </AdminTable>
-            )}
-          </AdminCard>
+                        </AdminTableCell>
+                        <AdminTableCell className="text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Link
+                              href={`/admin/trip/view/${trip.id}`}
+                              className="px-2.5 py-1 text-xs rounded-md border border-stone-200 hover:bg-stone-100 text-stone-700 font-medium transition-colors"
+                            >
+                              Overview
+                            </Link>
+                            <Link
+                              href={`/admin/registrations?tripId=${trip.id}`}
+                              className="px-2.5 py-1 text-xs rounded-md bg-[#3B001B]/10 hover:bg-[#3B001B]/20 text-[#3B001B] font-semibold transition-colors"
+                            >
+                              Queue
+                            </Link>
+                          </div>
+                        </AdminTableCell>
+                      </AdminTableRow>
+                    ))}
+                  </AdminTableBody>
+                </AdminTable>
+              )}
+            </AdminCard>
+          </div>
         </div>
 
         {/* RIGHT 1 COLUMN: PENDING REGISTRATIONS QUEUE */}
-        <div className="space-y-6">
+        <div className="space-y-4 md:space-y-6">
           <AdminCard
             title="Pending Verification"
             subtitle="Applicants requiring review"
@@ -473,10 +623,10 @@ export default function AdminDashboardPage() {
             headerActions={
               <Link
                 href="/admin/registrations"
-                className="text-xs text-[#3B001B] hover:underline font-semibold flex items-center gap-1"
+                className="min-h-[44px] md:min-h-0 text-sm md:text-xs text-[#3B001B] hover:underline font-semibold inline-flex items-center gap-1"
               >
                 <span>Full Queue</span>
-                <ChevronRightIcon className="size-3" />
+                <ChevronRightIcon className="size-4 md:size-3" />
               </Link>
             }
             noPadding
@@ -509,11 +659,11 @@ export default function AdminDashboardPage() {
                       key={reg.id}
                       className="p-4 flex items-center justify-between gap-3 hover:bg-stone-50/80 transition-colors"
                     >
-                      <div className="min-w-0 space-y-0.5">
-                        <div className="font-semibold text-xs sm:text-sm text-stone-900 truncate">
+                      <div className="min-w-0 space-y-1 md:space-y-0.5">
+                        <div className="font-semibold text-base md:text-sm text-stone-900 truncate">
                           {studentName}
                         </div>
-                        <div className="text-[11px] text-stone-500 truncate">
+                        <div className="text-sm md:text-[11px] text-stone-600 md:text-stone-500 truncate">
                           {reg.tripName || "Expedition"}
                         </div>
                         <div className="pt-0.5">
@@ -526,7 +676,7 @@ export default function AdminDashboardPage() {
 
                       <Link
                         href={`/admin/registrations?tripId=${reg.tripId}`}
-                        className="px-2.5 py-1.5 rounded-lg bg-[#3B001B] text-white text-xs font-semibold hover:bg-[#46001D] shrink-0 shadow-sm transition-all"
+                        className="min-h-[44px] md:min-h-0 px-4 md:px-2.5 py-2 md:py-1.5 rounded-xl md:rounded-lg bg-[#3B001B] text-white text-sm md:text-xs font-semibold hover:bg-[#46001D] shrink-0 shadow-sm transition-all inline-flex items-center justify-center"
                       >
                         Review
                       </Link>
@@ -540,15 +690,69 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* QUICK MODULE SHORTCUTS */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-stone-500">
-            Administrative Modules & Systems
+      <div className="space-y-3.5 md:space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm md:text-xs font-bold md:font-semibold uppercase tracking-wider text-stone-600 md:text-stone-500">
+            Administrative Modules
           </h2>
-          <span className="text-xs text-stone-400">12 Connected Modules</span>
+          <span className="text-sm md:text-xs text-stone-500 md:text-stone-400">
+            {adminModules.length} Connected
+          </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+        {/* Mobile Compact Module List with Progressive Disclosure (< md) */}
+        <div className="md:hidden space-y-3">
+          <div className="bg-white rounded-2xl border border-stone-200/80 divide-y divide-stone-100 shadow-xs overflow-hidden">
+            {mobileVisibleModules.map((module) => {
+              const Icon = module.icon;
+              return (
+                <Link
+                  key={module.url}
+                  href={module.url}
+                  className="flex items-center gap-3.5 px-4 py-3.5 min-h-[60px] active:bg-stone-50 transition-colors"
+                >
+                  <div className="size-10 rounded-xl bg-[#3B001B]/5 text-[#3B001B] flex items-center justify-center shrink-0">
+                    <Icon className="size-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-stone-900 truncate">
+                        {module.title}
+                      </h3>
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 shrink-0">
+                        {module.tag}
+                      </span>
+                    </div>
+                    <p className="text-sm text-stone-500 truncate mt-0.5">
+                      {module.description}
+                    </p>
+                  </div>
+                  <ChevronRightIcon className="size-5 text-stone-400 shrink-0" />
+                </Link>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowAllModules((prev) => !prev)}
+            className="w-full min-h-[48px] px-4 py-3 rounded-xl border border-stone-200 bg-white active:bg-stone-50 text-sm font-semibold text-[#3B001B] flex items-center justify-center gap-2 shadow-2xs"
+          >
+            <span>
+              {showAllModules
+                ? "Show fewer modules"
+                : `Show all ${adminModules.length} modules`}
+            </span>
+            <ChevronDownIcon
+              className={`size-4 transition-transform ${
+                showAllModules ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Desktop Module Grid (>= md — Preserved) */}
+        <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
           {adminModules.map((module) => {
             const Icon = module.icon;
             return (
