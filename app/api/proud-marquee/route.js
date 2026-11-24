@@ -1,33 +1,35 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  orderBy,
-  serverTimestamp,
-  doc,
-  getDoc,
-  updateDoc,
-  deleteDoc,
-  writeBatch,
-} from "firebase/firestore";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getOrSetCacheWithMeta,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
 
 // Import local data for seeding
 import { curvedMarque } from "@/data/curvedMarquee";
 
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+};
+
+const PRIVATE_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
+
 // Function to seed Firestore if empty
 async function seedIfEmpty() {
   try {
-    const marqueeRef = collection(db, "proud_marquee");
-    const qSnapshot = await getDocs(marqueeRef);
+    const marqueeRef = adminDb.collection("proud_marquee");
+    const qSnapshot = await marqueeRef.limit(1).get();
     if (qSnapshot.empty) {
       console.log("Proud marquee collection is empty. Seeding initial data...");
-      const batch = writeBatch(db);
+      const batch = adminDb.batch();
       curvedMarque.forEach((m, idx) => {
-        const docRef = doc(collection(db, "proud_marquee"));
+        const docRef = marqueeRef.doc();
         batch.set(docRef, {
           title: m.title,
           img: m.img || "",
@@ -50,33 +52,51 @@ export async function GET(req) {
     const id = searchParams.get("id");
 
     if (id) {
-      const docRef = doc(db, "proud_marquee", id);
-      const docSnap = await getDoc(docRef);
-      if (!docSnap.exists()) {
+      const docSnap = await adminDb.collection("proud_marquee").doc(id).get();
+      if (!docSnap.exists) {
         return NextResponse.json({ error: "Marquee item not found" }, { status: 404 });
       }
-      return NextResponse.json({ id: docSnap.id, ...docSnap.data() }, { status: 200 });
+      return NextResponse.json(
+        { id: docSnap.id, ...docSnap.data() },
+        { status: 200, headers: PRIVATE_NO_STORE_HEADERS }
+      );
     }
 
-    await seedIfEmpty();
+    const { data, cacheStatus } = await getOrSetCacheWithMeta(
+      CACHE_KEYS.HOMEPAGE_PROUD_MARQUEE,
+      CACHE_TTLS.HOMEPAGE,
+      async () => {
+        await seedIfEmpty();
 
-    const marqueeRef = collection(db, "proud_marquee");
-    const q = query(marqueeRef, orderBy("createdAt", "desc"));
-    const querySnapshot = await getDocs(q);
+        const querySnapshot = await adminDb
+          .collection("proud_marquee")
+          .orderBy("createdAt", "desc")
+          .get();
 
-    const data = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+        const list = querySnapshot.docs.map((d) => {
+          const raw = d.data() || {};
+          return {
+            id: d.id,
+            ...raw,
+            createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate().toISOString() : (raw.createdAt ?? null),
+            updatedAt: raw.updatedAt?.toDate ? raw.updatedAt.toDate().toISOString() : (raw.updatedAt ?? null),
+          };
+        });
 
-    // Sort by createdAt desc in-memory
-    data.sort((a, b) => {
-      const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
-      const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
-      return timeB - timeA;
-    });
+        list.sort((a, b) => {
+          const timeA = new Date(a.createdAt || 0).getTime();
+          const timeB = new Date(b.createdAt || 0).getTime();
+          return timeB - timeA;
+        });
 
-    return NextResponse.json({ marquee: data }, { status: 200 });
+        return list;
+      }
+    );
+
+    return NextResponse.json(
+      { marquee: data },
+      { status: 200, headers: { ...PUBLIC_CACHE_HEADERS, "X-Cache": cacheStatus } }
+    );
   } catch (error) {
     console.error("GET Marquee Error:", error);
     return NextResponse.json({ error: "Failed to fetch marquee items" }, { status: 500 });
@@ -101,13 +121,15 @@ export async function POST(req) {
     const marqueeData = {
       title: body.title,
       img: body.img,
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     };
     if (body.sortOrder !== undefined) {
       marqueeData.sortOrder = typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0;
     }
 
-    const docRef = await addDoc(collection(db, "proud_marquee"), marqueeData);
+    const docRef = await adminDb.collection("proud_marquee").add(marqueeData);
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PROUD_MARQUEE);
 
     await recordAuditLog(admin, "CREATE_PROUD_MARQUEE", "proud_marquee", docRef.id, "success", {
       title: body.title,
@@ -140,13 +162,15 @@ export async function PUT(req) {
     const updateData = {
       title,
       img: img || "",
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     };
     if (sortOrder !== undefined) {
       updateData.sortOrder = typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0;
     }
 
-    await updateDoc(doc(db, "proud_marquee", id), updateData);
+    await adminDb.collection("proud_marquee").doc(id).update(updateData);
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PROUD_MARQUEE);
 
     await recordAuditLog(admin, "UPDATE_PROUD_MARQUEE", "proud_marquee", id, "success", {
       title,
@@ -176,7 +200,9 @@ export async function DELETE(req) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    await deleteDoc(doc(db, "proud_marquee", id));
+    await adminDb.collection("proud_marquee").doc(id).delete();
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PROUD_MARQUEE);
 
     await recordAuditLog(admin, "DELETE_PROUD_MARQUEE", "proud_marquee", id, "success").catch(() => {});
 

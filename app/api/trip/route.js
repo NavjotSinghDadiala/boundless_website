@@ -6,6 +6,18 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAuthenticatedCoordinator, getCoordinatorPositionsMap } from "@/lib/coordinatorAuth";
 import { requireFullAdmin, recordAuditLog } from "@/lib/adminAuth";
 import { getTripCache, setTripCache, invalidateTripCache } from "@/lib/tripCache";
+import { isRedisConfigured } from "@/lib/cache/redisClient";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getCache,
+  setCache,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
+import {
+  extractStaticTripMetadata,
+  mergeStaticAndLiveTrip,
+} from "@/lib/cache/tripMetadata";
 import { invalidateStaffEmailsCache } from "@/lib/rateLimit";
 import { completeTripAndRecordHistory } from "@/lib/tripHistory";
 import { adjustTripCapacity } from "@/lib/tripCapacity";
@@ -344,9 +356,13 @@ export async function POST(request) {
       endDate: tripData.endDate,
     }).catch(() => {});
 
-    // Invalidate public trip cache
+    // Invalidate public trip cache (in-memory + shared Redis static metadata)
     invalidateTripCache(docRef.id);
     invalidateStaffEmailsCache();
+    await invalidateCacheKeys([
+      CACHE_KEYS.TRIPS_PUBLIC_META_ALL,
+      CACHE_KEYS.tripPublicMeta(docRef.id),
+    ]);
 
     return NextResponse.json(
       {
@@ -523,12 +539,26 @@ export async function GET(request) {
     const isPublic = !isAdmin && !coordinator;
 
     if (singleId) {
-      const cacheKey = `trip:public:${singleId}`;
       if (isPublic) {
-        const cachedTrip = getTripCache(cacheKey);
-        if (cachedTrip) {
+        // Always read live Firestore doc for authoritative capacity/seat/registrationOpen fields.
+        // Only static public editorial metadata is cached in Redis (TTL 300s).
+        const [doc, cachedStaticMeta] = await Promise.all([
+          adminDb.collection("trips").doc(singleId).get(),
+          getCache(CACHE_KEYS.tripPublicMeta(singleId)),
+        ]);
+
+        if (!doc.exists) {
           return NextResponse.json(
-            { trip: cachedTrip, trips: [cachedTrip] },
+            { error: "Trip not found" },
+            { status: 404 }
+          );
+        }
+
+        const liveData = doc.data() || {};
+        if (cachedStaticMeta) {
+          const mergedTrip = mergeStaticAndLiveTrip(cachedStaticMeta, liveData);
+          return NextResponse.json(
+            { trip: mergedTrip, trips: [mergedTrip] },
             {
               status: 200,
               headers: {
@@ -538,6 +568,29 @@ export async function GET(request) {
             }
           );
         }
+
+        const positionMap = await getCoordinatorPositionsMap();
+        const formattedTrip = formatTripDoc(doc, { isAdmin: false, coordinator: null }, positionMap);
+        delete formattedTrip._isUserAssigned;
+
+        const staticMeta = extractStaticTripMetadata(formattedTrip);
+        const redisEnabled = isRedisConfigured();
+        if (redisEnabled) {
+          await setCache(CACHE_KEYS.tripPublicMeta(singleId), staticMeta, CACHE_TTLS.TRIP_META).catch(
+            () => {}
+          );
+        }
+
+        return NextResponse.json(
+          { trip: formattedTrip, trips: [formattedTrip] },
+          {
+            status: 200,
+            headers: {
+              "X-Cache": redisEnabled ? "MISS" : "BYPASS",
+              "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+            },
+          }
+        );
       }
 
       const [doc, positionMap] = await Promise.all([
@@ -563,30 +616,44 @@ export async function GET(request) {
         );
       }
 
-      if (isPublic) {
-        setTripCache(cacheKey, formattedTrip);
-      }
-
       return NextResponse.json(
         { trip: formattedTrip, trips: [formattedTrip] },
         {
           status: 200,
-          headers: isPublic
-            ? {
-                "X-Cache": "MISS",
-                "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
-              }
-            : { "Cache-Control": "private, no-store, max-age=0" },
+          headers: { "Cache-Control": "private, no-store, max-age=0" },
         }
       );
     }
 
-    const allCacheKey = "trips:public:all";
     if (isPublic) {
-      const cachedTrips = getTripCache(allCacheKey);
-      if (cachedTrips) {
+      // Always read live Firestore docs for authoritative capacity fields;
+      // reuse cached static editorial metadata map from Redis when available.
+      const [querySnapshot, cachedStaticCatalog] = await Promise.all([
+        adminDb.collection("trips").orderBy("createdAt", "desc").get(),
+        getCache(CACHE_KEYS.TRIPS_PUBLIC_META_ALL),
+      ]);
+
+      const staticMap =
+        cachedStaticCatalog && typeof cachedStaticCatalog === "object"
+          ? cachedStaticCatalog
+          : null;
+
+      let allHit = Boolean(staticMap);
+      if (staticMap) {
+        for (const doc of querySnapshot.docs) {
+          if (!staticMap[doc.id]) {
+            allHit = false;
+            break;
+          }
+        }
+      }
+
+      if (allHit && staticMap) {
+        const trips = querySnapshot.docs.map((doc) =>
+          mergeStaticAndLiveTrip(staticMap[doc.id], doc.data() || {})
+        );
         return NextResponse.json(
-          { trips: cachedTrips },
+          { trips },
           {
             status: 200,
             headers: {
@@ -596,6 +663,35 @@ export async function GET(request) {
           }
         );
       }
+
+      const positionMap = await getCoordinatorPositionsMap();
+      const nextStaticCatalog = {};
+      const trips = querySnapshot.docs.map((doc) => {
+        const formatted = formatTripDoc(doc, { isAdmin: false, coordinator: null }, positionMap);
+        delete formatted._isUserAssigned;
+        nextStaticCatalog[doc.id] = extractStaticTripMetadata(formatted);
+        return formatted;
+      });
+
+      const redisEnabled = isRedisConfigured();
+      if (redisEnabled) {
+        await setCache(
+          CACHE_KEYS.TRIPS_PUBLIC_META_ALL,
+          nextStaticCatalog,
+          CACHE_TTLS.TRIP_META
+        ).catch(() => {});
+      }
+
+      return NextResponse.json(
+        { trips },
+        {
+          status: 200,
+          headers: {
+            "X-Cache": redisEnabled ? "MISS" : "BYPASS",
+            "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+          },
+        }
+      );
     }
 
     const [querySnapshot, positionMap] = await Promise.all([
@@ -615,20 +711,11 @@ export async function GET(request) {
     // Clean up internal flag
     trips.forEach((t) => delete t._isUserAssigned);
 
-    if (isPublic) {
-      setTripCache(allCacheKey, trips);
-    }
-
     return NextResponse.json(
       { trips },
       {
         status: 200,
-        headers: isPublic
-          ? {
-              "X-Cache": "MISS",
-              "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
-            }
-          : { "Cache-Control": "private, no-store, max-age=0" },
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
       }
     );
   } catch (error) {
@@ -658,9 +745,13 @@ export async function DELETE(request) {
 
     await adminDb.collection("trips").doc(id).delete();
 
-    // Invalidate public trip cache
+    // Invalidate public trip cache (in-memory + shared Redis static metadata)
     invalidateTripCache(id);
     invalidateStaffEmailsCache();
+    await invalidateCacheKeys([
+      CACHE_KEYS.TRIPS_PUBLIC_META_ALL,
+      CACHE_KEYS.tripPublicMeta(id),
+    ]);
 
     // Record audit log non-blocking
     recordAuditLog(admin, "DELETE_TRIP", "trip", id, "success").catch(() => {});
@@ -854,9 +945,13 @@ export async function PUT(request) {
       });
     }
 
-    // Invalidate public trip cache
+    // Invalidate public trip cache (in-memory + shared Redis static metadata)
     invalidateTripCache(tripId);
     invalidateStaffEmailsCache();
+    await invalidateCacheKeys([
+      CACHE_KEYS.TRIPS_PUBLIC_META_ALL,
+      CACHE_KEYS.tripPublicMeta(tripId),
+    ]);
 
     // Record audit log (non-blocking)
     recordAuditLog(admin, "UPDATE_TRIP", "trip", tripId, "success", {

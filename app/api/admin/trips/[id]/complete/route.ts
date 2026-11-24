@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireFullAdmin } from "@/lib/adminAuth";
 import { completeTripAndRecordHistory } from "@/lib/tripHistory";
+import { CACHE_KEYS, invalidateCacheKeys } from "@/lib/cache/redisCache";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,11 @@ export async function POST(
     }
 
     const result = await completeTripAndRecordHistory(id, admin);
+
+    await invalidateCacheKeys([
+      CACHE_KEYS.TRIPS_PUBLIC_META_ALL,
+      CACHE_KEYS.tripPublicMeta(id),
+    ]);
 
     return NextResponse.json({
       success: true,

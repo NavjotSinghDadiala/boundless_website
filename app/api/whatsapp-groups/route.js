@@ -1,28 +1,24 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  orderBy,
-  serverTimestamp,
-  doc,
-  getDoc,
-  updateDoc,
-  deleteDoc,
-  writeBatch,
-} from "firebase/firestore";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
 
 // Import local data for seeding
 import { officialGroups, girlsGroups, regionalGroups } from "@/data/whatsapp";
 
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+};
+
+const PRIVATE_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
+
 // Function to seed Firestore if the whatsapp_groups collection is empty
 async function seedIfEmpty() {
   try {
-    const groupsRef = collection(db, "whatsapp_groups");
-    const qSnapshot = await getDocs(groupsRef);
+    const groupsRef = adminDb.collection("whatsapp_groups");
+    const qSnapshot = await groupsRef.limit(1).get();
     if (qSnapshot.empty) {
       console.log("WhatsApp groups collection is empty. Seeding initial data...");
       const itemsToSeed = [];
@@ -67,9 +63,9 @@ async function seedIfEmpty() {
       });
 
       // Batch write to Firestore (limit is 500 documents per batch; we have around 40, so 1 batch is fine)
-      const batch = writeBatch(db);
+      const batch = adminDb.batch();
       itemsToSeed.forEach((item) => {
-        const docRef = doc(collection(db, "whatsapp_groups"));
+        const docRef = groupsRef.doc();
         batch.set(docRef, {
           ...item,
           createdAt: new Date(),
@@ -91,25 +87,28 @@ export async function GET(req) {
 
     // Fetch single item for the Edit page
     if (id) {
-      const docRef = doc(db, "whatsapp_groups", id);
-      const docSnap = await getDoc(docRef);
-      if (!docSnap.exists()) {
+      const docSnap = await adminDb.collection("whatsapp_groups").doc(id).get();
+      if (!docSnap.exists) {
         return NextResponse.json({ error: "Group not found" }, { status: 404 });
       }
-      return NextResponse.json({ id: docSnap.id, ...docSnap.data() }, { status: 200 });
+      return NextResponse.json(
+        { id: docSnap.id, ...docSnap.data() },
+        { status: 200, headers: PRIVATE_NO_STORE_HEADERS }
+      );
     }
 
     // Auto-seed if empty
     await seedIfEmpty();
 
     // Fetch all items for the Manage List page
-    const groupsRef = collection(db, "whatsapp_groups");
-    const q = query(groupsRef, orderBy("createdAt", "desc"));
-    const querySnapshot = await getDocs(q);
+    const querySnapshot = await adminDb
+      .collection("whatsapp_groups")
+      .orderBy("createdAt", "desc")
+      .get();
 
-    const groups = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
+    const groups = querySnapshot.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
     }));
 
     // Sort by createdAt desc in-memory
@@ -119,7 +118,7 @@ export async function GET(req) {
       return timeB - timeA;
     });
 
-    return NextResponse.json({ groups }, { status: 200 });
+    return NextResponse.json({ groups }, { status: 200, headers: PUBLIC_CACHE_HEADERS });
   } catch (error) {
     console.error("GET API Error:", error);
     return NextResponse.json({ error: "Failed to fetch groups" }, { status: 500 });
@@ -137,7 +136,7 @@ export async function POST(req) {
     }
 
     const body = await req.json();
-    
+
     if (!body.city || !body.link || !body.category) {
       return NextResponse.json({ error: "Name/City, invite link, and category are required" }, { status: 400 });
     }
@@ -149,13 +148,13 @@ export async function POST(req) {
       color: body.color || "#ffffff",
       category: body.category, // 'official', 'girls', 'regional'
       linkType: body.linkType || "", // 'gspace' or empty
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     };
     if (body.sortOrder !== undefined) {
       groupData.sortOrder = typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0;
     }
 
-    const docRef = await addDoc(collection(db, "whatsapp_groups"), groupData);
+    const docRef = await adminDb.collection("whatsapp_groups").add(groupData);
 
     await recordAuditLog(admin, "CREATE_WHATSAPP_GROUP", "whatsapp_group", docRef.id, "success", {
       city: body.city,
@@ -193,13 +192,13 @@ export async function PUT(req) {
       color: color || "#ffffff",
       category,
       linkType: linkType || "",
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     };
     if (sortOrder !== undefined) {
       updateData.sortOrder = typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0;
     }
 
-    await updateDoc(doc(db, "whatsapp_groups", id), updateData);
+    await adminDb.collection("whatsapp_groups").doc(id).update(updateData);
 
     await recordAuditLog(admin, "UPDATE_WHATSAPP_GROUP", "whatsapp_group", id, "success", {
       city,
@@ -230,7 +229,7 @@ export async function DELETE(req) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    await deleteDoc(doc(db, "whatsapp_groups", id));
+    await adminDb.collection("whatsapp_groups").doc(id).delete();
 
     await recordAuditLog(admin, "DELETE_WHATSAPP_GROUP", "whatsapp_group", id, "success").catch(() => {});
 

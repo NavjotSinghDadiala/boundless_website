@@ -13,14 +13,33 @@ import {
   sortMeetupsMostRecentFirst,
 } from "@/lib/cityMeetups";
 import { resolveCanonicalCityLocation } from "@/lib/cityMapLocations";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getOrSetCacheWithMeta,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
 
-/* GET -> List All (with optional ?campaignId= / ?meetupType=) OR Single (?id=) */
+const PUBLIC_MEETUPS_LIVE_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30",
+};
+
+const PUBLIC_COMPLETED_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+};
+
+const PRIVATE_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
+
+/* GET -> List All (with optional ?campaignId= / ?meetupType= / ?status=) OR Single (?id=) */
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id")?.trim();
     const campaignIdFilter = searchParams.get("campaignId")?.trim();
     const meetupTypeFilter = searchParams.get("meetupType")?.trim();
+    const statusFilter = searchParams.get("status")?.trim();
 
     if (id) {
       const docSnap = await adminDb.collection("city_meetups").doc(id).get();
@@ -29,10 +48,43 @@ export async function GET(req) {
       }
       return NextResponse.json(
         { meetup: normalizeCityMeetupDoc(docSnap.id, docSnap.data() || {}) },
-        { status: 200 }
+        { status: 200, headers: PRIVATE_NO_STORE_HEADERS }
       );
     }
 
+    // Completed / archived public meetups have no live registration slots — safe to cache in Redis
+    const isCompletedPublicQuery =
+      !campaignIdFilter &&
+      (meetupTypeFilter === "legacy_archive" || statusFilter === "completed");
+
+    if (isCompletedPublicQuery) {
+      const { data: completedMeetups, cacheStatus } = await getOrSetCacheWithMeta(
+        CACHE_KEYS.MEETUPS_COMPLETED,
+        CACHE_TTLS.MEETUPS,
+        async () => {
+          const querySnapshot = await adminDb.collection("city_meetups").get();
+          const allNormalized = querySnapshot.docs.map((doc) =>
+            normalizeCityMeetupDoc(doc.id, doc.data() || {})
+          );
+          const completed = allNormalized.filter(
+            (m) => m.recordOrigin === "legacy_archive" || m.status === "completed"
+          );
+          return sortMeetupsMostRecentFirst(completed);
+        }
+      );
+
+      const filtered =
+        meetupTypeFilter === "legacy_archive"
+          ? completedMeetups.filter((m) => m.recordOrigin === "legacy_archive")
+          : completedMeetups;
+
+      return NextResponse.json(
+        { meetups: filtered },
+        { status: 200, headers: { ...PUBLIC_COMPLETED_CACHE_HEADERS, "X-Cache": cacheStatus } }
+      );
+    }
+
+    // Active / unfiltered meetups carry live registeredCount & capacity — always read live from Firestore
     let queryRef = adminDb.collection("city_meetups");
     if (campaignIdFilter) {
       queryRef = queryRef.where("campaignId", "==", campaignIdFilter);
@@ -45,18 +97,23 @@ export async function GET(req) {
     );
 
     if (meetupTypeFilter) {
-      if (meetupTypeFilter === "legacy_archive") {
-        meetups = meetups.filter((m) => m.recordOrigin === "legacy_archive");
-      } else if (MEETUP_TYPES.includes(meetupTypeFilter)) {
+      if (MEETUP_TYPES.includes(meetupTypeFilter)) {
         meetups = meetups.filter(
           (m) => m.recordOrigin === "structured" && m.meetupType === meetupTypeFilter
         );
       }
     }
 
+    if (statusFilter) {
+      meetups = meetups.filter((m) => m.status === statusFilter);
+    }
+
     meetups = sortMeetupsMostRecentFirst(meetups);
 
-    return NextResponse.json({ meetups }, { status: 200 });
+    return NextResponse.json(
+      { meetups },
+      { status: 200, headers: PUBLIC_MEETUPS_LIVE_CACHE_HEADERS }
+    );
   } catch (error) {
     console.error("GET city meetups error:", error);
     return NextResponse.json({ error: "Failed to fetch city meetups" }, { status: 500 });
@@ -193,6 +250,11 @@ export async function POST(req) {
     };
 
     const docRef = await adminDb.collection("city_meetups").add(meetupData);
+
+    await invalidateCacheKeys([
+      CACHE_KEYS.MEETUPS_COMPLETED,
+      CACHE_KEYS.MEETUPS_CAMPAIGNS,
+    ]);
 
     await recordAuditLog(admin, "CREATE_CITY_MEETUP", "city_meetup", docRef.id, "success", {
       cityName,
@@ -381,6 +443,11 @@ export async function PUT(req) {
 
     await docRef.update(updatePayload);
 
+    await invalidateCacheKeys([
+      CACHE_KEYS.MEETUPS_COMPLETED,
+      CACHE_KEYS.MEETUPS_CAMPAIGNS,
+    ]);
+
     await recordAuditLog(admin, "UPDATE_CITY_MEETUP", "city_meetup", id, "success", {
       cityName: updatePayload.cityName || existingSnap.data()?.cityName || "",
       updatedFields: Object.keys(updatePayload).filter((k) => k !== "updatedAt"),
@@ -438,6 +505,11 @@ export async function DELETE(req) {
     }
 
     await docRef.delete();
+
+    await invalidateCacheKeys([
+      CACHE_KEYS.MEETUPS_COMPLETED,
+      CACHE_KEYS.MEETUPS_CAMPAIGNS,
+    ]);
 
     await recordAuditLog(admin, "DELETE_CITY_MEETUP", "city_meetup", id, "success", {
       cityName: existingSnap.data()?.cityName || "",

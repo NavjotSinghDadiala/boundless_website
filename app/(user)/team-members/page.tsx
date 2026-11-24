@@ -1,6 +1,6 @@
 import "./animations.css";
-import CouncilSection from "@/components/CouncilSection";
-import New from "@/components/New"
+import TeamMembersSections from "@/components/team/TeamMembersSections";
+
 export default function TeamMembersPage() {
   return (
     <div className="min-h-screen bg-[#FFF9ED]">
@@ -11,9 +11,7 @@ export default function TeamMembersPage() {
             Get to Know <span className="italic font-serif text-[#6d1a2c]">Us</span>
           </h2>
         </div>
-        <New />
-      
-         <CouncilSection />
+        <TeamMembersSections />
         
         <div>
           {/* <AmazingTeam/> */}
@@ -22,4 +20,4 @@ export default function TeamMembersPage() {
       
     </div>
   );
-} 
+}

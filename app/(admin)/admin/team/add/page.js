@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Loader2Icon } from "lucide-react";
+import TeamMemberProfileFields from "@/components/admin/TeamMemberProfileFields";
 
 export default function AddTeamMemberPage() {
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function AddTeamMemberPage() {
     term: "2025-2026", 
     sortOrder: "0" 
   });
+  const [profileData, setProfileData] = useState({});
   const [image, setImage] = useState({ file: null, preview: null, base64: null });
 
   const handleFileChange = (e) => {
@@ -52,7 +54,10 @@ export default function AddTeamMemberPage() {
         body: JSON.stringify({ 
           ...formData, 
           image: uploadData.links?.[0],
-          sortOrder: parseInt(formData.sortOrder) || 0
+          sortOrder: parseInt(formData.sortOrder) || 0,
+          ...(formData.type === "council" || formData.type === "dept_head"
+            ? { profile: profileData }
+            : {}),
         }),
       });
 
@@ -135,6 +140,11 @@ export default function AddTeamMemberPage() {
           {image.preview && <img src={image.preview} alt="Preview" className="h-40 w-40 object-cover rounded-md mb-2 border shadow-sm" />}
           <Input id="image" type="file" accept="image/*" required onChange={handleFileChange} />
         </div>
+
+        {/* Extended Individual Profile (Council Members & HODs only; no departmentTeam here) */}
+        {(formData.type === "council" || formData.type === "dept_head") && (
+          <TeamMemberProfileFields profile={profileData} onChange={setProfileData} />
+        )}
 
         <div className="flex gap-4">
           <Button type="button" variant="outline" className="w-full" onClick={() => router.push("/admin/team")}>

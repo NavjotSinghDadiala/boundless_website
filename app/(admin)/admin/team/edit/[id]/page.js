@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Loader2Icon } from "lucide-react";
+import TeamMemberProfileFields from "@/components/admin/TeamMemberProfileFields";
 
 export default function EditTeamMemberPage() {
   const router = useRouter();
@@ -22,6 +23,7 @@ export default function EditTeamMemberPage() {
     sortOrder: "0",
     image: "" 
   });
+  const [profileData, setProfileData] = useState({});
   
   const [newImage, setNewImage] = useState({ file: null, preview: null, base64: null });
 
@@ -39,6 +41,7 @@ export default function EditTeamMemberPage() {
             sortOrder: String(data.sortOrder || "0"),
             image: data.image || "" 
           });
+          setProfileData(data.profile || {});
         } else {
           throw new Error(data.error || "Failed to load member data");
         }
@@ -89,7 +92,10 @@ export default function EditTeamMemberPage() {
           id, 
           ...formData, 
           image: imageUrl,
-          sortOrder: parseInt(formData.sortOrder) || 0
+          sortOrder: parseInt(formData.sortOrder) || 0,
+          ...(formData.type === "council" || formData.type === "dept_head"
+            ? { profile: profileData }
+            : {}),
         }),
       });
 
@@ -202,6 +208,11 @@ export default function EditTeamMemberPage() {
             className="cursor-pointer"
           />
         </div>
+
+        {/* Extended Individual Profile (Council Members & HODs only; HOD teams stay in /admin/team Manage Team modal) */}
+        {(formData.type === "council" || formData.type === "dept_head") && (
+          <TeamMemberProfileFields profile={profileData} onChange={setProfileData} />
+        )}
 
         <div className="flex gap-4">
           <Button type="button" variant="outline" className="w-full" onClick={() => router.push("/admin/team")}>

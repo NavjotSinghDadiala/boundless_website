@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import { CACHE_KEYS, invalidateCacheKeys } from "@/lib/cache/redisCache";
 
 export async function DELETE(request, { params }) {
   try {
@@ -28,6 +29,8 @@ export async function DELETE(request, { params }) {
     }
 
     await docRef.delete();
+
+    await invalidateCacheKeys(CACHE_KEYS.MEETUPS_SECTIONS);
 
     await recordAuditLog(admin, "DELETE_MEETUP_SECTION", "meetup_section", id, "success", {
       name: snap.data()?.name || "",
@@ -74,6 +77,8 @@ export async function PUT(request, { params }) {
       name,
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    await invalidateCacheKeys(CACHE_KEYS.MEETUPS_SECTIONS);
 
     await recordAuditLog(admin, "UPDATE_MEETUP_SECTION", "meetup_section", id, "success", {
       name,

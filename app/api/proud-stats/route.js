@@ -1,33 +1,35 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
-import {
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  orderBy,
-  serverTimestamp,
-  doc,
-  getDoc,
-  updateDoc,
-  deleteDoc,
-  writeBatch,
-} from "firebase/firestore";
+import { adminDb } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getOrSetCacheWithMeta,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
 
 // Import local data for seeding
 import { stats } from "@/data/stats";
 
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+};
+
+const PRIVATE_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
+
 // Function to seed Firestore if empty
 async function seedIfEmpty() {
   try {
-    const statsRef = collection(db, "proud_stats");
-    const qSnapshot = await getDocs(statsRef);
+    const statsRef = adminDb.collection("proud_stats");
+    const qSnapshot = await statsRef.limit(1).get();
     if (qSnapshot.empty) {
       console.log("Proud stats collection is empty. Seeding initial data...");
-      const batch = writeBatch(db);
+      const batch = adminDb.batch();
       stats.forEach((s, idx) => {
-        const docRef = doc(collection(db, "proud_stats"));
+        const docRef = statsRef.doc();
         batch.set(docRef, {
           number: typeof s.number === "number" ? s.number : parseInt(s.number) || 0,
           label: s.label,
@@ -50,33 +52,51 @@ export async function GET(req) {
     const id = searchParams.get("id");
 
     if (id) {
-      const docRef = doc(db, "proud_stats", id);
-      const docSnap = await getDoc(docRef);
-      if (!docSnap.exists()) {
+      const docSnap = await adminDb.collection("proud_stats").doc(id).get();
+      if (!docSnap.exists) {
         return NextResponse.json({ error: "Stat not found" }, { status: 404 });
       }
-      return NextResponse.json({ id: docSnap.id, ...docSnap.data() }, { status: 200 });
+      return NextResponse.json(
+        { id: docSnap.id, ...docSnap.data() },
+        { status: 200, headers: PRIVATE_NO_STORE_HEADERS }
+      );
     }
 
-    await seedIfEmpty();
+    const { data, cacheStatus } = await getOrSetCacheWithMeta(
+      CACHE_KEYS.HOMEPAGE_PROUD_STATS,
+      CACHE_TTLS.HOMEPAGE,
+      async () => {
+        await seedIfEmpty();
 
-    const statsRef = collection(db, "proud_stats");
-    const q = query(statsRef, orderBy("createdAt", "desc"));
-    const querySnapshot = await getDocs(q);
+        const querySnapshot = await adminDb
+          .collection("proud_stats")
+          .orderBy("createdAt", "desc")
+          .get();
 
-    const data = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+        const list = querySnapshot.docs.map((d) => {
+          const raw = d.data() || {};
+          return {
+            id: d.id,
+            ...raw,
+            createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate().toISOString() : (raw.createdAt ?? null),
+            updatedAt: raw.updatedAt?.toDate ? raw.updatedAt.toDate().toISOString() : (raw.updatedAt ?? null),
+          };
+        });
 
-    // Sort by createdAt desc in-memory
-    data.sort((a, b) => {
-      const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
-      const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
-      return timeB - timeA;
-    });
+        list.sort((a, b) => {
+          const timeA = new Date(a.createdAt || 0).getTime();
+          const timeB = new Date(b.createdAt || 0).getTime();
+          return timeB - timeA;
+        });
 
-    return NextResponse.json({ stats: data }, { status: 200 });
+        return list;
+      }
+    );
+
+    return NextResponse.json(
+      { stats: data },
+      { status: 200, headers: { ...PUBLIC_CACHE_HEADERS, "X-Cache": cacheStatus } }
+    );
   } catch (error) {
     console.error("GET Stats Error:", error);
     return NextResponse.json({ error: "Failed to fetch stats" }, { status: 500 });
@@ -101,13 +121,15 @@ export async function POST(req) {
     const statData = {
       number: typeof body.number === "number" ? body.number : parseInt(body.number) || 0,
       label: body.label,
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     };
     if (body.sortOrder !== undefined) {
       statData.sortOrder = typeof body.sortOrder === "number" ? body.sortOrder : parseInt(body.sortOrder) || 0;
     }
 
-    const docRef = await addDoc(collection(db, "proud_stats"), statData);
+    const docRef = await adminDb.collection("proud_stats").add(statData);
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PROUD_STATS);
 
     await recordAuditLog(admin, "CREATE_PROUD_STAT", "proud_stat", docRef.id, "success", {
       label: body.label,
@@ -141,13 +163,15 @@ export async function PUT(req) {
     const updateData = {
       number: typeof number === "number" ? number : parseInt(number) || 0,
       label,
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     };
     if (sortOrder !== undefined) {
       updateData.sortOrder = typeof sortOrder === "number" ? sortOrder : parseInt(sortOrder) || 0;
     }
 
-    await updateDoc(doc(db, "proud_stats", id), updateData);
+    await adminDb.collection("proud_stats").doc(id).update(updateData);
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PROUD_STATS);
 
     await recordAuditLog(admin, "UPDATE_PROUD_STAT", "proud_stat", id, "success", {
       label,
@@ -178,7 +202,9 @@ export async function DELETE(req) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    await deleteDoc(doc(db, "proud_stats", id));
+    await adminDb.collection("proud_stats").doc(id).delete();
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PROUD_STATS);
 
     await recordAuditLog(admin, "DELETE_PROUD_STAT", "proud_stat", id, "success").catch(() => {});
 

@@ -1,21 +1,38 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getOrSetCacheWithMeta,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
 
 const DEFAULT_VIDEO_ID = "6tDnTV1wHKI";
 
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+};
+
 export async function GET() {
   try {
-    const docSnap = await adminDb.collection("settings").doc("homepage").get();
+    const { data, cacheStatus } = await getOrSetCacheWithMeta(
+      CACHE_KEYS.HOMEPAGE_SETTINGS,
+      CACHE_TTLS.HOMEPAGE,
+      async () => {
+        const docSnap = await adminDb.collection("settings").doc("homepage").get();
+        if (docSnap.exists) {
+          const raw = docSnap.data() || {};
+          return { youtubeVideoId: raw.youtubeVideoId || DEFAULT_VIDEO_ID };
+        }
+        return { youtubeVideoId: DEFAULT_VIDEO_ID };
+      }
+    );
 
-    if (docSnap.exists) {
-      const data = docSnap.data() || {};
-      return NextResponse.json({
-        youtubeVideoId: data.youtubeVideoId || DEFAULT_VIDEO_ID,
-      }, { status: 200 });
-    }
-
-    return NextResponse.json({ youtubeVideoId: DEFAULT_VIDEO_ID }, { status: 200 });
+    return NextResponse.json(data, {
+      status: 200,
+      headers: { ...PUBLIC_CACHE_HEADERS, "X-Cache": cacheStatus },
+    });
   } catch (error) {
     console.error("GET settings error:", error);
     return NextResponse.json({ error: "Failed to fetch homepage video setting" }, { status: 500 });
@@ -54,6 +71,8 @@ export async function POST(request) {
       youtubeVideoId: cleanVideoId,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_SETTINGS);
 
     await recordAuditLog(admin, "UPDATE_SETTINGS", "settings", "homepage", "success", {
       youtubeVideoId: cleanVideoId,

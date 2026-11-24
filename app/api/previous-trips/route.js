@@ -3,6 +3,20 @@ import { adminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { sanitizeMediaUrls } from "@/lib/previous-trip-media";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getOrSetCacheWithMeta,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
+
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+};
+
+const PRIVATE_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
 
 /* GET All Trips OR Single Trip (if ?id= is passed) */
 export async function GET(req) {
@@ -14,21 +28,38 @@ export async function GET(req) {
     if (id) {
       const docSnap = await adminDb.collection("previous_trips").doc(id).get();
       if (!docSnap.exists) return NextResponse.json({ error: "Trip not found" }, { status: 404 });
-      return NextResponse.json({ id: docSnap.id, ...docSnap.data() }, { status: 200 });
+      return NextResponse.json(
+        { id: docSnap.id, ...docSnap.data() },
+        { status: 200, headers: PRIVATE_NO_STORE_HEADERS }
+      );
     }
 
     // Fetch all items for the Manage List page
-    const querySnapshot = await adminDb
-      .collection("previous_trips")
-      .orderBy("createdAt", "desc")
-      .get();
+    const { data: trips, cacheStatus } = await getOrSetCacheWithMeta(
+      CACHE_KEYS.HOMEPAGE_PREVIOUS_TRIPS,
+      CACHE_TTLS.HOMEPAGE,
+      async () => {
+        const querySnapshot = await adminDb
+          .collection("previous_trips")
+          .orderBy("createdAt", "desc")
+          .get();
 
-    const trips = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+        return querySnapshot.docs.map((d) => {
+          const raw = d.data() || {};
+          return {
+            id: d.id,
+            ...raw,
+            createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate().toISOString() : (raw.createdAt ?? null),
+            updatedAt: raw.updatedAt?.toDate ? raw.updatedAt.toDate().toISOString() : (raw.updatedAt ?? null),
+          };
+        });
+      }
+    );
 
-    return NextResponse.json({ trips }, { status: 200 });
+    return NextResponse.json(
+      { trips },
+      { status: 200, headers: { ...PUBLIC_CACHE_HEADERS, "X-Cache": cacheStatus } }
+    );
   } catch (error) {
     return NextResponse.json({ error: "Failed to fetch trips" }, { status: 500 });
   }
@@ -65,6 +96,8 @@ export async function POST(req) {
       createdAt: FieldValue.serverTimestamp(),
     };
     const docRef = await adminDb.collection("previous_trips").add(tripData);
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PREVIOUS_TRIPS);
 
     recordAuditLog(admin, "CREATE_PREVIOUS_TRIP", "previous_trip", docRef.id, "success", {
       heading: body.heading,
@@ -121,6 +154,8 @@ export async function PUT(req) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PREVIOUS_TRIPS);
+
     recordAuditLog(admin, "UPDATE_PREVIOUS_TRIP", "previous_trip", id, "success", {
       heading,
     }).catch(() => {});
@@ -147,6 +182,8 @@ export async function DELETE(req) {
     if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
     await adminDb.collection("previous_trips").doc(id).delete();
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_PREVIOUS_TRIPS);
 
     recordAuditLog(admin, "DELETE_PREVIOUS_TRIP", "previous_trip", id, "success").catch(() => {});
 

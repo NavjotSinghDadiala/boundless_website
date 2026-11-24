@@ -10,6 +10,20 @@ import {
   sanitizeSafeUrl,
   sortMeetupsMostRecentFirst,
 } from "@/lib/cityMeetups";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getOrSetCacheWithMeta,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
+
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+};
+
+const PRIVATE_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+};
 
 /* GET -> All Flagship Campaigns OR Single Campaign (?id=, optional ?includeCities=true). Zero writes. */
 export async function GET(req) {
@@ -36,35 +50,46 @@ export async function GET(req) {
       const campaign = normalizeCampaignDoc(docSnap.id, docSnap.data() || {}, cities.length);
       return NextResponse.json(
         includeCities ? { campaign, cities } : { campaign },
-        { status: 200 }
+        { status: 200, headers: PRIVATE_NO_STORE_HEADERS }
       );
     }
 
-    const [campaignsSnap, linkedCitiesSnap] = await Promise.all([
-      adminDb.collection("meetup_campaigns").get(),
-      adminDb.collection("city_meetups").where("meetupType", "==", "campaign_city").get(),
-    ]);
+    const { data, cacheStatus } = await getOrSetCacheWithMeta(
+      CACHE_KEYS.MEETUPS_CAMPAIGNS,
+      CACHE_TTLS.MEETUPS,
+      async () => {
+        const [campaignsSnap, linkedCitiesSnap] = await Promise.all([
+          adminDb.collection("meetup_campaigns").get(),
+          adminDb.collection("city_meetups").where("meetupType", "==", "campaign_city").get(),
+        ]);
 
-    const cityCountMap = new Map();
-    linkedCitiesSnap.docs.forEach((doc) => {
-      const cId = doc.data()?.campaignId;
-      if (typeof cId === "string" && cId.trim()) {
-        cityCountMap.set(cId.trim(), (cityCountMap.get(cId.trim()) || 0) + 1);
+        const cityCountMap = new Map();
+        linkedCitiesSnap.docs.forEach((doc) => {
+          const cId = doc.data()?.campaignId;
+          if (typeof cId === "string" && cId.trim()) {
+            cityCountMap.set(cId.trim(), (cityCountMap.get(cId.trim()) || 0) + 1);
+          }
+        });
+
+        const list = campaignsSnap.docs.map((doc) =>
+          normalizeCampaignDoc(doc.id, doc.data() || {}, cityCountMap.get(doc.id) || 0)
+        );
+
+        // Sort by createdAt desc (preserving existing slider ordering)
+        list.sort((a, b) => {
+          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return timeB - timeA;
+        });
+
+        return list;
       }
-    });
-
-    const data = campaignsSnap.docs.map((doc) =>
-      normalizeCampaignDoc(doc.id, doc.data() || {}, cityCountMap.get(doc.id) || 0)
     );
 
-    // Sort by createdAt desc (preserving existing slider ordering)
-    data.sort((a, b) => {
-      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return timeB - timeA;
-    });
-
-    return NextResponse.json({ campaigns: data }, { status: 200 });
+    return NextResponse.json(
+      { campaigns: data },
+      { status: 200, headers: { ...PUBLIC_CACHE_HEADERS, "X-Cache": cacheStatus } }
+    );
   } catch (error) {
     console.error("GET Campaigns Error:", error);
     return NextResponse.json({ error: "Failed to fetch campaigns" }, { status: 500 });
@@ -140,6 +165,8 @@ export async function POST(req) {
     };
 
     const docRef = await adminDb.collection("meetup_campaigns").add(campaignData);
+
+    await invalidateCacheKeys(CACHE_KEYS.MEETUPS_CAMPAIGNS);
 
     await recordAuditLog(admin, "CREATE_MEETUP_CAMPAIGN", "meetup_campaign", docRef.id, "success", {
       city,
@@ -248,6 +275,8 @@ export async function PUT(req) {
 
     await docRef.update(updateData);
 
+    await invalidateCacheKeys(CACHE_KEYS.MEETUPS_CAMPAIGNS);
+
     await recordAuditLog(admin, "UPDATE_MEETUP_CAMPAIGN", "meetup_campaign", id, "success", {
       city: updateData.city || existingSnap.data()?.city || "",
       title: updateData.title || existingSnap.data()?.title || "",
@@ -303,6 +332,8 @@ export async function DELETE(req) {
     }
 
     await docRef.delete();
+
+    await invalidateCacheKeys(CACHE_KEYS.MEETUPS_CAMPAIGNS);
 
     await recordAuditLog(admin, "DELETE_MEETUP_CAMPAIGN", "meetup_campaign", id, "success", {
       title: existingSnap.data()?.title || "",

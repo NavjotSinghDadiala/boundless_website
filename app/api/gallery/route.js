@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
-import {
-  collection,
-  addDoc,
-  getDocs,
-  doc,
-  deleteDoc,
-  updateDoc,
-  orderBy,
-  query,
-} from "firebase/firestore";
 import { v2 as cloudinary } from "cloudinary";
-import { db, isFirebaseEnabled } from "@/lib/firebase";
+import { adminDb } from "@/lib/firebase-admin";
 import { requireAdmin, recordAuditLog } from "@/lib/adminAuth";
+import {
+  CACHE_KEYS,
+  CACHE_TTLS,
+  getOrSetCacheWithMeta,
+  invalidateCacheKeys,
+} from "@/lib/cache/redisCache";
+
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+};
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -40,15 +40,22 @@ async function uploadToCloudinary(base64DataUrl) {
 /* ─── GET → List All ─── */
 export async function GET() {
   try {
-    if (!isFirebaseEnabled || !db) {
-      return NextResponse.json([], { status: 200 });
-    }
+    const { data, cacheStatus } = await getOrSetCacheWithMeta(
+      CACHE_KEYS.HOMEPAGE_GALLERY,
+      CACHE_TTLS.HOMEPAGE,
+      async () => {
+        const snap = await adminDb
+          .collection("gallery")
+          .orderBy("createdAt", "desc")
+          .get();
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+    );
 
-    const q = query(collection(db, "gallery"), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-    return NextResponse.json(data);
+    return NextResponse.json(data, {
+      status: 200,
+      headers: { ...PUBLIC_CACHE_HEADERS, "X-Cache": cacheStatus },
+    });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -84,12 +91,14 @@ export async function POST(req) {
     // Upload to Cloudinary inside this route — no dependency on /api/upload
     const imgUrl = await uploadToCloudinary(imageData);
 
-    const ref = await addDoc(collection(db, "gallery"), {
+    const ref = await adminDb.collection("gallery").add({
       name,
       img: imgUrl,
       link: link || "#",
       createdAt: Date.now(),
     });
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_GALLERY);
 
     await recordAuditLog(admin, "CREATE_GALLERY_IMAGE", "gallery", ref.id, "success", {
       name,
@@ -124,12 +133,14 @@ export async function PUT(req) {
       ? await uploadToCloudinary(imageData)
       : img;
 
-    await updateDoc(doc(db, "gallery", id), {
+    await adminDb.collection("gallery").doc(id).update({
       name,
       img: finalImg,
       link,
       updatedAt: Date.now(),
     });
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_GALLERY);
 
     await recordAuditLog(admin, "UPDATE_GALLERY_IMAGE", "gallery", id, "success", {
       name,
@@ -159,7 +170,9 @@ export async function DELETE(req) {
       return NextResponse.json({ error: "ID required" }, { status: 400 });
     }
 
-    await deleteDoc(doc(db, "gallery", id));
+    await adminDb.collection("gallery").doc(id).delete();
+
+    await invalidateCacheKeys(CACHE_KEYS.HOMEPAGE_GALLERY);
 
     await recordAuditLog(admin, "DELETE_GALLERY_IMAGE", "gallery", id, "success").catch(() => {});
 
