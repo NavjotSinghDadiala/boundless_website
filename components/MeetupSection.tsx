@@ -11,87 +11,47 @@ export default function MeetupSection({
   cards: any[];
   onCardClick?: (card: any) => void;
 }) {
-  // Split cards into rows of 3 (desktop/tablet) or 2 (mobile)
-  const getRows = () => {
-    if (typeof window !== "undefined" && window.innerWidth < 768) {
-      // Mobile: 2 per row
-      const rows = []
-      for (let i = 0; i < cards.length; i += 2) {
-        rows.push(cards.slice(i, i + 2))
-      }
-      return rows
-    } else {
-      // Desktop/Tablet: 3 per row
-      const rows = []
-      for (let i = 0; i < cards.length; i += 3) {
-        rows.push(cards.slice(i, i + 3))
-      }
-      return rows
-    }
-  }
-
-  // For SSR, fallback to 3 per row
-  const rows = typeof window === "undefined"
-    ? Array.from({ length: Math.ceil(cards.length / 3) }, (_, i) => cards.slice(i * 3, i * 3 + 3))
-    : getRows()
-
   return (
     <section className="mb-16">
-      <h2 className="text-4xl md:text-5xl font-black text-[#3B001B] mb-10 text-center">{title}</h2>
-      <div className="flex flex-col gap-8">
-        {rows.map((row, rowIdx) => (
-          <motion.div
-            key={rowIdx}
-            className="flex justify-center gap-6"
-            initial={{ opacity: 0, y: 40 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, amount: 0.3 }}
-            transition={{ duration: 0.5, delay: rowIdx * 0.1, type: "spring" }}
+      <h2 className="text-3xl md:text-4xl font-black text-[#3B001B] mb-8 text-center">{title}</h2>
+      <motion.div
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6"
+        initial={{ opacity: 0, y: 32 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.12 }}
+        transition={{ duration: 0.45, type: "spring" }}
+      >
+        {cards.map((card) => (
+          <motion.article
+            key={card.id}
+            onClick={() => onCardClick?.(card)}
+            className="group flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-amber-950/10 bg-white shadow-lg cursor-pointer"
+            whileHover={{ y: -4, boxShadow: "0 18px 36px rgba(59, 0, 27, 0.14)" }}
+            transition={{ duration: 0.2 }}
           >
-            {row.map((card, cardIdx) => (
-              <motion.div
-                key={cardIdx}
-                onClick={() => onCardClick?.(card)}
-                className={`
-                  flex flex-col w-full max-w-[340px] min-w-[180px]
-                  rounded-[32px] border-2 shadow-xl
-                  transition-transform duration-300
-                  bg-white cursor-pointer
-                `}
-                whileHover={{ scale: 1.04, boxShadow: "0 8px 32px #00000022" }}
-              >
-                <div className="relative h-[176px] w-full overflow-hidden rounded-t-[32px]">
-                  <Image
-                    src={card.img}
-                    alt={card.city}
-                    fill
-                    sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 340px"
-                    unoptimized={!card.img?.includes("res.cloudinary.com")}
-                    className="object-cover"
-                  />
-                </div>
+            <div className="relative h-44 w-full overflow-hidden bg-amber-100">
+              <Image
+                src={card.img}
+                alt={`${card.city} - ${title}`}
+                fill
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                unoptimized={!card.img?.includes("res.cloudinary.com")}
+                className="object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+              />
+            </div>
 
-                {/* 🎨 DYNAMIC COLOR ADDED HERE */}
-                <div
-                  className="flex flex-row items-center p-4 rounded-b-[30px]"
-                  style={{ backgroundColor: card.color }}
-                >
-                  <div className="font-bold text-lg text-[#3B001B] flex-1">{card.city}</div>
-                  <div className="justify-content-end" style={{ width: "50%" }}>
-                    {/* <a
-                    href={card.galleryLink}
-                    className="rounded-full px-5 py-1 font-semibold text-sm hover:bg-amber-100 transition"
-                  >
-                   <img src="/arrow.png" width={"50px"} height={"50px"} alt="link" style={{transform : "rotate(140deg)"}}/>
-                  </a> */}
-                  </div>
-                </div>
-
-              </motion.div>
-            ))}
-          </motion.div>
+            <div
+              className="flex min-h-[104px] flex-1 flex-col justify-center px-5 py-4 border-t border-amber-950/5"
+              style={{ backgroundColor: card.color || "#FEFAE7" }}
+            >
+              <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-900/70">
+                {title}
+              </p>
+              <h3 className="text-xl font-black leading-tight text-[#3B001B]">{card.city}</h3>
+            </div>
+          </motion.article>
         ))}
-      </div>
+      </motion.div>
     </section>
   )
 }
