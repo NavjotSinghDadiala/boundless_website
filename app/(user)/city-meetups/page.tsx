@@ -792,7 +792,18 @@ export default function CityMeetupsPage() {
       <Sheet open={!!selectedMeetup} onOpenChange={(open) => !open && setSelectedMeetup(null)}>
         <SheetContent
           side="bottom"
-          className="h-[70vh] w-full gap-0 p-0 flex flex-col overflow-hidden overscroll-contain rounded-t-[32px] border-none bg-amber-50/95 backdrop-blur-md text-gray-800 shadow-2xl transition duration-500 focus:outline-none"
+          style={{
+            left: "50%",
+            right: "auto",
+            top: "50%",
+            bottom: "auto",
+            width: "calc(100vw - 48px)",
+            maxWidth: "1152px",
+            height: "82vh",
+            maxHeight: "820px",
+            transform: "translate(-50%, -50%)",
+          }}
+          className="gap-0 p-0 flex flex-col overflow-hidden overscroll-contain rounded-3xl border border-amber-950/10 bg-amber-50/95 backdrop-blur-md text-gray-800 shadow-2xl transition duration-500 focus:outline-none"
         >
           {selectedMeetup && (
             <>
@@ -954,12 +965,6 @@ export default function CityMeetupsPage() {
                 </div>
 
                 <div className="flex-shrink-0 bg-white/90 backdrop-blur-sm border-t border-amber-100 p-4 flex items-center justify-end gap-3 w-full shadow-md">
-                  <button
-                    onClick={() => setSelectedMeetup(null)}
-                    className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition cursor-pointer"
-                  >
-                    Close
-                  </button>
                   {selectedMeetup.link && (
                     <a
                       href={selectedMeetup.link}
