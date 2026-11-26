@@ -11,6 +11,8 @@ import CityMeetup from "@/components/cityMeetup";
 import Proud from "@/components/Proud";
 import About from "@/components/About";
 import AmazingTeam from "@/components/AmazingTeam";
+import { Mountain } from "lucide-react";
+import MountainFooterTransition from "@/components/MountainFooterTransition";
 
 export default function BoundlessTravelSociety() {
   return (
@@ -64,8 +66,11 @@ export default function BoundlessTravelSociety() {
         <div id="about">
           <About />
         </div>
-        <div id="team">
+        {/* <div id="team">
           <AmazingTeam />
+        </div> */}
+        <div>
+          <MountainFooterTransition />
         </div>
       </div>
     </>
