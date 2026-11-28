@@ -123,3 +123,9 @@ backups/
 # ================================
 *.tmp
 *.tempgit rm -r --cached --ignore-unmatch .next
+
+# AI agent files
+CLAUDE.md
+AGENTS.md
+.claude/
+env
