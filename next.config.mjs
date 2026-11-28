@@ -1,5 +1,6 @@
 // Reload config
 const nextConfig = {
+  agentRules: false,
   typescript: {
     ignoreBuildErrors: true,
   },

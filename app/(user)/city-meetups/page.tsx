@@ -30,7 +30,7 @@ import {
   sortMeetupsMostRecentFirst,
   getMeetupSortTimestamp,
 } from "@/lib/cityMeetups"
-import { Sheet, SheetContent } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetClose } from "@/components/ui/sheet"
 import GlimpsesGallery from "@/components/GlimpsesGallery"
 import {
   PieChart,
@@ -317,7 +317,7 @@ export default function CityMeetupsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FEFAE7] py-6 px-4 md:px-8 relative overflow-hidden">
+    <div className="min-h-screen bg-[#FEFAE7] py-4 px-4 md:px-8 relative overflow-hidden">
       {/* Dynamic Keyframe Styles */}
       <style jsx global>{`
         @keyframes pulse-glow {
@@ -355,13 +355,13 @@ export default function CityMeetupsPage() {
 
       <div className="relative z-10 max-w-7xl mx-auto">
         {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-6 mb-8 border-b-2 border-amber-900/10 pb-6">
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4 border-b-2 border-amber-900/10 pb-3">
           <div>
-            <h1 className="text-4xl md:text-5xl font-black text-amber-950 tracking-tight flex items-center gap-2">
-              <Sparkles className="w-8 h-8 text-amber-800 animate-pulse" />
+            <h1 className="text-3xl md:text-4xl font-black text-amber-950 tracking-tight flex items-center gap-2">
+              <Users className="w-8 h-8 text-amber-800" />
               City Meetups
             </h1>
-            <p className="text-amber-800 font-medium text-sm md:text-base mt-2">
+            <p className="text-amber-800 font-medium text-sm md:text-base mt-1">
               Explore events and city timelines mapped dynamically across India.
             </p>
           </div>
@@ -392,7 +392,7 @@ export default function CityMeetupsPage() {
         </header>
 
         {/* Search Bar */}
-        <div className="relative z-50 mb-8" ref={dropdownRef}>
+        <div className="relative z-50 mb-4" ref={dropdownRef}>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-900/40" />
             <input
@@ -502,7 +502,7 @@ export default function CityMeetupsPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
               transition={{ duration: 0.3 }}
-              className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start"
+              className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start"
             >
               {/* Left Column: Interactive Map */}
               <div className="col-span-1 lg:col-span-7 bg-white/50 backdrop-blur-md rounded-3xl p-4 md:p-6 border border-amber-900/10 shadow-xl flex flex-col items-center">
@@ -597,14 +597,14 @@ export default function CityMeetupsPage() {
                         </div>
                         <button
                           onClick={() => setSelectedCityName(null)}
-                          className="text-amber-900/50 hover:text-amber-900 hover:bg-amber-900/5 p-2 rounded-full transition-colors cursor-pointer"
+                          aria-label="Close" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-900/10 text-amber-950 shadow-sm ring-1 ring-amber-900/10 transition duration-300 hover:rotate-90 hover:scale-110 hover:bg-amber-900 hover:text-white cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
                         >
-                          <X className="w-5 h-5" />
+                          <X className="h-5 w-5" strokeWidth={2.5} />
                         </button>
                       </div>
 
                       {/* Meetup Timeline Track */}
-                      <div className="flex flex-col gap-6 overflow-y-auto max-h-[500px] pr-2 scrollbar-thin scrollbar-thumb-amber-900/10">
+                      <div data-lenis-prevent className="flex flex-col gap-6 overflow-y-auto max-h-[500px] pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                         {selectedCity.meetups.map((meetup, idx) => (
                           <div key={meetup.id} className="relative flex gap-4">
                             {/* Vertical Line Connector */}
@@ -705,14 +705,14 @@ export default function CityMeetupsPage() {
                         </div>
                         <button
                           onClick={() => setSelectedCityName(null)}
-                          className="bg-amber-900/5 p-1.5 rounded-full text-amber-900/60 hover:text-amber-900 cursor-pointer"
+                          aria-label="Close" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-900/10 text-amber-950 shadow-sm ring-1 ring-amber-900/10 transition duration-300 hover:rotate-90 hover:scale-110 hover:bg-amber-900 hover:text-white cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
                         >
-                          <X className="w-4 h-4" />
+                          <X className="h-5 w-5" strokeWidth={2.5} />
                         </button>
                       </div>
 
                       {/* Timeline content */}
-                      <div className="flex flex-col gap-6 overflow-y-auto pr-1 py-2 max-h-[55vh]">
+                      <div data-lenis-prevent className="flex flex-col gap-6 overflow-y-auto pr-1 py-2 max-h-[55vh] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                         {selectedCity.meetups.map((meetup, idx) => (
                           <div key={meetup.id} className="relative flex gap-3">
                             {/* Vertical connector line */}
@@ -803,13 +803,19 @@ export default function CityMeetupsPage() {
             maxHeight: "820px",
             transform: "translate(-50%, -50%)",
           }}
-          className="gap-0 p-0 flex flex-col overflow-hidden overscroll-contain rounded-3xl border border-amber-950/10 bg-amber-50/95 backdrop-blur-md text-gray-800 shadow-2xl transition duration-500 focus:outline-none"
+          className="[&>button.rounded-sm]:hidden gap-0 p-0 flex flex-col overflow-hidden overscroll-contain rounded-3xl border border-amber-950/10 bg-amber-50/95 backdrop-blur-md text-gray-800 shadow-2xl transition duration-500 focus:outline-none"
         >
           {selectedMeetup && (
             <>
+              <SheetClose
+                aria-label="Close"
+                className="absolute right-4 top-4 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-amber-950 shadow-lg ring-1 ring-amber-900/10 backdrop-blur transition hover:scale-110 hover:bg-white hover:rotate-90 duration-300 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+              >
+                <X className="h-5 w-5" strokeWidth={2.5} />
+              </SheetClose>
               <div className="flex h-full min-h-0 flex-col">
                 <div
-                  className="flex-1 min-h-0 overflow-y-scroll overscroll-contain"
+                  className="flex-1 min-h-0 overflow-y-scroll overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   data-lenis-prevent
                 >
                   <div className="flex flex-col">
@@ -909,7 +915,7 @@ export default function CityMeetupsPage() {
                                 <h3 className="text-lg font-bold text-amber-900 border-b border-amber-50 pb-2">
                                   Meetup Summary
                                 </h3>
-                                <div className="text-gray-700 text-sm leading-relaxed space-y-4 font-normal max-h-[350px] overflow-y-auto pr-1">
+                                <div className="text-gray-700 text-sm leading-relaxed space-y-4 font-normal max-h-[350px] overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-lenis-prevent>
                                   {(selectedMeetup.summary || selectedMeetup.caption || "").split("\n").map((para: string, idx: number) => (
                                     para.trim() && <p key={idx}>{para.trim()}</p>
                                   ))}

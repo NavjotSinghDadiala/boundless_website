@@ -23,6 +23,7 @@ export default function Header() {
   // Listen to Firebase auth state & check coordinator status server-side
   useEffect(() => {
     let isMounted = true;
+    if (!auth) return; // Firebase not configured
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user && user.email && user.email.toLowerCase().endsWith("iitm.ac.in")) {
         setStudentUser(user);
